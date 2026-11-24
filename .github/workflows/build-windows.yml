@@ -202,6 +202,11 @@ jobs:
           "SoftEther VPN Client 4.44 Build 9807 RTM (2025-04-16)`r`nInstalador oficial: $url`r`nTamano: 56249368 bytes`r`nSHA-256: $hash" | Out-File -FilePath (Join-Path $destino "SOFTETHER-CLIENT.txt") -Encoding ascii
           Write-Host "Archivos del cliente incorporado:"
           Get-ChildItem -Recurse $destino | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path $destino).Path.Length)) ($($_.Length))" }
+          # El humo deja $LASTEXITCODE=1 (vpncmd sin servicio: su
+          # «Error code: 1» es el resultado CORRECTO) y el runner
+          # cerraría el paso con ese código (pasó en 45502795985,
+          # con todo lo demás bien): se deja a 0 explícitamente.
+          $global:LASTEXITCODE = 0
 
       - name: Crear el instalador con Inno Setup
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\instalador.iss'
