@@ -13,6 +13,12 @@ dist/
 dist-instalador/
 *.egg-info/
 
+# SoftEther incorporado: el binario lo baja la compilación en la
+# nube en cada corrida (ver packaging/softether/LEEME.md); al repo
+# solo sube el LEEME.
+packaging/softether/client/
+packaging/softether/*.exe
+
 # Datos de la app en desarrollo
 *.sqlite3
 cuarentena/

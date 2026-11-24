@@ -2,7 +2,14 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.6.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.7.exe
+;
+; v1.0.7: el instalador lleva INCORPORADO SoftEther VPN Client
+; (archivos oficiales en packaging\softether\client\, ver su
+; LEEME.md): se copian a {app}\softether y al terminar se registra
+; su servicio SEVPNCLIENT (solo si el equipo no tiene ya uno) para
+; que la app lo maneje por vpncmd en segundo plano, sin que el
+; usuario instale ni abra nada más.
 ;
 ; La app se instala por máquina en Archivos de programa: escribir el hosts,
 ; crear la tarea semanal y tocar Defender exigen administrador, y la propia
@@ -11,7 +18,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.6"
+#define AppVersion "1.0.7"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 
@@ -67,6 +74,17 @@ Source: "smartctl\smartctl.exe"; DestDir: "{app}"; Flags: ignoreversion
 #if FileExists("smartctl\smartd.exe")
 Source: "smartctl\smartd.exe"; DestDir: "{app}"; Flags: ignoreversion
 #endif
+; SoftEther VPN Client INCORPORADO (v1.0.7): los archivos del cliente
+; oficial 4.44-9807 (extraídos de su instalador; el instalador oficial
+; NO tiene modo silencioso, por eso la vía es copiar los archivos y
+; registrar el servicio — ver [Code]). Solo si el paquete está al
+; compilar: la compilación en la nube lo descarga del sitio oficial,
+; verifica tamaño y huella, lo extrae y FALLA si falta; una
+; compilación local sin el paquete produce la app sin SoftEther y la
+; app lo detecta (cae a la vía del perfil .ovpn).
+#if FileExists("softether\client\SOFTETHER-CLIENT.txt")
+Source: "softether\client\*"; DestDir: "{app}\softether"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 
 [Icons]
 Name: "{group}\{#AppNombre}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\icono.ico"
@@ -85,10 +103,84 @@ procedure SHChangeNotify(wEventId: Cardinal; uFlags: Cardinal;
   dwItem1: Cardinal; dwItem2: Cardinal);
   external 'SHChangeNotify@shell32.dll stdcall';
 
+{ v1.0.7: SoftEther INCORPORADO. El instalador oficial de SoftEther
+  no admite instalación silenciosa (verificado: es un instalador
+  propio sin parámetros desatendidos documentados), así que la vía
+  es la de su comunidad oficial: copiar los archivos del cliente y
+  registrar su servicio de Windows (SEVPNCLIENT, binario
+  «vpnclient_x64.exe /service»). El driver de la tarjeta virtual lo
+  instala el propio cliente la primera vez que la app crea la
+  tarjeta por vpncmd (NicCreate), en la sesión del usuario.
+  Si el equipo YA tiene un servicio SEVPNCLIENT (SoftEther propio
+  del usuario), no se toca nada. Si lo registramos nosotros, se
+  deja una marca en el registro para que el desinstalador solo
+  retire el servicio cuando es el incorporado. }
+function SoftEtherExePath(): String;
+begin
+  if FileExists(ExpandConstant('{app}\softether\vpnclient_x64.exe')) then
+    Result := ExpandConstant('{app}\softether\vpnclient_x64.exe')
+  else if FileExists(ExpandConstant('{app}\softether\vpnclient.exe')) then
+    Result := ExpandConstant('{app}\softether\vpnclient.exe')
+  else
+    Result := '';
+end;
+
+procedure RegistrarServicioSoftEther();
+var
+  ResultCode: Integer;
+  Exe: String;
+begin
+  Exe := SoftEtherExePath();
+  if Exe = '' then
+    Exit;
+  { ¿Ya existe el servicio? Entonces es del usuario: no se toca. }
+  if Exec(ExpandConstant('{sys}\sc.exe'), 'query SEVPNCLIENT', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    Exit;
+  if Exec(ExpandConstant('{sys}\sc.exe'),
+      'create SEVPNCLIENT binPath= "' + Exe + ' /service" ' +
+      'DisplayName= "SoftEther VPN Client" start= auto', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    RegWriteStringValue(HKLM, 'Software\Antivirus Hogar PC',
+      'SoftEtherServicioPropio', '1');
+    Exec(ExpandConstant('{sys}\sc.exe'),
+      'description SEVPNCLIENT "Cliente VPN incluido con Antivirus ' +
+      'Hogar PC: trabaja en segundo plano para las conexiones de ' +
+      'VPN Gate."', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\net.exe'), 'start SEVPNCLIENT', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+  Marca: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    { Solo se retira el servicio si lo registró ESTE instalador. }
+    if RegQueryStringValue(HKLM, 'Software\Antivirus Hogar PC',
+        'SoftEtherServicioPropio', Marca) and (Marca = '1') then
+    begin
+      Exec(ExpandConstant('{sys}\net.exe'), 'stop SEVPNCLIENT', '',
+        SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec(ExpandConstant('{sys}\sc.exe'), 'delete SEVPNCLIENT', '',
+        SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      RegDeleteValue(HKLM, 'Software\Antivirus Hogar PC',
+        'SoftEtherServicioPropio');
+    end;
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     SHChangeNotify($08000000, $0000, 0, 0); { SHCNE_ASSOCCHANGED }
+    RegistrarServicioSoftEther();
+  end;
 end;
 
 [UninstallDelete]

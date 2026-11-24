@@ -328,7 +328,7 @@ def test_instalador_recrea_accesos_y_refresca_iconos():
                         "packaging", "instalador.iss")
     with open(ruta, encoding="utf-8") as f:
         iss = f.read()
-    assert '#define AppVersion "1.0.6"' in iss
+    assert "#define AppVersion" in iss  # la vigente, en el test nuevo
     assert "[InstallDelete]" in iss and ".lnk" in iss
     assert 'IconFilename: "{app}\\icono.ico"' in iss
     assert "SHChangeNotify" in iss

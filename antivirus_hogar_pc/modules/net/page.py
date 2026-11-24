@@ -423,6 +423,7 @@ class _PaginaRed(QWidget):
         self.destroyed.connect(lambda _=None: _soltar_trabajos(self))
         self._servidores: list = []       # lista completa descargada
         self._visibles: list = []         # lista filtrada/ordenada en pantalla
+        self._servidor_conectado: str = ""  # hostname con el túnel arriba (v1.0.7)
 
         pagina, layout = pagina_base(
             "Red y VPN",
@@ -563,9 +564,11 @@ class _PaginaRed(QWidget):
             ["País", "Servidor", "Velocidad", "Ping", "Sesiones", "Acción"])
         lay_v.addWidget(self._tabla_vpn)
         lay_v.addWidget(etiqueta(
-            "La conexión la hace SoftEther VPN Client (recomendado por VPN Gate) "
-            "u OpenVPN Connect: la app genera el perfil .ovpn y se lo entrega; "
-            "no crea el túnel."))
+            "Con SoftEther (incluido con la app) la conexión se hace desde "
+            "aquí: pulsa «Conectar» en un servidor y el túnel sube en "
+            "segundo plano; el botón se pone verde y dice «Conectado». "
+            "Sin SoftEther, la app genera el perfil .ovpn y se lo entrega "
+            "a tu cliente VPN."))
         fila_ip = QHBoxLayout()
         self._lbl_ip = etiqueta("Tu IP pública: sin consultar.")
         self._btn_ip = QPushButton("Consultar mi IP pública")
@@ -819,15 +822,34 @@ class _PaginaRed(QWidget):
             tabla.setItem(i, 3, QTableWidgetItem(f"{s.ping_ms} ms"))
             tabla.setItem(i, 4, QTableWidgetItem(str(s.sesiones)))
             boton = QPushButton("Conectar")
+            if s.hostname == self._servidor_conectado:
+                # v1.0.7 (pedido del usuario): el servidor con el túnel
+                # arriba se ve VERDE y dice «Conectado».
+                boton.setText("Conectado")
+                boton.setObjectName("verde")
+                boton.setStyleSheet(
+                    f"background-color: {theme.VERDE_BOTON}; color: white; "
+                    "font-weight: 700; border-radius: 8px; padding: 6px 12px;")
             boton.clicked.connect(lambda _=False, serv=s: self._conectar(serv))
             tabla.setCellWidget(i, 5, boton)
         tabla.resizeColumnsToContents()
 
     def _conectar(self, servidor) -> None:
-        self._lbl_vpn.setText(f"Preparando el perfil de {servidor.hostname}…")
+        self._lbl_vpn.setStyleSheet("")
+        self._lbl_vpn.setText(f"Conectando con {servidor.hostname}…")
 
         def _al_conectar(r: ResultadoModulo) -> None:
-            self._lbl_vpn.setText(r.mensaje)
+            if r.ok and (r.datos or {}).get("conectado"):
+                # v1.0.7: túnel confirmado por SoftEther → el botón de
+                # ESE servidor se pone verde y dice «Conectado».
+                self._servidor_conectado = servidor.hostname
+                self._repintar_servidores()
+                self._lbl_vpn.setStyleSheet(
+                    f"color: {theme.VERDE}; font-weight: 700;")
+                self._lbl_vpn.setText("Conectado: " + r.mensaje)
+            else:
+                self._lbl_vpn.setStyleSheet("")
+                self._lbl_vpn.setText(r.mensaje)
             if r.ok:
                 self._ver_estado_vpn()  # el interruptor refleja el servidor
 
@@ -843,6 +865,10 @@ class _PaginaRed(QWidget):
             "VPN: Desconectada" if resultado.ok else f"VPN: {resultado.mensaje}")
         self._btn_desconectar.setEnabled(False)
         self._lbl_estado_vpn.setText(resultado.mensaje)
+        if resultado.ok and self._servidor_conectado:
+            # v1.0.7: ningún botón queda en verde tras desconectar.
+            self._servidor_conectado = ""
+            self._repintar_servidores()
         self._consultar_ip()  # la IP pública se refresca tras desconectar
 
     def _consultar_ip(self) -> None:
@@ -935,15 +961,23 @@ class _PaginaRed(QWidget):
             self._lbl_switch_vpn.setText(
                 f"VPN: CONECTADA a {servidor}" + (f" ({pais})" if pais else ""))
             self._btn_desconectar.setEnabled(True)
+            # v1.0.7: el botón del servidor conectado se ve en verde.
+            if datos.get("servidor") != self._servidor_conectado:
+                self._servidor_conectado = datos.get("servidor") or ""
+                self._repintar_servidores()
         else:
             self._lbl_switch_vpn.setText("VPN: Desconectada")
             self._btn_desconectar.setEnabled(False)
+            if self._servidor_conectado:
+                self._servidor_conectado = ""
+                self._repintar_servidores()
         lineas = [
             "Clientes VPN instalados: " + (", ".join(clientes) if clientes else "ninguno"),
             "IP pública actual: " + (ip if ip else "sin consultar / no disponible"),
-            ("El túnel lo crea el cliente VPN con el perfil que la app le "
-             "entrega; el interruptor «Desconectar VPN» sí lo apaga desde "
-             "aquí cerrando el proceso de OpenVPN."),
+            ("Con SoftEther (incluido con la app) el túnel lo levanta y "
+             "lo baja la propia app desde aquí; con otro cliente, la app "
+             "le entrega el perfil y «Desconectar VPN» cierra su proceso "
+             "de OpenVPN."),
         ]
         self._lbl_estado_vpn.setText("\n".join(lineas))
 

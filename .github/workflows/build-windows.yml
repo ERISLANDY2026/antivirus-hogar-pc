@@ -63,8 +63,64 @@ jobs:
       - name: Instalar Inno Setup
         run: choco install innosetup -y --no-progress
 
+      # SoftEther VPN Client INCORPORADO (v1.0.7): se descarga el
+      # instalador oficial vigente del sitio del proyecto, se verifica
+      # su tamaño EXACTO contra el listado oficial y se anota su
+      # SHA-256 en el registro. Su instalador no tiene modo silencioso
+      # fiable, así que se incorporan sus ARCHIVOS (extraídos con
+      # 7-Zip, segundo pase sobre el .cab interior) y el .iss registra
+      # el servicio SEVPNCLIENT al instalar. Si algo no cuadra, la
+      # compilación FALLA: la 1.0.7 no sale sin SoftEther.
+      - name: Descargar y preparar SoftEther VPN Client (incorporado)
+        shell: pwsh
+        run: |
+          $url = "https://www.softether-download.com/files/softether/v4.44-9807-rtm-2025.04.16-tree/Windows/SoftEther_VPN_Client/softether-vpnclient-v4.44-9807-rtm-2025.04.16-windows-x86_x64-intel.exe"
+          $exe = "softether-oficial.exe"
+          Invoke-WebRequest -Uri $url -OutFile $exe
+          $f = Get-Item $exe
+          Write-Host "SoftEther oficial: $($f.Length) bytes"
+          if ($f.Length -ne 56249368) { throw "El instalador de SoftEther no pesa lo que dice el listado oficial (56249368): $($f.Length)" }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
+          Write-Host "SoftEther 4.44-9807 SHA-256: $hash"
+          $7z = "C:\Program Files\7-Zip\7z.exe"
+          if (-not (Test-Path $7z)) { throw "7-Zip no está en el runner" }
+          New-Item -ItemType Directory -Force -Path se-extract | Out-Null
+          & $7z x $exe -ose-extract -y | Out-Null
+          Get-ChildItem -Recurse se-extract -Filter *.cab | ForEach-Object { & $7z x $_.FullName "-ose-extract" -y | Out-Null }
+          $cliente = Get-ChildItem -Recurse se-extract -Filter "vpnclient_x64.exe" | Select-Object -First 1
+          if (-not $cliente) { $cliente = Get-ChildItem -Recurse se-extract -Filter "vpnclient.exe" | Select-Object -First 1 }
+          if (-not $cliente) { throw "No apareció vpnclient*.exe al extraer SoftEther" }
+          $destino = "packaging\softether\client"
+          New-Item -ItemType Directory -Force -Path $destino | Out-Null
+          Copy-Item (Join-Path $cliente.Directory.FullName "*") $destino -Recurse -Force
+          # vpncmd/hamcore pueden quedar en otra carpeta de la extracción:
+          # se fusionan si faltan en el destino.
+          foreach ($necesario in @("vpncmd_x64.exe", "vpncmd.exe", "hamcore.se2")) {
+            if (-not (Get-ChildItem -Recurse $destino -Filter $necesario)) {
+              $extra = Get-ChildItem -Recurse se-extract -Filter $necesario | Select-Object -First 1
+              if ($extra) { Copy-Item (Join-Path $extra.Directory.FullName "*") $destino -Recurse -Force }
+            }
+          }
+          $vpncmd = Get-ChildItem -Recurse $destino -Include "vpncmd_x64.exe", "vpncmd.exe"
+          $ham = Get-ChildItem -Recurse $destino -Filter "hamcore.se2"
+          if (-not $vpncmd -or -not $ham) { throw "El paquete SoftEther quedó incompleto (falta vpncmd o hamcore.se2)" }
+          "SoftEther VPN Client 4.44 Build 9807 RTM (2025-04-16)`r`nInstalador oficial: $url`r`nTamano: 56249368 bytes`r`nSHA-256: $hash" | Out-File -FilePath (Join-Path $destino "SOFTETHER-CLIENT.txt") -Encoding ascii
+          Write-Host "Archivos del cliente incorporado:"
+          Get-ChildItem -Recurse $destino | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path $destino).Path.Length)) ($($_.Length))" }
+
       - name: Crear el instalador con Inno Setup
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\instalador.iss'
+
+      # El instalador FINAL debe llevar SoftEther dentro (v1.0.7): se
+      # comprueba por tamaño (el de la 1.0.6 pesaba 40,6 MB; con el
+      # cliente incorporado debe superar los 80 MB) y el artefacto no
+      # se sube si no lo cumple.
+      - name: Verificar que el instalador lleva SoftEther
+        shell: pwsh
+        run: |
+          $inst = Get-Item "dist-instalador\*.exe" | Select-Object -First 1
+          Write-Host "Instalador final: $($inst.Name) = $($inst.Length) bytes"
+          if ($inst.Length -lt 80000000) { throw "El instalador pesa $($inst.Length): SoftEther no quedó incorporado" }
 
       - name: Subir el instalador como artefacto
         uses: actions/upload-artifact@v4

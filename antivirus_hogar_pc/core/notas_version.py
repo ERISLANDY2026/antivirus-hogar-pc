@@ -29,6 +29,17 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.7",
+        "fecha": "24/11/2026",
+        "novedades": [
+            "VPN Gate con SoftEther INCLUIDO: el instalador de la app instala también SoftEther VPN Client (el cliente recomendado por VPN Gate), ya programado para trabajar con la app y en segundo plano. No tienes que instalar nada más ni abrir ningún otro programa.",
+            "Conectar de verdad desde la app: en «Red y VPN», el botón «Conectar» de cada servidor crea la conexión y la levanta desde la propia app, sin ventanas ajenas; cuando el túnel está arriba, el botón se pone VERDE y dice «Conectado». «Desconectar VPN» lo baja desde aquí mismo.",
+            "Si SoftEther no estuviera en el equipo, se mantiene la vía de siempre: la app guarda el perfil .ovpn y te dice cómo abrirlo con tu cliente VPN.",
+            "Discos: «Optimizar volúmenes» ahora confirma el resultado de verdad — además del aviso directo de Windows, la app comprueba el registro de eventos de Windows y la salida completa de la optimización; cuando consta que terminó, dice «Optimización finalizada», y si algo falló enseña la causa verdadera en vez de «causa desconocida».",
+            "Actualizaciones: la carpeta donde se descargan las versiones nuevas se crea sola si no existe (en una PC faltaba y el botón de actualizar fallaba por eso; ya no puede volver a pasar).",
+        ],
+    },
+    {
         "version": "1.0.6",
         "fecha": "24/11/2026",
         "novedades": [

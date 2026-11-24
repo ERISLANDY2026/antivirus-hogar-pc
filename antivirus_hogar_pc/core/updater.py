@@ -96,6 +96,12 @@ def descargar_archivo(url: str, destino: str, timeout: int = 600,
     - La verificación SHA-256 la sigue haciendo quien llama, sobre el
       archivo ya completo.
     """
+    # v1.0.7 (lección de la entrega 1.0.6 en la PC real): si la carpeta
+    # de destino no existe, la descarga moría al instante al intentar
+    # escribir («No se pudo descargar la actualización») y el usuario
+    # tuvo que crearla a mano. El descargador la crea SIEMPRE.
+    carpeta_destino = os.path.dirname(os.path.abspath(destino))
+    os.makedirs(carpeta_destino, exist_ok=True)
     intentos = max(1, int(reintentos))
     ultimo_error: BaseException | None = None
     for intento in range(intentos):

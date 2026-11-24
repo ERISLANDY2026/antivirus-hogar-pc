@@ -283,10 +283,9 @@ def test_autorreparar_sin_nada_que_reparar_no_toca(monkeypatch, tmp_path):
 # === 5. Notas de la versión ====================================================
 
 def test_notas_y_version_106():
-    from antivirus_hogar_pc import config
+    # v1.0.7: la entrada 1.0.6 queda como HISTORIAL (la versión
+    # vigente la fija el test de la entrega en curso).
     from antivirus_hogar_pc.core import notas_version
 
-    assert config.VERSION == "1.0.6"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.6"
     notas = notas_version.notas_de("1.0.6")
     assert notas is not None and len(notas["novedades"]) >= 3
