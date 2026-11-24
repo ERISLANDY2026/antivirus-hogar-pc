@@ -194,6 +194,14 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
                     "detalle": f"Tiempo de vigilancia agotado ({timeout} s)."}
 
         resultado = _leer_texto_tolerante(ruta_resultado).strip()
+        # El archivo puede existir un instante ANTES de que el proceso
+        # elevado vuelque su contenido (en Windows se ve vacío): si se
+        # lee vacío, se espera y se relee con un margen antes de juzgar.
+        for _ in range(10):
+            if resultado:
+                break
+            time.sleep(0.2)
+            resultado = _leer_texto_tolerante(ruta_resultado).strip()
         if resultado.startswith("OK"):
             if al_progreso is not None:
                 try:
