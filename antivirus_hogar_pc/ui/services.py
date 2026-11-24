@@ -42,6 +42,12 @@ class Ajustes:
     fondo_animado: bool = True   # radar animado del Panel (v1.0.2)
     escaneo_semanal: bool = False
     ultimo_chequeo_actualizacion: float = 0.0
+    # Arranque con Windows + rutina automática (v1.0.5, orden del
+    # usuario): activados por defecto; interruptores en Ajustes.
+    arranque_windows: bool = True
+    rutina_automatica: bool = True
+    # Programaciones (v1.0.5): lista de dicts de core.programaciones.
+    programaciones: list = field(default_factory=list)
 
     _ruta: str = field(default="", repr=False)
 
@@ -58,6 +64,22 @@ class Ajustes:
                         setattr(ajustes, clave, valor)
             except (OSError, ValueError):
                 pass
+        # Migración del canal (v1.0.5): la v1.0.1 guardó en ajustes.json
+        # una url_actualizacion con un id MARCADOR («…Pendiente», un
+        # archivo que nunca existió) y cada versión instalada encima la
+        # heredaba, porque la app usa el ajuste guardado y no el valor
+        # del código: el botón de actualizar daba «no encontrado» para
+        # siempre (INFORME-CANAL.md, addenda forense). Si la URL
+        # guardada no es la del código — o trae el marcador — se
+        # restaura la buena y se guarda, para que el canal se repare
+        # solo al abrir la app.
+        guardada = ajustes.url_actualizacion or ""
+        if guardada != config.UPDATE_VERSION_URL or "Pendiente" in guardada:
+            ajustes.url_actualizacion = config.UPDATE_VERSION_URL
+            try:
+                ajustes.guardar()
+            except OSError:
+                pass  # la URL efectiva ya es la buena en esta sesión
         return ajustes
 
     def guardar(self) -> None:

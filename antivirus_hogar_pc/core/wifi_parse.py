@@ -10,12 +10,17 @@ from dataclasses import dataclass
 class InfoWifi:
     nombre: str = ""
     ssid: str = ""
+    estado: str = ""
     autenticacion: str = ""
     cifrado: str = ""
     senal_pct: int | None = None
     banda: str = ""
     canal: str = ""
     tipo_radio: str = ""
+    # Velocidad de ENLACE negociada con el router (v1.0.5): la da el
+    # propio netsh («Velocidad de recepción/transmisión (Mbps)»).
+    velocidad_rx_mbps: float | None = None
+    velocidad_tx_mbps: float | None = None
 
     @property
     def conectada(self) -> bool:
@@ -25,13 +30,29 @@ class InfoWifi:
 _CLAVES = {
     "nombre": ("Nombre", "Name"),
     "ssid": ("SSID",),
+    "estado": ("Estado", "State"),
     "autenticacion": ("Autenticación", "Autentificación", "Authentication"),
     "cifrado": ("Cifrado", "Cipher"),
     "senal": ("Señal", "Signal"),
     "banda": ("Banda", "Band"),
     "canal": ("Canal", "Channel"),
     "tipo_radio": ("Tipo de radio", "Radio type"),
+    "velocidad_rx": ("Velocidad de recepción (Mbps)", "Receive rate (Mbps)"),
+    "velocidad_tx": ("Velocidad de transmisión (Mbps)", "Transmit rate (Mbps)"),
 }
+
+
+def _numero_flotante(valor: str) -> float | None:
+    """«866.7» o «866,7» (netsh según idioma) → float; None si no hay."""
+    import re
+
+    m = re.search(r"\d+(?:[.,]\d+)?", valor or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(0).replace(",", "."))
+    except ValueError:
+        return None
 
 
 def parsear_netsh_wlan(texto: str) -> InfoWifi:
@@ -47,10 +68,35 @@ def parsear_netsh_wlan(texto: str) -> InfoWifi:
                 if campo == "senal":
                     numero = "".join(c for c in valor if c.isdigit())
                     info.senal_pct = int(numero) if numero else None
+                elif campo == "velocidad_rx":
+                    info.velocidad_rx_mbps = _numero_flotante(valor)
+                elif campo == "velocidad_tx":
+                    info.velocidad_tx_mbps = _numero_flotante(valor)
                 else:
-                    setattr(info, campo if campo != "senal" else "senal_pct", valor)
+                    setattr(info, campo, valor)
                 break
     return info
+
+
+def frecuencia_mhz(banda: str, canal: str) -> int | None:
+    """Frecuencia central (MHz) desde banda + canal Wi-Fi.
+
+    2.4 GHz: 2407 + 5·canal (el 14 es especial: 2484). 5 GHz:
+    5000 + 5·canal. 6 GHz: 5950 + 5·canal. Sin datos → None (no se
+    inventa: el panel enseña «—»).
+    """
+    try:
+        c = int(str(canal).strip())
+    except (TypeError, ValueError):
+        return None
+    b = (banda or "").lower()
+    if "2.4" in b or (not b and 1 <= c <= 14):
+        return 2484 if c == 14 else 2407 + 5 * c
+    if "5" in b:
+        return 5000 + 5 * c
+    if "6" in b:
+        return 5950 + 5 * c
+    return None
 
 
 def parsear_perfiles_guardados(texto: str) -> list[str]:

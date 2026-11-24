@@ -9,8 +9,10 @@ solo si el usuario pulsa el botón verde, descarga el instalador, VERIFICA su
 SHA-256 y lo abre. En Windows sin firma, SmartScreen avisará: es lo esperado
 y se explica en el propio diálogo.
 """
+import http.client
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -74,15 +76,77 @@ def descargar_texto(url: str, timeout: int = 30) -> str:
         raise ErrorActualizacion("sin_conexion", str(exc)) from exc
 
 
-def descargar_archivo(url: str, destino: str, timeout: int = 600) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "AntivirusHogarPC"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp, open(destino, "wb") as f:
-        while True:
-            bloque = resp.read(1024 * 256)
-            if not bloque:
-                break
-            f.write(bloque)
-    return destino
+def descargar_archivo(url: str, destino: str, timeout: int = 600,
+                      reintentos: int = 3, pausa: float = 0.4) -> str:
+    """Descarga un archivo con REINTENTOS y REANUDACIÓN (v1.0.5).
+
+    La descarga del instalador desde la red del usuario se cortó dos
+    veces el 2026-11-24 («No se pudo descargar la actualización»): un
+    solo intento no basta en una conexión inestable. Ahora:
+
+    - Hasta ``reintentos`` intentos en total ante cortes de red,
+      tiempos fuera y errores 5xx/429 del servidor.
+    - Si un intento se corta a mitad, el siguiente pide ``Range`` desde
+      los bytes ya escritos en ``destino``; si el servidor responde 206
+      se añade al parcial, y si responde 200 (no acepta rangos) se
+      empieza de cero. Un 416 invalida el parcial y se borra.
+    - Los demás 4xx (404 y compañía) no se reintentan: no se arreglan
+      esperando. Si todos los intentos fallan se relanza la ÚLTIMA
+      excepción, como antes: quien llama registra el detalle técnico.
+    - La verificación SHA-256 la sigue haciendo quien llama, sobre el
+      archivo ya completo.
+    """
+    intentos = max(1, int(reintentos))
+    ultimo_error: BaseException | None = None
+    for intento in range(intentos):
+        ya = os.path.getsize(destino) if os.path.isfile(destino) else 0
+        cabeceras = {"User-Agent": "AntivirusHogarPC"}
+        if ya > 0:
+            cabeceras["Range"] = f"bytes={ya}-"
+        req = urllib.request.Request(url, headers=cabeceras)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                # 206 = el servidor aceptó seguir desde el parcial;
+                # 200 = ignoró el Range: se reescribe desde cero.
+                anadir = ya > 0 and getattr(resp, "status", 200) == 206
+                esperado_txt = resp.headers.get("Content-Length")
+                esperado = (int(esperado_txt) if esperado_txt
+                            and esperado_txt.isdigit() else None)
+                escritos = 0
+                with open(destino, "ab" if anadir else "wb") as f:
+                    while True:
+                        bloque = resp.read(1024 * 256)
+                        if not bloque:
+                            break
+                        f.write(bloque)
+                        escritos += len(bloque)
+                if esperado is not None and escritos < esperado:
+                    # Corte LIMPIO (EOF anticipado): read() no siempre
+                    # lanza; sin esta comprobación el parcial pasaría
+                    # por descarga completa. Se trata como corte más:
+                    # el siguiente intento reanuda con Range.
+                    raise http.client.IncompleteRead(
+                        f"descarga cortada: {escritos} de {esperado} bytes",
+                        esperado)
+            return destino
+        except urllib.error.HTTPError as exc:
+            ultimo_error = exc
+            if exc.code == 416 and ya > 0:
+                # El rango ya no vale (parcial corrupto o era el archivo
+                # entero): se borra y el siguiente intento baja de cero.
+                try:
+                    os.remove(destino)
+                except OSError:
+                    pass
+            elif 400 <= exc.code < 500 and exc.code != 429:
+                raise  # error del cliente: reintentar no lo arregla
+        except (urllib.error.URLError, TimeoutError, OSError,
+                http.client.HTTPException) as exc:
+            ultimo_error = exc
+        if intento + 1 < intentos and pausa:
+            time.sleep(pausa * (intento + 1))
+    assert ultimo_error is not None  # intentos >= 1: siempre hubo un fallo
+    raise ultimo_error
 
 
 def verificar_sha256(ruta: str, esperado: str) -> bool:

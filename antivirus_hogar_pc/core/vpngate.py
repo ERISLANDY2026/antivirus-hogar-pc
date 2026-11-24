@@ -132,23 +132,43 @@ def descargar_lista_servidores(url: str, timeout: int = 60) -> list[ServidorVPN]
 # HTTP respondió 200 con 99 servidores; por eso la cadena prueba las
 # tres rutas, con reintento, antes de rendirse a la semilla.
 
-def descargar_lista_con_respaldo(urls, timeout: int = 45,
-                                 intentos_por_url: int = 2,
+def descargar_lista_con_respaldo(urls, timeout: int = 20,
+                                 intentos_por_url: int = 1,
                                  descargador=None,
-                                 dormir=None) -> tuple[list[ServidorVPN], str]:
+                                 dormir=None,
+                                 plazo_total: float = 75.0,
+                                 reloj=None) -> tuple[list[ServidorVPN], str]:
     """Prueba cada URL (con reintentos) hasta que una devuelva servidores.
     Devuelve (servidores, url_que_funciono). Si todas fallan, lanza
     RuntimeError con la causa del último intento. `descargador(url,
-    timeout) -> texto` y `dormir(segundos)` son inyectables para tests."""
+    timeout) -> texto`, `dormir(segundos)` y `reloj()` son inyectables
+    para tests.
+
+    PLAZO TOTAL (corrección v1.0.5, causa raíz del desplegable vacío):
+    hasta la v1.0.4 la cadena no tenía límite global — 3 rutas × 2
+    intentos × 45 s por operación de socket, y el `timeout` de urllib
+    es POR OPERACIÓN: una conexión que gotea (hotspot inestable) lo
+    estiraba sin fin, el hilo nunca volvía y ni la lista ni la semilla
+    llegaban a la página. Ahora el conjunto entero tiene `plazo_total`
+    segundos de reloj; cada intento recibe como timeout lo que quede
+    de plazo, y agotado el plazo se lanza la excepción para que el
+    respaldo (la semilla) entre al momento.
+    """
     import time as _time
 
     bajar = descargador or _descargar_texto
     esperar = dormir if dormir is not None else _time.sleep
+    ahora = reloj or _time.monotonic
+    inicio = ahora()
     ultimo_error: Exception | None = None
     for url in urls:
         for intento in range(max(1, intentos_por_url)):
+            restante = plazo_total - (ahora() - inicio)
+            if restante <= 0:
+                break
             try:
-                servidores = parsear_csv_vpngate(bajar(url, timeout))
+                servidores = parsear_csv_vpngate(
+                    bajar(url, min(timeout, max(1.0, restante))))
                 if servidores:
                     return servidores, url
                 ultimo_error = RuntimeError(
@@ -157,7 +177,7 @@ def descargar_lista_con_respaldo(urls, timeout: int = 45,
             except Exception as exc:  # red/TLS/timeout: a la siguiente ruta
                 ultimo_error = exc
             if intento + 1 < max(1, intentos_por_url):
-                esperar(1.5)
+                esperar(min(1.5, max(0.0, plazo_total - (ahora() - inicio))))
     raise RuntimeError(str(ultimo_error) if ultimo_error else
                        "sin rutas de descarga configuradas")
 

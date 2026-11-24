@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -25,8 +26,9 @@ from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
 from antivirus_hogar_pc.core.v102 import valorar_velocidad
 from antivirus_hogar_pc.core.vpngate import ordenar_servidores, paises_disponibles
-from antivirus_hogar_pc.core.wifi_parse import valorar_wifi
+from antivirus_hogar_pc.core.wifi_parse import frecuencia_mhz, valorar_wifi
 from antivirus_hogar_pc.ui import theme
+from antivirus_hogar_pc.ui.icons import pixmap_icono
 from antivirus_hogar_pc.ui.paginas_base import boton_principal, etiqueta, fila_estado, pagina_base, tarjeta
 from antivirus_hogar_pc.ui.widgets_v102 import BarraProgreso, BotonPulso
 
@@ -54,6 +56,42 @@ class _Trabajo(QThread):
 
 def _lanzar(pagina: QWidget, funcion, al_terminar) -> _Trabajo:
     trabajo = _Trabajo(funcion, pagina)
+    trabajo.terminado.connect(al_terminar)
+    trabajo.terminado.connect(lambda _r: pagina._trabajos.remove(trabajo)
+                              if trabajo in pagina._trabajos else None)
+    pagina._trabajos.append(trabajo)
+    trabajo.start()
+    return trabajo
+
+
+class _TrabajoVivo(QThread):
+    """Trabajo con señal de PROGRESO en vivo (v1.0.5): la función
+    recibe un emisor progreso(*valores) seguro entre hilos y el
+    resultado final llega como ResultadoModulo, igual que _Trabajo.
+    Lo usa la medición de velocidad: los Mbps se pintan MIENTRAS se
+    mide, no solo al final."""
+
+    terminado = Signal(object)  # ResultadoModulo
+    progreso = Signal(object)   # tupla de valores de progreso
+
+    def __init__(self, funcion, parent=None):
+        super().__init__(parent)
+        self._funcion = funcion
+
+    def run(self):  # noqa: N802 - nombre de Qt
+        try:
+            resultado = self._funcion(
+                lambda *valores: self.progreso.emit(tuple(valores)))
+        except Exception as exc:  # la UI nunca recibe excepciones
+            resultado = ResultadoModulo(
+                ok=False, mensaje=f"No se pudo completar: {exc}")
+        self.terminado.emit(resultado)
+
+
+def _lanzar_vivo(pagina: QWidget, funcion, al_progreso,
+                 al_terminar) -> _TrabajoVivo:
+    trabajo = _TrabajoVivo(funcion, pagina)
+    trabajo.progreso.connect(lambda valores: al_progreso(*valores))
     trabajo.terminado.connect(al_terminar)
     trabajo.terminado.connect(lambda _r: pagina._trabajos.remove(trabajo)
                               if trabajo in pagina._trabajos else None)
@@ -355,6 +393,39 @@ class _PaginaRed(QWidget):
         self._lay_wifi = QVBoxLayout(self._contenedor_wifi)
         self._lay_wifi.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._contenedor_wifi)
+        # Resumen INTERACTIVO de la red (v1.0.5): el NOMBRE de la red
+        # conectada se ve de un vistazo y, al tocar el resumen, se
+        # despliega el panel con TODOS los detalles que Windows da.
+        self._btn_red_wifi = QPushButton("Wi-Fi: todavía sin leer")
+        self._btn_red_wifi.setObjectName("menu")
+        self._btn_red_wifi.setIcon(pixmap_icono("wifi", theme.CIAN, 24))
+        self._btn_red_wifi.setCheckable(True)
+        self._btn_red_wifi.setStyleSheet(
+            "font-size: 15px; font-weight: 700; text-align: left;")
+        self._btn_red_wifi.toggled.connect(self._alternar_detalles_wifi)
+        lay.addWidget(self._btn_red_wifi)
+        self._panel_wifi = QWidget()
+        rejilla_wifi = QGridLayout(self._panel_wifi)
+        rejilla_wifi.setContentsMargins(10, 4, 6, 4)
+        rejilla_wifi.setHorizontalSpacing(14)
+        rejilla_wifi.setVerticalSpacing(3)
+        self._wifi_valores: dict[str, QLabel] = {}
+        for fila_det, (clave_det, titulo_det) in enumerate((
+                ("ssid", "Red (SSID)"), ("senal", "Intensidad de señal"),
+                ("banda", "Banda"), ("canal", "Canal"),
+                ("frecuencia", "Frecuencia"),
+                ("enlace", "Velocidad de enlace"),
+                ("seguridad", "Seguridad"), ("radio", "Tipo de radio"),
+                ("ip", "IP local"), ("puerta", "Puerta de enlace"),
+                ("dns", "DNS"), ("perfil", "Perfil de red"))):
+            rejilla_wifi.addWidget(etiqueta(titulo_det, suave=True),
+                                   fila_det, 0)
+            valor_det = etiqueta("—")
+            valor_det.setStyleSheet("font-weight: 600;")
+            rejilla_wifi.addWidget(valor_det, fila_det, 1)
+            self._wifi_valores[clave_det] = valor_det
+        self._panel_wifi.setVisible(False)
+        lay.addWidget(self._panel_wifi)
         self._lbl_wifi_detalle = etiqueta("")
         lay.addWidget(self._lbl_wifi_detalle)
         self._lbl_perfiles = etiqueta("", suave=True)
@@ -374,6 +445,14 @@ class _PaginaRed(QWidget):
         self._tarjeta_vel = tarjeta_vel
         self._lbl_velocidad = etiqueta("Todavía no se ha medido la velocidad.")
         lay_vel.addWidget(self._lbl_velocidad)
+        # Valores EN VIVO (v1.0.5): ping, descarga y subida en colores
+        # RGB y letra mediana (16 px), actualizándose DURANTE la
+        # medición — primero la descarga y después la subida.
+        fila_vals = QHBoxLayout()
+        self._val_ping = self._bloque_valor(fila_vals, "PING", theme.CIAN)
+        self._val_bajada = self._bloque_valor(fila_vals, "DESCARGA", theme.VERDE)
+        self._val_subida = self._bloque_valor(fila_vals, "SUBIDA", "#A78BFA")
+        lay_vel.addLayout(fila_vals)
         self._lbl_valoracion = etiqueta("", suave=True)
         lay_vel.addWidget(self._lbl_valoracion)
         self._btn_velocidad = boton_principal("Medir velocidad", "primario")
@@ -430,6 +509,11 @@ class _PaginaRed(QWidget):
         self._lbl_vpn = etiqueta("Pulsa «Actualizar lista de servidores» para "
                                  "descargar la lista pública de VPN Gate.")
         lay_v.addWidget(self._lbl_vpn)
+        # Barrita TEMPORAL de la actualización (v1.0.5): visible solo
+        # mientras se busca la lista; desaparece al terminar.
+        self._barra_vpn = BarraProgreso()
+        self._barra_vpn.setVisible(False)
+        lay_v.addWidget(self._barra_vpn)
         self._tabla_vpn = QTableWidget(0, 6)
         self._tabla_vpn.setHorizontalHeaderLabels(
             ["País", "Servidor", "Velocidad", "Ping", "Sesiones", "Acción"])
@@ -467,8 +551,17 @@ class _PaginaRed(QWidget):
         self._btn_wifi.setText("Leyendo…")
         self._barra_wifi.setVisible(True)
         self._barra_wifi.fijar_texto("Leyendo la red Wi-Fi…")
+        self._btn_red_wifi.setText("Wi-Fi: leyendo…")
         self._lbl_wifi_detalle.setText("Leyendo la red Wi-Fi…")
         _lanzar(self, srv.informe_wifi, self._wifi_cargado)
+
+    def _alternar_detalles_wifi(self, abierto: bool) -> None:
+        self._panel_wifi.setVisible(bool(abierto))
+
+    def _fijar_detalle_wifi(self, clave: str, texto: str) -> None:
+        lbl = self._wifi_valores.get(clave)
+        if lbl is not None:
+            lbl.setText(texto if texto else "—")
 
     def _wifi_cargado(self, resultado: ResultadoModulo) -> None:
         import time as _time
@@ -488,6 +581,7 @@ class _PaginaRed(QWidget):
                 causa += f" ({resultado.detalle_tecnico})"
             self._lay_wifi.addWidget(fila_estado(
                 "wifi", "estatico", "Wi-Fi no disponible", causa, theme.ROJO))
+            self._btn_red_wifi.setText("Wi-Fi no disponible")
             self._lbl_wifi_detalle.setText("")
             self._lbl_perfiles.setText("")
             self._lbl_wifi_sello.setText(
@@ -499,21 +593,63 @@ class _PaginaRed(QWidget):
         info = datos.get("info")
         nivel = datos.get("nivel", "sin_datos")
         frase = datos.get("frase", "")
-        color = {"bien": theme.VERDE, "regular": theme.AMBAR, "mal": theme.ROJO}.get(
-            nivel, theme.CIAN)
-        titulo = f"Red: {info.ssid}" if info and info.ssid else "Sin red Wi-Fi conectada"
-        self._lay_wifi.addWidget(fila_estado("wifi", "estatico", titulo, frase, color))
+        red = datos.get("red_local") or {}
+        # Panel de detalles (v1.0.5): se rellena con TODO lo que
+        # Windows expone — netsh (SSID, señal, banda, canal, enlace,
+        # seguridad, radio) + la conexión local (IP, puerta, DNS).
+        if info is not None:
+            self._fijar_detalle_wifi("ssid", info.ssid)
+            self._fijar_detalle_wifi(
+                "senal", f"{info.senal_pct} %"
+                if info.senal_pct is not None else "")
+            self._fijar_detalle_wifi("banda", info.banda)
+            self._fijar_detalle_wifi("canal", info.canal)
+            frec = frecuencia_mhz(info.banda, info.canal)
+            self._fijar_detalle_wifi(
+                "frecuencia", f"{frec} MHz" if frec else "")
+            if info.velocidad_rx_mbps is not None or \
+                    info.velocidad_tx_mbps is not None:
+                rx = (f"{info.velocidad_rx_mbps:g}"
+                      if info.velocidad_rx_mbps is not None else "—")
+                tx = (f"{info.velocidad_tx_mbps:g}"
+                      if info.velocidad_tx_mbps is not None else "—")
+                self._fijar_detalle_wifi("enlace", f"↓ {rx} Mbps · ↑ {tx} Mbps")
+            else:
+                self._fijar_detalle_wifi("enlace", "")
+            seguridad = info.autenticacion or ""
+            if info.cifrado:
+                seguridad = (f"{seguridad} ({info.cifrado})"
+                             if seguridad else info.cifrado)
+            self._fijar_detalle_wifi("seguridad", seguridad)
+            self._fijar_detalle_wifi("radio", info.tipo_radio)
+        self._fijar_detalle_wifi("ip", str(red.get("ip") or ""))
+        self._fijar_detalle_wifi("puerta", str(red.get("puerta_enlace") or ""))
+        self._fijar_detalle_wifi("dns", ", ".join(red.get("dns") or []))
+        self._fijar_detalle_wifi("perfil", str(datos.get("perfil_red") or ""))
+        color = {"bien": theme.VERDE, "regular": theme.AMBAR,
+                 "mal": theme.ROJO}.get(nivel, theme.CIAN)
         if info and info.conectada:
-            senal = f"{info.senal_pct} %" if info.senal_pct is not None else "—"
-            detalle = (f"Señal {senal} · Banda {info.banda or '—'} · Canal {info.canal or '—'} "
-                       f"· Seguridad {info.autenticacion or '—'} ({info.cifrado or '—'}) "
-                       f"· Radio {info.tipo_radio or '—'}")
-            categoria = datos.get("perfil_red") or ""
-            if categoria:
-                detalle += f" · Perfil de red: {categoria}"
-            self._lbl_wifi_detalle.setText(detalle)
+            # El NOMBRE de la red, visible sin adivinar (v1.0.5).
+            senal_txt = (f" · Señal {info.senal_pct} %"
+                         if info.senal_pct is not None else "")
+            self._btn_red_wifi.setText(
+                f"Red Wi-Fi: {info.ssid}{senal_txt} — toca para los detalles")
+            self._lbl_wifi_detalle.setStyleSheet(f"color: {color};")
+            self._lbl_wifi_detalle.setText(frase)
         else:
-            self._lbl_wifi_detalle.setText("")
+            self._btn_red_wifi.setText(
+                "Sin red Wi-Fi conectada — toca para los detalles")
+            self._lbl_wifi_detalle.setStyleSheet("")
+            if red.get("ip"):
+                # Por cable no es «sección vacía»: se dice claro y los
+                # datos de ESA conexión van en el panel de detalles.
+                self._lbl_wifi_detalle.setText(
+                    "Esta PC no está por Wi-Fi: la conexión va por cable "
+                    f"u otra vía ({red.get('interfaz') or 'Ethernet'}, "
+                    f"IP {red['ip']}). Sus datos están en el detalle.")
+            else:
+                self._lbl_wifi_detalle.setText(
+                    frase or "No hay ninguna red Wi-Fi conectada ahora mismo.")
         perfiles = datos.get("perfiles_guardados") or []
         self._lbl_perfiles.setText(
             "Redes guardadas en este PC: " + (", ".join(perfiles) if perfiles else "ninguna"))
@@ -521,20 +657,60 @@ class _PaginaRed(QWidget):
     # -- VPN Gate ---------------------------------------------------------------------
     def _cargar_servidores(self) -> None:
         self._tarjeta_vpn.fijar_activa(True)
-        self._lbl_vpn.setStyleSheet("")
-        self._lbl_vpn.setText("Descargando la lista de VPN Gate…")
+        # Barrita temporal: aparece mientras se actualiza (v1.0.5).
+        self._barra_vpn.setVisible(True)
+        self._barra_vpn.fijar_texto("Actualizando la lista de servidores…")
         self._btn_servidores.setEnabled(False)
-        _lanzar(self, srv.descargar_servidores_completos, self._servidores_cargados)
+        # SEMILLA PRIMERO (v1.0.5, corrección de raíz): si aún no hay
+        # lista, el desplegable y la tabla se pueblan AL INSTANTE con
+        # la lista de respaldo local — nunca quedan vacíos esperando a
+        # la red; la lista en vivo reemplaza cuando llega.
+        if not self._servidores:
+            semilla = srv.servidores_semilla()
+            if semilla.ok:
+                self._aplicar_lista(semilla)
+                self._lbl_vpn.setStyleSheet(
+                    f"color: {theme.AMBAR}; font-weight: 600;")
+                self._lbl_vpn.setText(
+                    "⚠ " + (semilla.mensaje or "") +
+                    " Buscando la lista en vivo…")
+            else:
+                self._lbl_vpn.setStyleSheet("")
+                self._lbl_vpn.setText("Descargando la lista de VPN Gate…")
+        else:
+            self._lbl_vpn.setStyleSheet("")
+            self._lbl_vpn.setText("Actualizando la lista de servidores…")
+        _lanzar(self, srv.descargar_servidores_completos,
+                self._servidores_cargados)
 
     def _servidores_cargados(self, resultado: ResultadoModulo) -> None:
         self._tarjeta_vpn.fijar_activa(False)
         self._btn_servidores.setEnabled(True)
+        # La barrita temporal DESAPARECE al terminar (v1.0.5).
+        self._barra_vpn.terminar()
+        self._barra_vpn.setVisible(False)
         if not resultado.ok:
-            # Error VISIBLE con la causa y reintento (nada de vacío en silencio)
+            if self._servidores:
+                # Ya había lista (la semilla puebla desde el primer
+                # segundo): se CONSERVA y se avisa de que la puesta al
+                # día falló — nunca vacío en silencio.
+                self._lbl_vpn.setStyleSheet(
+                    f"color: {theme.AMBAR}; font-weight: 600;")
+                self._lbl_vpn.setText(
+                    "⚠ No se pudo actualizar la lista en vivo; sigues "
+                    "con la lista de respaldo. " + resultado.mensaje)
+                self._btn_servidores.setText("Reintentar descarga")
+                return
+            # Error VISIBLE con la causa y reintento
             self._lbl_vpn.setStyleSheet(f"color: {theme.ROJO};")
             self._lbl_vpn.setText(resultado.mensaje)
             self._btn_servidores.setText("Reintentar descarga")
             return
+        self._aplicar_lista(resultado)
+
+    def _aplicar_lista(self, resultado: ResultadoModulo) -> None:
+        """Puebla desplegable y tabla con una lista ya obtenida (en
+        vivo o la semilla) y deja el aviso que corresponda."""
         if isinstance(resultado.datos, dict):
             datos = resultado.datos
             self._servidores = list(datos.get("servidores") or [])
@@ -558,6 +734,10 @@ class _PaginaRed(QWidget):
         self._btn_servidores.setText("Actualizar lista de servidores")
         self._poblar_combo_paises()
         self._repintar_servidores()
+        # Aviso final obligatorio (v1.0.5): cuántos servidores/países
+        # se cargaron y de QUÉ fuente vinieron.
+        if resultado.mensaje:
+            self._lbl_vpn.setText(resultado.mensaje)
 
     def _poblar_combo_paises(self) -> None:
         pais_actual = self._combo_pais.currentData()
@@ -628,12 +808,46 @@ class _PaginaRed(QWidget):
                     f"Tu IP pública: {r.datos}" if r.ok else r.mensaje))
 
     # -- Velocidad y estado VPN -------------------------------------------------------
+    @staticmethod
+    def _bloque_valor(fila: QHBoxLayout, titulo: str, color: str) -> QLabel:
+        """Un medidor de la fila de velocidad: rótulo suave + valor en
+        color RGB, letra mediana (16 px) y negrita."""
+        bloque = QVBoxLayout()
+        bloque.addWidget(etiqueta(titulo, suave=True))
+        valor = QLabel("—")
+        valor.setStyleSheet(
+            f"color: {color}; font-size: 16px; font-weight: 700;")
+        bloque.addWidget(valor)
+        fila.addLayout(bloque)
+        fila.addStretch(1)
+        return valor
+
     def _medir_velocidad(self) -> None:
         self._tarjeta_vel.fijar_activa(True)
-        self._lbl_velocidad.setText("Midiendo la velocidad… (descarga real de prueba)")
+        self._lbl_velocidad.setText(
+            "Midiendo en segundo plano… primero la DESCARGA y después "
+            "la SUBIDA (valores en vivo).")
         self._lbl_valoracion.setText("")
+        self._val_ping.setText("…")
+        self._val_bajada.setText("…")
+        self._val_subida.setText("—")
         self._btn_velocidad.setEnabled(False)
-        _lanzar(self, srv.prueba_velocidad, self._velocidad_medida)
+        _lanzar_vivo(self,
+                     lambda emisor: srv.prueba_velocidad_viva(
+                         lambda fase, mbps: emisor(fase, mbps)),
+                     self._progreso_velocidad, self._velocidad_medida)
+
+    def _progreso_velocidad(self, fase: str, mbps: float) -> None:
+        # Llega DURANTE la medición (señal desde el hilo): el valor de
+        # la fase en curso se actualiza en pantalla, no solo al final.
+        if fase == "bajada":
+            self._val_bajada.setText(f"{mbps:.1f} Mbps")
+            self._lbl_velocidad.setText(
+                f"Descargando… {mbps:.1f} Mbps en este momento.")
+        elif fase == "subida":
+            self._val_subida.setText(f"{mbps:.1f} Mbps")
+            self._lbl_velocidad.setText(
+                f"Subiendo… {mbps:.1f} Mbps en este momento.")
 
     def _velocidad_medida(self, resultado: ResultadoModulo) -> None:
         self._tarjeta_vel.fijar_activa(False)
@@ -641,12 +855,20 @@ class _PaginaRed(QWidget):
         if not resultado.ok:
             self._lbl_velocidad.setText(resultado.mensaje)
             self._lbl_valoracion.setText("")
+            self._val_ping.setText("—")
+            self._val_bajada.setText("—")
+            self._val_subida.setText("—")
             return
         datos = resultado.datos or {}
         ping = datos.get("ping_ms")
         bajada = float(datos.get("bajada_mbps") or 0.0)
-        ping_txt = f"{ping} ms" if ping is not None else "—"
-        self._lbl_velocidad.setText(f"Ping: {ping_txt} · Bajada: {bajada:.1f} Mbps")
+        subida = float(datos.get("subida_mbps") or 0.0)
+        self._val_ping.setText(f"{ping} ms" if ping is not None else "—")
+        self._val_bajada.setText(f"{bajada:.1f} Mbps")
+        self._val_subida.setText(f"{subida:.1f} Mbps")
+        self._lbl_velocidad.setText(
+            f"Medición terminada — Ping: {ping if ping is not None else '—'} ms"
+            f" · Bajada: {bajada:.1f} Mbps · Subida: {subida:.1f} Mbps")
         self._lbl_valoracion.setText(valorar_velocidad(bajada))
 
     def _ver_estado_vpn(self) -> None:

@@ -117,7 +117,7 @@ def test_drivers_consulta_completada_sin_novedad_es_al_dia(monkeypatch):
     from antivirus_hogar_pc.winapi import drivers_win
 
     monkeypatch.setattr(drivers_win, "buscar_drivers_windows_update",
-                        lambda: [])
+                        lambda *a, **k: [])
     buscar = svc.escanear_drivers_paso2_buscar(_instalados())
     assert buscar.datos["wu_consultado"] is True
     final = svc.escanear_drivers_paso3_comparar(
@@ -133,7 +133,7 @@ def test_drivers_con_novedad_es_hay_uno_mas_nuevo(monkeypatch):
     ofrecidas = [{"titulo": "Realtek - Net - 10.60.615.2022", "id": "X",
                   "fecha": "", "version": ""}]
     monkeypatch.setattr(drivers_win, "buscar_drivers_windows_update",
-                        lambda: ofrecidas)
+                        lambda *a, **k: ofrecidas)
     buscar = svc.escanear_drivers_paso2_buscar(_instalados())
     final = svc.escanear_drivers_paso3_comparar(
         _instalados(), ofrecidas, True, "", "")
@@ -144,19 +144,24 @@ def test_drivers_consulta_fallida_es_sin_confirmar_con_causa(monkeypatch):
     from antivirus_hogar_pc.modules.system import servicios_sistema as svc
     from antivirus_hogar_pc.winapi import drivers_win
 
-    def explota():
+    def explota(*a, **k):
         raise RuntimeError("HRESULT 0x80240022 de prueba")
 
     monkeypatch.setattr(drivers_win, "buscar_drivers_windows_update", explota)
     buscar = svc.escanear_drivers_paso2_buscar(_instalados())
     assert buscar.datos["wu_consultado"] is False
-    assert "0x80240022" in buscar.datos["wu_causa"]
+    assert "0x80240022" in buscar.datos["wu_causa"]  # cruda: solo como DATO
     final = svc.escanear_drivers_paso3_comparar(
         _instalados(), [], False, "", buscar.datos["wu_causa"])
     estado = final.datos["estados"][0]
     assert estado.estado == "sin_datos"
-    assert "0x80240022" in estado.detalle  # la causa viaja hasta la fila
-    assert "0x80240022" in final.mensaje
+    # Contrato v1.0.5: la UI enseña la causa BREVE y humana; la cruda
+    # (HRESULT/comandos) va solo al registro (detalle_tecnico/datos).
+    assert "0x80240022" not in estado.detalle
+    assert "0x80240022" not in final.mensaje
+    assert "Windows Update devolvió un error" in estado.detalle
+    assert "Windows Update devolvió un error" in final.mensaje
+    assert "0x80240022" in final.detalle_tecnico
     assert final.datos["wu_causa"]
 
 
@@ -202,11 +207,14 @@ def test_drivers_pagina_pinta_la_causa_wu(monkeypatch):
     while _time.time() < limite:
         app.processEvents()
         textos = [l.text() for l in pagina.findChildren(QLabel)]
-        if any("0x80240022" in t for t in textos):
+        if any("sin confirmar" in t and "Causa:" in t for t in textos):
             break
         _time.sleep(0.05)
-    assert any("Windows Update no pudo confirmar" in t and "0x80240022" in t
-               for t in textos), textos
+    # v1.0.5: la página enseña la causa BREVE; el HRESULT crudo no
+    # aparece en NINGUNA etiqueta de la interfaz.
+    assert any("sin confirmar" in t and
+               "Windows Update devolvió un error" in t for t in textos), textos
+    assert not any("0x80240022" in t for t in textos), textos
     pagina.deleteLater()
     app.processEvents()
 

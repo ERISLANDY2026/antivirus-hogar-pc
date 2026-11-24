@@ -102,6 +102,16 @@ caché, así que la corrección los cubre todos.
   desde **1.0.3 → ofrece la 1.0.4** con su SHA-256; desde **1.0.4 →
   «al día»**.
 
+## Addenda (2026-11-24, tras la prueba en su PC real)
+
+Su v1.0.3 recibió un 404 («no encontrado») al buscar actualizaciones y
+la descarga del instalador por la URL publicada devolvía la página de
+advertencia de virus de Google, no el .exe. Corregido y verificado de
+forma ANÓNIMA con el código real de la app (la verificación «en vivo»
+de arriba se había hecho autenticada y no era válida como prueba del
+canal). Detalle completo y regla nueva de verificación:
+**INFORME-CANAL.md**.
+
 ## Pendiente honesto
 
 - El instalador v1.0.4 aún NO se ha ejecutado en el Windows real de

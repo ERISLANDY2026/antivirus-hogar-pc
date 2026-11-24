@@ -85,7 +85,10 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon=os.path.join(RAIZ, "packaging", "icono.ico"),  # cuando exista el .ico
+    # Icono de la app (v1.0.5): el espartano cyborg dentro del escudo,
+    # aprobado por el usuario el 2026-11-24; .ico multirresolución
+    # generado desde packaging/icono-espartano.webp.
+    icon=os.path.join(RAIZ, "packaging", "icono.ico"),
 )
 
 coll = COLLECT(

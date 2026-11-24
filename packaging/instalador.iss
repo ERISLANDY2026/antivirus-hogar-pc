@@ -2,7 +2,7 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.4.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.5.exe
 ;
 ; La app se instala por máquina en Archivos de programa: escribir el hosts,
 ; crear la tarea semanal y tocar Defender exigen administrador, y la propia
@@ -11,7 +11,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.4"
+#define AppVersion "1.0.5"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 
@@ -32,7 +32,10 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppNombre}
-; SetupIconFile=icono.ico  ; cuando exista el .ico del proyecto
+; Icono del instalador y del desinstalador (v1.0.5): el espartano del
+; usuario. Los accesos directos toman el icono del propio .exe.
+SetupIconFile=icono.ico
+UninstallDisplayIcon={app}\{#AppExe}
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"

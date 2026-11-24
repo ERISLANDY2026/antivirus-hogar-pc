@@ -158,3 +158,40 @@ def perfil_red() -> str:
     )
     datos = ejecutar_powershell_json(script) or {}
     return str(datos.get("NetworkCategory", ""))
+
+
+def info_red_local(nombre_interfaz: str = "") -> dict:
+    """IP local, puerta de enlace y DNS de la conexión (v1.0.5).
+
+    Get-NetIPConfiguration de la interfaz pedida (la Wi-Fi) o, si no se
+    pide ninguna o no tiene puerta de enlace, de la primera interfaz
+    con puerta IPv4 (la conexión activa, p. ej. Ethernet). Proceso
+    oculto como todo PowerShell de la app. Devuelve {} si no hay datos:
+    la UI lo enseña como «—», nunca inventa valores.
+    """
+    filtro = ""
+    if nombre_interfaz:
+        seguro_ps = nombre_interfaz.replace("'", "''")
+        filtro = f" | Where-Object {{ $_.InterfaceAlias -eq '{seguro_ps}' }}"
+    script = (
+        f"$c = Get-NetIPConfiguration{filtro} | "
+        "Where-Object { $_.IPv4Address } | "
+        "Sort-Object { -not $_.IPv4DefaultGateway } | Select-Object -First 1; "
+        "if ($c) { [PSCustomObject]@{ "
+        "Interfaz = $c.InterfaceAlias; "
+        "IP = [string]$c.IPv4Address.IPAddress; "
+        "PuertaEnlace = [string]$c.IPv4DefaultGateway.NextHop; "
+        "DNS = @($c.DNSServer | Where-Object { $_.AddressFamily -eq 2 } | "
+        "ForEach-Object { $_.ServerAddresses }) } | ConvertTo-Json } "
+        "else { '{}' }"
+    )
+    datos = ejecutar_powershell_json(script) or {}
+    dns = datos.get("DNS") or []
+    if isinstance(dns, str):
+        dns = [dns]
+    return {
+        "interfaz": str(datos.get("Interfaz") or ""),
+        "ip": str(datos.get("IP") or ""),
+        "puerta_enlace": str(datos.get("PuertaEnlace") or ""),
+        "dns": [str(d) for d in dns if d],
+    }

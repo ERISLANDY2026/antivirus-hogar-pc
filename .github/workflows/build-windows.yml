@@ -55,6 +55,11 @@ jobs:
           }
           Write-Host "Los 4 registros de módulos están dentro del ejecutable."
 
+      # El icono espartano de la v1.0.5 debe ir incrustado en el .exe
+      # (recurso RT_ICON de 256), no el de por defecto de PyInstaller.
+      - name: Verificar el icono dentro del ejecutable
+        run: python scripts/verificar_icono.py dist/AntivirusHogarPC/AntivirusHogarPC.exe packaging/icono.ico
+
       - name: Instalar Inno Setup
         run: choco install innosetup -y --no-progress
 

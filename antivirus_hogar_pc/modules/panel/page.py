@@ -168,6 +168,41 @@ def crear_pagina(ctx: ContextoModulo):
     fila_superior.addWidget(tarjeta_estado, 1)
     layout.addLayout(fila_superior)
 
+    # --- Rutina automática al arrancar (v1.0.5) --------------------------------
+    tarjeta_rutina, lay_rutina = tarjeta("Rutina automática al arrancar")
+    lbl_rutina = etiqueta(
+        "Todavía no se ha ejecutado la rutina automática de arranque.",
+        suave=True)
+    lay_rutina.addWidget(lbl_rutina)
+    layout.addWidget(tarjeta_rutina)
+
+    def _refrescar_rutina() -> None:
+        import time as _time
+
+        from antivirus_hogar_pc.ui.rutina_auto import leer_resumen_rutina
+
+        resumen = leer_resumen_rutina()
+        if not resumen:
+            lbl_rutina.setText(
+                "Todavía no se ha ejecutado la rutina automática de "
+                "arranque.")
+            return
+        cuando = _time.strftime(
+            "%d/%m/%Y %H:%M", _time.localtime(float(resumen.get("cuando", 0))))
+        nombres = {"escaneo": "Escaneo rápido", "drivers": "Drivers",
+                   "limpieza": "Limpieza segura", "inicio": "Inicio"}
+        partes = []
+        for clave, res in (resumen.get("resultados") or {}).items():
+            marca = "✓" if res.get("ok") else "⚠"
+            partes.append(f"{marca} {nombres.get(clave, clave)}: "
+                          f"{res.get('resumen', '')}")
+        lbl_rutina.setText(
+            f"Última rutina: {cuando} (al arrancar Windows).\n"
+            + "\n".join(partes))
+
+    _refrescar_rutina()
+    pagina.refrescar_rutina = _refrescar_rutina  # gancho para la ventana
+
     # --- Aviso de fin de soporte (solo si el informe lo confirma) -------------
     tarjeta_soporte, lay_soporte = tarjeta("Aviso importante")
     lay_soporte.addWidget(fila_estado(

@@ -68,6 +68,46 @@ def ejecutar_elevado(script: str, timeout: int = 300) -> bool:
     return proc.returncode == 0
 
 
+def lanzar_elevado_oculto(script: str, timeout_lanzamiento: int = 120) -> int:
+    """Lanza PowerShell ELEVADO con la ventana OCULTA y devuelve su PID.
+
+    Diferencia con ejecutar_elevado: aquel espera a que el proceso
+    acabe y su ventana de PowerShell SE VEÍA trabajando (así pasaba la
+    optimización de volúmenes hasta la v1.0.4: Windows abría el Shell
+    en primer plano). Aquí Start-Process lleva -WindowStyle Hidden:
+    el proceso elevado corre EN SEGUNDO PLANO, sin ninguna ventana de
+    consola. El aviso UAC es de Windows y sí aparece (es del sistema,
+    no una ventana de Shell).
+
+    No espera a que el proceso termine: devuelve su PID en cuanto
+    arranca. Como un proceso elevado no puede devolver su salida por
+    tubería al padre no elevado, el llamante vigila el resultado por
+    los archivos que el propio script escriba (patrón de la
+    optimización de volúmenes). Si el usuario cancela el aviso UAC o
+    el lanzamiento falla, lanza RuntimeError con la causa.
+    """
+    if not es_windows():
+        raise WindowsNoDisponible("La elevación UAC solo existe en Windows.")
+    codificado = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    lanzador = (
+        "try { $p = Start-Process powershell.exe -Verb RunAs "
+        "-WindowStyle Hidden -PassThru "
+        f"-ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{codificado}'; "
+        "Write-Output $p.Id } catch { exit 3 }"
+    )
+    proc = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", lanzador],
+        capture_output=True, text=True, errors="replace",
+        timeout=timeout_lanzamiento, creationflags=_flags(),
+    )
+    texto = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not texto.isdigit():
+        raise RuntimeError(
+            "No se pudo lanzar el proceso de administrador "
+            "(¿se canceló el aviso de Windows?).")
+    return int(texto)
+
+
 def ejecutar_comando(args: list[str], timeout: int = 180) -> tuple[int, str, str]:
     """Ejecuta un programa de Windows (netsh, schtasks, winget, MpCmdRun…)."""
     if not es_windows():

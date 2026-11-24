@@ -118,7 +118,7 @@ def test_drivers_paso1_excepcion_es_error_con_causa(monkeypatch):
     from antivirus_hogar_pc.modules.system import servicios_sistema as svc
     from antivirus_hogar_pc.winapi import drivers_win
 
-    def explota():
+    def explota(*a, **k):
         raise RuntimeError("la consulta CIM cayó")
 
     monkeypatch.setattr(drivers_win, "enumerar_drivers", explota)
@@ -170,7 +170,7 @@ def test_drivers_pasos_2_y_3_separados(monkeypatch):
 
     instalados = [DriverInstalado("Audio", "1.0", "", "Realtek", "oem1.inf", "ID1", True)]
     monkeypatch.setattr(drivers_win, "buscar_drivers_windows_update",
-                        lambda: (_ for _ in ()).throw(RuntimeError("WU caído")))
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("WU caído")))
     buscar = svc.escanear_drivers_paso2_buscar(instalados)
     assert buscar.ok and buscar.datos["wu_consultado"] is False
     final = svc.escanear_drivers_paso3_comparar(

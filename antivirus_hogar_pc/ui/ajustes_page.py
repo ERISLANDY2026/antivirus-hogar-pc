@@ -23,6 +23,41 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
         "Windows mostrará el aviso de SmartScreen al instalar.", suave=True))
     layout.addWidget(tarjeta_app)
 
+    # --- Arranque con Windows + rutina automática (v1.0.5) -------------------
+    tarjeta_arranque, lay_ar = tarjeta("Arranque y rutina automática")
+    check_arranque = QCheckBox(
+        "Arrancar con Windows (la app abre minimizada, en segundo plano)")
+    check_rutina = QCheckBox(
+        "Al arrancar, ejecutar la rutina automática: escaneo rápido, "
+        "revisión de drivers, limpieza segura y revisión de inicio")
+    if ajustes is not None:
+        check_arranque.setChecked(bool(ajustes.arranque_windows))
+        check_rutina.setChecked(bool(ajustes.rutina_automatica))
+
+        def _arranque(marcado: bool) -> None:
+            ajustes.arranque_windows = bool(marcado)
+            ajustes.guardar()
+            # Aplicar ya: escribir o retirar la entrada del registro.
+            from ..winapi import arranque as arranque_win
+            from .services import seguro
+
+            seguro(arranque_win.fijar_arranque_windows, bool(marcado))
+
+        def _rutina(marcado: bool) -> None:
+            ajustes.rutina_automatica = bool(marcado)
+            ajustes.guardar()
+
+        check_arranque.toggled.connect(_arranque)
+        check_rutina.toggled.connect(_rutina)
+    lay_ar.addWidget(check_arranque)
+    lay_ar.addWidget(check_rutina)
+    lay_ar.addWidget(etiqueta(
+        "La rutina solo revisa y limpia lo seguro (temporales, cachés "
+        "y papelera): ante una amenaza NO actúa sola — deja el "
+        "resultado en Inicio y en el registro de actividad para que "
+        "decidas tú.", suave=True))
+    layout.addWidget(tarjeta_arranque)
+
     tarjeta_canal, lay_c = tarjeta("Canal de actualización (Google Drive)")
     campo_url = QLineEdit(ajustes.url_actualizacion if ajustes else "")
     campo_url.setPlaceholderText("URL del version-pc.json del canal")

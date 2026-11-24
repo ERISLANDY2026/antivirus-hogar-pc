@@ -56,26 +56,142 @@ def escanear_drivers_paso1() -> ResultadoModulo:
         datos={"instalados": instalados, "fabricante_pc": fabricante_pc})
 
 
-def escanear_drivers_paso2_buscar(instalados) -> ResultadoModulo:
-    """Paso 2 (v1.0.2, bug 5): consultar las fuentes (Windows Update).
-    datos = {"ofrecidas": [...], "wu_consultado": bool, "wu_causa": str}.
-    Si WU falla, NO es un error fatal del escaneo: se anota la CAUSA
-    REAL (v1.0.3) y el paso 3 compara marcando todo «sin confirmar»,
-    enseñando esa causa en la página — nunca en silencio."""
-    try:
-        ofrecidas = drivers_win.buscar_drivers_windows_update()
-        return ResultadoModulo(
-            ok=True,
-            mensaje=f"Windows Update ofrece {len(ofrecidas)} driver(s).",
-            datos={"ofrecidas": ofrecidas, "wu_consultado": True,
-                   "wu_causa": ""})
-    except Exception as exc:
-        return ResultadoModulo(
-            ok=True,
-            mensaje="Windows Update no respondió en este intento.",
-            datos={"ofrecidas": [], "wu_consultado": False,
-                   "wu_causa": str(exc)},
-            detalle_tecnico=str(exc))
+def _confirmar_por_catalogo(driver) -> "drivers_logic.EstadoDriver | None":
+    """Fuente (a) de la cadena: Catálogo de Microsoft por HWID."""
+    hwid = drivers_logic.extraer_hwid(driver.device_id)
+    if not drivers_logic.es_hwid_buscable(hwid):
+        return None
+    html = drivers_logic.descargar_catalogo(hwid, timeout=20)
+    return drivers_logic.veredicto_catalogo(
+        driver, drivers_logic.parsear_catalogo_html(html))
+
+
+def _confirmar_por_almacen(restantes) -> dict:
+    """Fuente (c): paquetes ya preparados en el almacén de drivers."""
+    paquetes = drivers_win.paquetes_almacen_drivers()
+    veredictos = {}
+    for d in restantes:
+        veredicto = drivers_logic.veredicto_almacen(d, paquetes)
+        if veredicto is not None:
+            veredictos[id(d)] = veredicto
+    return veredictos
+
+
+def escanear_drivers_paso2_buscar(instalados, al_progreso=None) -> ResultadoModulo:
+    """Paso 2 (v1.0.5): la CADENA DE CONFIRMACIÓN de drivers.
+
+    Orden fijado por el usuario tras el fallo de la Toughbook (la
+    búsqueda COM agotó 900 s y los 196 drivers quedaron «Sin
+    confirmar»): (a) Catálogo de Microsoft por ID de hardware — por
+    dispositivo y rápido, en paralelo con presupuesto de 300 s —;
+    (b) Windows Update COM con límite corto (240 s) y UN reintento,
+    solo para los que el Catálogo no confirmó; (c) el almacén de
+    drivers local (pnputil) para el resto. Un driver se confirma en
+    cuanto UNA fuente oficial responde con datos reales; «sin
+    confirmar» solo si TODAS fallan.
+
+    datos conserva las claves de la v1.0.3 (ofrecidas, wu_consultado,
+    wu_causa — la causa CRUDA viaja solo como dato técnico) y añade:
+    estados ya resueltos, conteos_fuentes, causa_breve (lo ÚNICO que
+    la página enseña) y el detalle técnico para el registro."""
+    import time as _time
+    from concurrent.futures import ThreadPoolExecutor
+
+    instalados = list(instalados)
+    estados: dict[int, drivers_logic.EstadoDriver] = {}
+    causas: list[tuple[str, str]] = []
+    conteos = {"catalogo": 0, "windows_update": 0, "almacen": 0}
+
+    # (a) Catálogo de Microsoft por HWID, en paralelo.
+    buscables = [d for d in instalados
+                 if drivers_logic.es_hwid_buscable(
+                     drivers_logic.extraer_hwid(d.device_id))]
+    if buscables:
+        limite = _time.monotonic() + 300.0
+        try:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                futuros = {pool.submit(_confirmar_por_catalogo, d): d
+                           for d in buscables}
+                for futuro, d in futuros.items():
+                    try:
+                        veredicto = futuro.result(
+                            timeout=max(1.0, limite - _time.monotonic()))
+                    except Exception as exc:
+                        causas.append(("Catálogo de Microsoft", str(exc)))
+                        continue
+                    if veredicto is not None:
+                        estados[id(d)] = veredicto
+                        conteos["catalogo"] += 1
+        except Exception as exc:
+            causas.append(("Catálogo de Microsoft", str(exc)))
+    if al_progreso is not None:
+        al_progreso("catalogo", len(estados))
+
+    # (b) Windows Update COM (240 s × 2 intentos) para el resto.
+    restantes = [d for d in instalados if id(d) not in estados]
+    ofrecidas: list[dict] = []
+    wu_consultado = not restantes  # si no queda nada, nada que consultar
+    wu_causa = ""
+    if restantes:
+        try:
+            ofrecidas = drivers_win.buscar_drivers_wu_con_reintento()
+            wu_consultado = True
+            for e in drivers_logic.contrastar_con_windows_update(
+                    restantes, ofrecidas, consulta_completada=True):
+                estados[id(e.driver)] = e
+                conteos["windows_update"] += 1
+        except Exception as exc:
+            wu_causa = str(exc)
+            causas.append(("Windows Update", wu_causa))
+    if al_progreso is not None:
+        al_progreso("windows_update", len(estados))
+
+    # (c) Almacén de drivers local para lo que quede.
+    restantes = [d for d in instalados if id(d) not in estados]
+    if restantes:
+        try:
+            for clave, veredicto in _confirmar_por_almacen(restantes).items():
+                estados[clave] = veredicto
+                conteos["almacen"] += 1
+        except Exception as exc:
+            causas.append(("Almacén de drivers", str(exc)))
+
+    # Causa BREVE para la UI: la de Windows Update si cayó (es el caso
+    # del usuario), si no la primera que haya. La cruda, solo al registro.
+    breve = ""
+    if causas:
+        fuente_p, causa_p = next(
+            (par for par in causas if par[0] == "Windows Update"), causas[0])
+        breve = drivers_logic.causa_breve_drivers(causa_p, fuente_p)
+    detalle_sin = ("Ninguna fuente oficial pudo confirmar el estado "
+                   "de este driver.")
+    if breve:
+        detalle_sin += f" {breve}"
+    lista: list[drivers_logic.EstadoDriver] = []
+    for d in instalados:
+        e = estados.get(id(d))
+        if e is None:
+            e = drivers_logic.EstadoDriver(
+                driver=d, estado="sin_datos", detalle=detalle_sin)
+        lista.append(e)
+    n_dia = sum(1 for e in lista if e.estado == "al_dia")
+    n_nuevo = sum(1 for e in lista if e.estado == "hay_uno_mas_nuevo")
+    n_sin = sum(1 for e in lista if e.estado == "sin_datos")
+    mensaje = (
+        f"{len(instalados)} drivers revisados: {n_dia} al día, "
+        f"{n_nuevo} con una versión más nueva, {n_sin} sin confirmar. "
+        f"Confirmados por: Catálogo de Microsoft {conteos['catalogo']} · "
+        f"Windows Update {conteos['windows_update']} · "
+        f"almacén local {conteos['almacen']}.")
+    detalle_tecnico = " | ".join(f"{f}: {c}" for f, c in causas)
+    return ResultadoModulo(
+        ok=True, mensaje=mensaje,
+        datos={"ofrecidas": ofrecidas, "wu_consultado": wu_consultado,
+               "wu_causa": wu_causa, "estados": lista,
+               "conteos_fuentes": conteos,
+               "causa_breve": breve if n_sin else "",
+               "detalle_tecnico": detalle_tecnico},
+        detalle_tecnico=detalle_tecnico)
 
 
 def escanear_drivers_paso3_comparar(instalados, ofrecidas,
@@ -90,14 +206,19 @@ def escanear_drivers_paso3_comparar(instalados, ofrecidas,
     completó (wu_consultado=True, aunque ofrezca 0); «sin confirmar»
     SOLO si la consulta falló, y entonces la causa viaja en los datos
     y en el mensaje para que la página la enseñe."""
+    # v1.0.5: lo que la UI enseña es la causa BREVE y humana; la causa
+    # cruda (comandos, HRESULT) viaja solo en datos/detalle_tecnico
+    # para el registro de actividad — nunca en mensajes ni detalles.
+    breve = (drivers_logic.causa_breve_drivers(wu_causa)
+             if wu_causa and not wu_consultado else "")
     if wu_consultado:
         estados = drivers_logic.contrastar_con_windows_update(
             instalados, ofrecidas, consulta_completada=True)
     else:
         detalle = ("No se pudo consultar Windows Update en este intento; "
                    "el estado de este driver queda sin confirmar.")
-        if wu_causa:
-            detalle += f" Causa: {wu_causa}"
+        if breve:
+            detalle += f" {breve}"
         estados = [
             drivers_logic.EstadoDriver(
                 driver=d, estado="sin_datos", detalle=detalle)
@@ -107,8 +228,8 @@ def escanear_drivers_paso3_comparar(instalados, ofrecidas,
     if not wu_consultado:
         mensaje = (f"Se leyeron {len(instalados)} drivers, pero la consulta "
                    "a Windows Update falló: ningún estado está confirmado.")
-        if wu_causa:
-            mensaje += f" Causa: {wu_causa}"
+        if breve:
+            mensaje += f" {breve}"
     elif nuevos:
         mensaje = (f"{len(instalados)} drivers revisados contra Windows Update: "
                    f"{nuevos} con una versión más nueva disponible.")
@@ -120,8 +241,9 @@ def escanear_drivers_paso3_comparar(instalados, ofrecidas,
         "fabricante_pc": fabricante_pc,
         "wu_consultado": wu_consultado,
         "wu_causa": wu_causa if not wu_consultado else "",
+        "causa_breve": breve,
         "ofrecidas_wu": len(ofrecidas),
-    })
+    }, detalle_tecnico=wu_causa if not wu_consultado else "")
 
 
 def escanear_drivers_paso2(instalados, fabricante_pc: str = "") -> ResultadoModulo:
@@ -325,20 +447,21 @@ def tipo_de_volumen(fisicos: list[dict], volumen: dict) -> str:
     return tipo_para_volumen(fisicos, int(volumen.get("tamano") or 0))
 
 
-def optimizar_volumen(letra: str, es_ssd: bool) -> ResultadoModulo:
-    """Optimize-Volume de Windows: TRIM en SSD, desfragmentación en HDD."""
+def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None) -> ResultadoModulo:
+    """Optimize-Volume de Windows: TRIM en SSD, desfragmentación en HDD.
+
+    v1.0.5: el proceso va OCULTO en segundo plano (sin ventana de
+    Shell) y al_progreso(fase, porcentaje|None) recibe el avance real
+    que el propio comando reporta en su salida detallada.
+    """
     try:
-        hecho = discos_win.optimizar_volumen(letra, es_ssd)
+        res = discos_win.optimizar_volumen(letra, es_ssd,
+                                           al_progreso=al_progreso)
     except Exception as exc:
         return _fallo(exc, "la optimización del volumen")
-    if hecho:
-        return ResultadoModulo(
-            ok=True, mensaje=f"Windows optimizó la unidad {letra}: "
-                             f"({'TRIM' if es_ssd else 'desfragmentación'}).")
-    return ResultadoModulo(
-        ok=False, mensaje=f"La optimización de la unidad {letra}: no se "
-                          "completó (puede haberse cancelado el aviso de "
-                          "administrador).")
+    return ResultadoModulo(ok=bool(res.get("ok")),
+                           mensaje=str(res.get("mensaje") or ""),
+                           detalle_tecnico=str(res.get("detalle") or ""))
 
 
 def _tamano_carpeta(ruta: str) -> int:

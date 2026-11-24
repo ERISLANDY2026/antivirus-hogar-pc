@@ -56,7 +56,7 @@ def _fecha_legible(valor) -> str:
     return texto[:10]
 
 
-def buscar_drivers_windows_update() -> list[dict]:
+def buscar_drivers_windows_update(timeout: int = 240) -> list[dict]:
     """Actualizaciones de tipo Driver ofrecidas por Windows Update.
 
     v1.0.3 (problema «todo Sin confirmar»): la búsqueda va envuelta en
@@ -69,7 +69,12 @@ def buscar_drivers_windows_update() -> list[dict]:
       la lista (vacía = sin novedades, la consulta SÍ se hizo).
     - Búsqueda fallida o incompleta: se LANZA RuntimeError con la causa
       real (mensaje/HRESULT de Windows Update) para que la app la
-      enseñe; nada de vacío silencioso."""
+      enseñe; nada de vacío silencioso.
+
+    v1.0.5: el límite baja de 900 s a 240 s — en la Toughbook del
+    usuario la búsqueda agotó los 900 s y dejó los 196 drivers sin
+    confirmar; ahora es solo UNA fuente de la cadena (Catálogo antes,
+    almacén después) y va con reintento (buscar_drivers_wu_con_reintento)."""
     script = (
         "$ErrorActionPreference = 'Stop'; "
         "try { "
@@ -91,7 +96,7 @@ def buscar_drivers_windows_update() -> list[dict]:
         "causa = $_.Exception.Message; actualizaciones = @() } "
         "| ConvertTo-Json -Depth 4 }"
     )
-    datos = ejecutar_powershell_json(script, timeout=900)
+    datos = ejecutar_powershell_json(script, timeout=timeout)
     if not isinstance(datos, dict) or "ok" not in datos:
         raise RuntimeError(
             "Windows Update no devolvió una respuesta interpretable "
@@ -106,6 +111,33 @@ def buscar_drivers_windows_update() -> list[dict]:
          "fecha": d.get("Fecha", ""), "version": ""}
         for d in como_lista(datos.get("actualizaciones"))
     ]
+
+
+def buscar_drivers_wu_con_reintento(timeout: int = 240,
+                                    intentos: int = 2) -> list[dict]:
+    """La búsqueda COM de Windows Update con UN reintento automático
+    (v1.0.5): si el primer intento agota el tiempo o falla, se prueba
+    otra vez antes de dar la fuente por caída. Lanza la última causa."""
+    ultimo: Exception | None = None
+    for _ in range(max(1, intentos)):
+        try:
+            return buscar_drivers_windows_update(timeout=timeout)
+        except Exception as exc:
+            ultimo = exc
+    assert ultimo is not None
+    raise ultimo
+
+
+def paquetes_almacen_drivers(timeout: int = 120) -> list[dict]:
+    """Paquetes del almacén de drivers (pnputil /enum-drivers), ya
+    parseados: la fuente LOCAL de la cadena de confirmación (v1.0.5).
+    Proceso oculto, como todo PowerShell de la app."""
+    from ..core.drivers_logic import parsear_pnputil
+    from .powershell import ejecutar_powershell
+
+    texto = ejecutar_powershell("pnputil /enum-drivers | Out-String -Width 300",
+                                timeout=timeout)
+    return parsear_pnputil(texto)
 
 
 def crear_punto_restauracion(descripcion: str = "Antivirus Hogar PC — antes de actualizar drivers") -> bool:

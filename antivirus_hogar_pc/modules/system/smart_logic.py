@@ -7,8 +7,14 @@ Convierte los datos crudos de las dos fuentes a contracts.SmartInfo:
 Regla de honestidad del proyecto: si una fuente no devuelve datos (disco
 tras puente USB, RAID, controlador sin SMART) el resultado es
 ``sin_datos=True`` = «no se puede leer», NUNCA «sano».
+
+También vive aquí el intérprete del progreso de Optimize-Volume
+(v1.0.5): el % y la fase salen SOLO de la salida real del comando; si
+una fase no reporta porcentaje fiable, porcentaje=None y la barra va
+animada con el texto de la fase. Nada de porcentajes inventados.
 """
 import re
+from dataclasses import dataclass
 
 from antivirus_hogar_pc.contracts import SmartInfo
 
@@ -146,3 +152,60 @@ def tipo_para_volumen(discos_fisicos: list[dict], tamano_volumen: int) -> str:
     if len(candidatos) == 1:
         return str(candidatos[0]["tipo"]).upper()
     return ""
+
+
+# --- Progreso de Optimize-Volume -Verbose (v1.0.5) ------------------------------
+#
+# El proceso elevado corre oculto y vuelca su salida detallada en un
+# archivo; esta función interpreta el texto acumulado hasta el momento:
+# el ÚLTIMO porcentaje que el propio comando haya reportado y la fase
+# en curso según la última palabra clave vista. La salida de defrag
+# llega en el idioma de Windows (inglés o español) y por pasadas: cada
+# pasada puede volver a contar de 0 a 100, por eso la fase enseña el
+# número de pasada y el % es «el de esta pasada», nunca una media
+# inventada.
+
+@dataclass
+class ProgresoOptimizacion:
+    fase: str
+    porcentaje: int | None = None   # None = esta fase no reporta % fiable
+    pasada: int | None = None
+
+
+_FASES_OPTIMIZACION = (
+    (re.compile(r"retrim|re-trim|\btrim\b", re.IGNORECASE), "Aplicando TRIM"),
+    (re.compile(r"an[aá]lisis|analy[sz]", re.IGNORECASE), "Analizando el volumen"),
+    (re.compile(r"desfragment|defrag", re.IGNORECASE), "Desfragmentando"),
+    (re.compile(r"consolid", re.IGNORECASE), "Consolidando el espacio libre"),
+    (re.compile(r"informe|report", re.IGNORECASE), "Generando el informe"),
+    (re.compile(r"complet|finaliz|finish", re.IGNORECASE), "Terminando"),
+)
+_RE_PORCENTAJE = re.compile(r"(\d{1,3})\s*%")
+_RE_PASADA = re.compile(r"(?:pasada|pass)\s*[:#]?\s*(\d+)", re.IGNORECASE)
+
+
+def interpretar_progreso_optimizacion(texto: str) -> ProgresoOptimizacion:
+    """Interpreta la salida -Verbose acumulada de Optimize-Volume.
+
+    Sin texto (o sin nada reconocible) devuelve la fase genérica sin
+    porcentaje: la barra va animada y NO se inventa ningún %.
+    """
+    texto = texto or ""
+    porcentaje: int | None = None
+    for coincidencia in _RE_PORCENTAJE.finditer(texto):
+        valor = int(coincidencia.group(1))
+        if 0 <= valor <= 100:
+            porcentaje = valor
+    pasada: int | None = None
+    for coincidencia in _RE_PASADA.finditer(texto):
+        pasada = int(coincidencia.group(1))
+    fase = "Optimizando con Windows"
+    mejor_posicion = -1
+    for patron, nombre in _FASES_OPTIMIZACION:
+        for coincidencia in patron.finditer(texto):
+            if coincidencia.start() > mejor_posicion:
+                mejor_posicion = coincidencia.start()
+                fase = nombre
+    if pasada is not None and fase in ("Desfragmentando", "Analizando el volumen"):
+        fase = f"{fase} · pasada {pasada}"
+    return ProgresoOptimizacion(fase=fase, porcentaje=porcentaje, pasada=pasada)

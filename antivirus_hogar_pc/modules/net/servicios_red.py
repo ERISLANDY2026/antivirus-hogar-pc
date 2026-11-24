@@ -12,7 +12,10 @@ from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import ActualizacionWindows, ResultadoModulo
 from antivirus_hogar_pc.core import updater
 from antivirus_hogar_pc.core.v102 import valorar_velocidad
-from antivirus_hogar_pc.core.velocidad import medir_velocidad
+from antivirus_hogar_pc.core.velocidad import (
+    medir_velocidad,
+    medir_velocidad_en_vivo,
+)
 from antivirus_hogar_pc.core.vpngate import (
     ServidorVPN,
     descargar_lista_con_respaldo,
@@ -54,7 +57,7 @@ def descargar_servidores_completos() -> ResultadoModulo:
     lista y aplica país/orden en local sin re-descargar.
     """
     try:
-        servidores, _url = descargar_lista_con_respaldo(config.VPNGATE_APIS)
+        servidores, url_fuente = descargar_lista_con_respaldo(config.VPNGATE_APIS)
     except Exception as exc:
         causa = str(exc)
         semilla, fecha = leer_semilla_vpngate(config.carpeta_activos())
@@ -79,9 +82,35 @@ def descargar_servidores_completos() -> ResultadoModulo:
         )
     return ResultadoModulo(
         ok=True,
-        mensaje=f"{len(servidores)} servidores disponibles.",
+        mensaje=(f"{len(servidores)} servidores · "
+                 f"{len(paises_disponibles(servidores))} países · "
+                 "Fuente: VPN Gate en vivo."),
         datos={"servidores": servidores, "es_semilla": False,
-               "fecha_semilla": "", "causa": ""},
+               "fecha_semilla": "", "causa": "", "fuente": url_fuente},
+    )
+
+
+def servidores_semilla() -> ResultadoModulo:
+    """La lista SEMILLA local, SIN tocar la red: instantánea.
+
+    v1.0.5: la página la puebla PRIMERO, nada más abrir la sección o
+    pulsar el botón, para que el desplegable de países NUNCA quede
+    vacío esperando a la red; la descarga en vivo la reemplaza cuando
+    llega. Si ni la semilla existiera (instalación dañada), ok=False.
+    """
+    semilla, fecha = leer_semilla_vpngate(config.carpeta_activos())
+    if not semilla:
+        return ResultadoModulo(
+            ok=False,
+            mensaje="La lista de respaldo no está disponible en esta "
+                    "instalación.")
+    return ResultadoModulo(
+        ok=True,
+        mensaje=(f"Lista de respaldo del {fecha or 'la versión'}: "
+                 f"{len(semilla)} servidores · "
+                 f"{len(paises_disponibles(semilla))} países."),
+        datos={"servidores": semilla, "es_semilla": True,
+               "fecha_semilla": fecha, "causa": ""},
     )
 
 
@@ -191,6 +220,30 @@ def prueba_velocidad() -> ResultadoModulo:
     ping = datos.get("ping_ms")
     mensaje = (f"Ping: {ping} ms · Bajada: {bajada:.1f} Mbps. "
                f"{valorar_velocidad(bajada)}")
+    return ResultadoModulo(ok=True, mensaje=mensaje, datos=datos)
+
+
+def prueba_velocidad_viva(al_progreso=None) -> ResultadoModulo:
+    """Medición EN VIVO (v1.0.5): bajada y subida reales contra
+    Cloudflare, con al_progreso(fase, mbps) DURANTE la transferencia.
+
+    datos = {"ping_ms", "bajada_mbps", "subida_mbps"}. Si falla, el
+    mensaje es claro («revisa tu conexión») y la causa técnica va en
+    detalle_tecnico (visible en el registro), nunca números inventados.
+    """
+    datos = medir_velocidad_en_vivo(al_progreso)
+    if not datos.get("ok"):
+        return ResultadoModulo(
+            ok=False,
+            mensaje=("No se pudo medir la velocidad. Revisa tu conexión "
+                     "a internet y vuelve a intentarlo."),
+            datos=datos,
+            detalle_tecnico=str(datos.get("causa") or ""))
+    bajada = float(datos.get("bajada_mbps") or 0.0)
+    subida = float(datos.get("subida_mbps") or 0.0)
+    ping = datos.get("ping_ms")
+    mensaje = (f"Ping: {ping} ms · Bajada: {bajada:.1f} Mbps · "
+               f"Subida: {subida:.1f} Mbps. {valorar_velocidad(bajada)}")
     return ResultadoModulo(ok=True, mensaje=mensaje, datos=datos)
 
 
@@ -317,6 +370,12 @@ def informe_wifi() -> ResultadoModulo:
         perfiles = parsear_perfiles_guardados(salida or "")
     res_categoria = seguro(system_info.perfil_red)
     categoria = res_categoria.datos if res_categoria.ok else ""
+    # Datos de la conexión local (IP, puerta de enlace, DNS) para el
+    # panel de detalles de la Wi-Fi (v1.0.5): se piden de la interfaz
+    # Wi-Fi si la hay; si no, de la conexión activa (cable).
+    res_red = seguro(system_info.info_red_local, info.nombre)
+    red_local = res_red.datos if res_red.ok and isinstance(res_red.datos, dict) \
+        else {}
     return ResultadoModulo(
         ok=True,
         mensaje=frase,
@@ -326,6 +385,7 @@ def informe_wifi() -> ResultadoModulo:
             "frase": frase,
             "perfiles_guardados": perfiles,
             "perfil_red": categoria,
+            "red_local": red_local,
         },
     )
 

@@ -314,12 +314,14 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             escaneo["vigia"].stop()
         barra.terminar()
         btn_escanear.setEnabled(True)
-        texto = f"⚠ No se pudo escanear: {resultado.mensaje}"
-        if resultado.detalle_tecnico:
-            texto += f" ({resultado.detalle_tecnico})"
+        # v1.0.5: en pantalla solo el mensaje en español; el detalle
+        # técnico crudo va SOLO al registro de actividad.
         lbl_estado.setStyleSheet(f"color: {theme.ROJO}; font-weight: 700;")
-        lbl_estado.setText(texto)
+        lbl_estado.setText(f"⚠ No se pudo escanear: {resultado.mensaje}")
         _registrar(ctx, "drivers", f"Escaneo de drivers fallido: {resultado.mensaje}")
+        if resultado.detalle_tecnico:
+            _registrar(ctx, "drivers",
+                       f"Detalle técnico del escaneo: {resultado.detalle_tecnico}")
 
     def _al_terminar_escaneo(resultado: ResultadoModulo):
         escaneo["activo"] = False
@@ -333,19 +335,28 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             return
         lbl_estado.setStyleSheet("")
         lbl_estado.setText(resultado.mensaje)
-        # v1.0.3: si la consulta a Windows Update FALLÓ, la causa se ve
-        # en su propio renglón rojo bajo el estado — es la explicación
-        # de por qué los drivers quedan «Sin confirmar».
+        # v1.0.5: el renglón rojo enseña la causa BREVE y humana (p.
+        # ej. «Windows Update no respondió en el tiempo límite»); la
+        # causa cruda de Windows Update (comandos, HRESULT) va SOLO al
+        # registro de actividad — nunca más volcada en la interfaz.
+        from antivirus_hogar_pc.core.drivers_logic import causa_breve_drivers
+
         causa_wu = str(resultado.datos.get("wu_causa", "") or "")
-        if causa_wu:
+        breve = str(resultado.datos.get("causa_breve", "") or "")
+        if not breve and causa_wu:
+            breve = causa_breve_drivers(causa_wu)
+        if breve:
             lbl_causa_wu.setStyleSheet(f"color: {theme.ROJO}; font-weight: 600;")
             lbl_causa_wu.setText(
-                "⚠ Windows Update no pudo confirmar los drivers. "
-                f"Causa: {causa_wu}")
+                f"⚠ Algunos drivers quedaron sin confirmar. Causa: {breve}")
             lbl_causa_wu.setVisible(True)
         else:
             lbl_causa_wu.setText("")
             lbl_causa_wu.setVisible(False)
+        if causa_wu or resultado.detalle_tecnico:
+            _registrar(ctx, "drivers",
+                       "Detalle técnico de la confirmación de drivers: "
+                       f"{resultado.detalle_tecnico or causa_wu}")
         estado_actual.update(resultado.datos)
         _pintar_tabla(resultado.datos["estados"])
 
@@ -358,6 +369,15 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             return
         barra.fijar_etapas(3, 3, "Comparando versiones")
         lbl_estado.setText("Fuentes consultadas. Comparando versiones…")
+        if isinstance(resultado.datos.get("estados"), list):
+            # v1.0.5: la cadena ya comparó (Catálogo → WU → almacén);
+            # los estados llegan resueltos en el propio paso 2.
+            datos_final = dict(resultado.datos)
+            datos_final["fabricante_pc"] = fabricante
+            _al_terminar_escaneo(ResultadoModulo(
+                ok=True, mensaje=resultado.mensaje, datos=datos_final,
+                detalle_tecnico=resultado.detalle_tecnico))
+            return
         try:
             final = svc.escanear_drivers_paso3_comparar(
                 instalados, resultado.datos.get("ofrecidas", []),
@@ -374,9 +394,11 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             return
         estado_actual["_paso1"] = resultado.datos
         estado_actual.update(resultado.datos)
-        barra.fijar_etapas(2, 3, "Consultando fuentes oficiales (Windows Update)")
-        lbl_estado.setText("Drivers leídos. Consultando Windows Update… "
-                           "puede tardar unos minutos.")
+        barra.fijar_etapas(2, 3, "Consultando fuentes oficiales "
+                                 "(Catálogo de Microsoft y Windows Update)")
+        lbl_estado.setText("Drivers leídos. Confirmando contra las fuentes "
+                           "oficiales (primero el Catálogo de Microsoft, "
+                           "por dispositivo)…")
         gestor.lanzar(svc.escanear_drivers_paso2_buscar, _al_terminar_paso2,
                       resultado.datos["instalados"])
 
@@ -464,9 +486,20 @@ def crear_pagina_discos(ctx: ContextoModulo):
     lay_v.addWidget(etiqueta(
         "La optimización la hace Windows con Optimize-Volume y pedirá "
         "permiso de administrador. En un SSD jamás se desfragmenta: se "
-        "aplica TRIM."))
+        "aplica TRIM. El proceso corre EN SEGUNDO PLANO, sin abrir "
+        "ninguna ventana: aquí verás su progreso real."))
     contenedor_volumenes = QVBoxLayout()
     lay_v.addLayout(contenedor_volumenes)
+    # Barra RGB propia de la optimización (v1.0.5): refleja la salida
+    # del propio comando — % por pasadas cuando lo reporta; si una fase
+    # no da % fiable, va animada con el texto de la fase.
+    barra_opt = BarraProgreso()
+    barra_opt.setVisible(False)
+    lay_v.addWidget(barra_opt)
+    lbl_opt = etiqueta(
+        "El progreso aparecerá aquí mientras Windows optimiza.", suave=True)
+    lay_v.addWidget(lbl_opt)
+    botones_opt: list[QPushButton] = []
     layout.addWidget(tarjeta_vol)
 
     tarjeta_mapa, lay_m = tarjeta("Mapa de uso de disco")
@@ -506,10 +539,26 @@ def crear_pagina_discos(ctx: ContextoModulo):
             frase += f" — {info.detalle}"
         return frase, color
 
+    def _al_progreso_opt(fase, porcentaje):
+        # Llega desde el hilo trabajador vía señal: progreso REAL de la
+        # salida de Optimize-Volume (% de la pasada en curso o, si la
+        # fase no reporta % fiable, barra animada con el texto).
+        if porcentaje is None:
+            barra_opt.fijar_texto(fase)
+        else:
+            barra_opt.fijar(porcentaje, 100)
+        lbl_opt.setText(fase)
+
+    def _trabajo_opt(emisor, letra: str, es_ssd: bool):
+        return svc.optimizar_volumen(
+            letra, es_ssd,
+            al_progreso=lambda fase, pct: emisor(fase, pct))
+
     def _al_terminar_optimizacion(resultado: ResultadoModulo):
-        barra.terminar()
-        btn_analizar.setEnabled(True)
-        lbl_estado.setText(resultado.mensaje)
+        barra_opt.terminar()
+        for boton in botones_opt:
+            boton.setEnabled(True)
+        lbl_opt.setText(resultado.mensaje)
 
     def _optimizar(volumen: dict, tipo: str):
         letra = volumen.get("letra", "")
@@ -517,15 +566,18 @@ def crear_pagina_discos(ctx: ContextoModulo):
         accion = "TRIM" if es_ssd else "la desfragmentación"
         if not _confirmar(pagina, f"Optimizar {letra}:",
                           f"Windows aplicará {accion} en la unidad {letra}: "
-                          "y pedirá permiso de administrador. Puede tardar. "
-                          "¿Seguir?"):
+                          "y pedirá permiso de administrador. El proceso "
+                          "irá en segundo plano, sin abrir ventanas. "
+                          "Puede tardar. ¿Seguir?"):
             return
-        barra.setVisible(True)
-        barra.fijar_texto(f"Optimizando la unidad {letra}: con Windows…")
-        btn_analizar.setEnabled(False)
-        lbl_estado.setText(f"Optimizando la unidad {letra}: con Windows…")
-        gestor.lanzar(svc.optimizar_volumen, _al_terminar_optimizacion,
-                      letra, es_ssd)
+        barra_opt.setVisible(True)
+        barra_opt.fijar_texto(f"Optimizando la unidad {letra}: en segundo plano…")
+        for boton in botones_opt:
+            boton.setEnabled(False)
+        lbl_opt.setText(f"Optimizando la unidad {letra}: con Windows, "
+                        "en segundo plano…")
+        gestor.lanzar(_trabajo_opt, _al_terminar_optimizacion,
+                      letra, es_ssd, al_progreso=_al_progreso_opt)
 
     def _pintar(resultado: ResultadoModulo):
         datos = resultado.datos or {}
@@ -537,6 +589,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
             contenedor_discos.addWidget(
                 fila_estado("disco", "parpadeo", titulo, frase, color))
         _vaciar(contenedor_volumenes)
+        botones_opt.clear()
         fisicos = datos.get("fisicos", [])
         for volumen in datos.get("volumenes", []):
             letra = volumen.get("letra", "")
@@ -551,6 +604,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
                 btn.setToolTip("TRIM" if tipo == "SSD" else "Desfragmentar")
                 btn.clicked.connect(
                     lambda _=False, v=volumen, t=tipo: _optimizar(v, t))
+                botones_opt.append(btn)
                 fila.addWidget(btn)
             else:
                 fila.addWidget(etiqueta(
@@ -614,6 +668,11 @@ def crear_pagina_discos(ctx: ContextoModulo):
 
     btn_analizar.clicked.connect(_analizar)
     btn_mapa.clicked.connect(_calcular_mapa)
+    # Ganchos para las pruebas: la barra y la etiqueta de la
+    # optimización quedan accesibles desde la página.
+    pagina._barra_opt = barra_opt
+    pagina._lbl_opt = lbl_opt
+    pagina._botones_opt = botones_opt
     return pagina
 
 
