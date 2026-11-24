@@ -32,8 +32,9 @@ from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
 from antivirus_hogar_pc.core import drivers_logic
 from antivirus_hogar_pc.core.hashing import tamano_legible
 from antivirus_hogar_pc.ui import theme
-from antivirus_hogar_pc.ui.paginas_base import (etiqueta, fila_estado,
-                                                pagina_base, tarjeta)
+from antivirus_hogar_pc.ui.paginas_base import (boton_principal, etiqueta,
+                                                fila_estado, pagina_base,
+                                                tarjeta)
 from antivirus_hogar_pc.ui.widgets_v102 import BarraProgreso
 
 from . import servicios_sistema as svc
@@ -194,10 +195,13 @@ def crear_pagina_drivers(ctx: ContextoModulo):
     tabla.setColumnWidth(3, 130)   # Estado, acotada
     tabla.setColumnWidth(4, 250)   # Acción: Actualizar + Fuentes oficiales
     tabla.setTextElideMode(Qt.TextElideMode.ElideRight)
-    btn_escanear = QPushButton("Escanear drivers")
+    btn_escanear = boton_principal("Escanear drivers", "primario")
+    lbl_causa_wu = etiqueta("", suave=True)
+    lbl_causa_wu.setVisible(False)
     lay_e.addWidget(btn_escanear)
     lay_e.addWidget(barra)
     lay_e.addWidget(lbl_estado)
+    lay_e.addWidget(lbl_causa_wu)
     lay_e.addWidget(tabla)
     lay_e.addWidget(etiqueta(
         "Antes de instalar un driver se crea un punto de restauración "
@@ -305,6 +309,7 @@ def crear_pagina_drivers(ctx: ContextoModulo):
         """Bug 5: un fallo del escaneo se ve SIEMPRE, en rojo y con la
         causa; nunca tabla vacía en silencio ni «escaneando» eterno."""
         escaneo["activo"] = False
+        tarjeta_escaner.fijar_activa(False)
         if escaneo["vigia"] is not None:
             escaneo["vigia"].stop()
         barra.terminar()
@@ -318,6 +323,7 @@ def crear_pagina_drivers(ctx: ContextoModulo):
 
     def _al_terminar_escaneo(resultado: ResultadoModulo):
         escaneo["activo"] = False
+        tarjeta_escaner.fijar_activa(False)
         if escaneo["vigia"] is not None:
             escaneo["vigia"].stop()
         barra.terminar()
@@ -327,6 +333,19 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             return
         lbl_estado.setStyleSheet("")
         lbl_estado.setText(resultado.mensaje)
+        # v1.0.3: si la consulta a Windows Update FALLÓ, la causa se ve
+        # en su propio renglón rojo bajo el estado — es la explicación
+        # de por qué los drivers quedan «Sin confirmar».
+        causa_wu = str(resultado.datos.get("wu_causa", "") or "")
+        if causa_wu:
+            lbl_causa_wu.setStyleSheet(f"color: {theme.ROJO}; font-weight: 600;")
+            lbl_causa_wu.setText(
+                "⚠ Windows Update no pudo confirmar los drivers. "
+                f"Causa: {causa_wu}")
+            lbl_causa_wu.setVisible(True)
+        else:
+            lbl_causa_wu.setText("")
+            lbl_causa_wu.setVisible(False)
         estado_actual.update(resultado.datos)
         _pintar_tabla(resultado.datos["estados"])
 
@@ -342,7 +361,8 @@ def crear_pagina_drivers(ctx: ContextoModulo):
         try:
             final = svc.escanear_drivers_paso3_comparar(
                 instalados, resultado.datos.get("ofrecidas", []),
-                bool(resultado.datos.get("wu_consultado")), fabricante)
+                bool(resultado.datos.get("wu_consultado")), fabricante,
+                str(resultado.datos.get("wu_causa", "") or ""))
         except Exception as exc:  # defensa: jamás colgar el escaneo
             final = ResultadoModulo(
                 False, f"No se pudo completar la comparación: {exc}")
@@ -373,6 +393,9 @@ def crear_pagina_drivers(ctx: ContextoModulo):
         if gestor.ocupado:
             return
         lbl_estado.setStyleSheet("")
+        lbl_causa_wu.setText("")
+        lbl_causa_wu.setVisible(False)
+        tarjeta_escaner.fijar_activa(True)
         barra.setVisible(True)
         barra.fijar_etapas(1, 3, "Leyendo los drivers instalados")
         btn_escanear.setEnabled(False)
@@ -429,7 +452,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
     barra = BarraProgreso()
     barra.setVisible(False)
     lbl_estado = etiqueta("Todavía no se ha analizado ningún disco.", suave=True)
-    btn_analizar = QPushButton("Analizar discos")
+    btn_analizar = boton_principal("Analizar discos", "primario")
     contenedor_discos = QVBoxLayout()
     lay_d.addWidget(btn_analizar)
     lay_d.addWidget(barra)
@@ -539,6 +562,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
 
     def _al_terminar_analisis(resultado: ResultadoModulo):
         barra.terminar()
+        tarjeta_discos.fijar_activa(False)
         btn_analizar.setEnabled(True)
         lbl_estado.setText(resultado.mensaje)
         if resultado.ok:
@@ -547,6 +571,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
     def _analizar():
         if gestor.ocupado:
             return
+        tarjeta_discos.fijar_activa(True)
         barra.setVisible(True)
         barra.fijar_texto("Leyendo la salud SMART…")
         btn_analizar.setEnabled(False)
@@ -608,7 +633,7 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
     barra.setVisible(False)
     lbl_estado = etiqueta("Pulsa «Analizar» para ver cuánto se puede liberar. "
                           "No se borra nada sin tu confirmación.", suave=True)
-    btn_analizar = QPushButton("Analizar")
+    btn_analizar = boton_principal("Analizar", "primario")
     contenedor_partidas = QVBoxLayout()
     lbl_total = etiqueta("")
     btn_limpiar = QPushButton("Limpiar temporales")
@@ -657,6 +682,7 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
     layout.addStretch(1)
 
     def _ocupado(activo: bool, texto: str = ""):
+        tarjeta_inf.fijar_activa(activo)
         if activo:
             barra.setVisible(True)
             if texto:

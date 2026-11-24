@@ -104,6 +104,14 @@ def ordenar_servidores(servidores: list[ServidorVPN], criterio: str = "velocidad
     return sorted(servidores, key=lambda s: -s.velocidad_bps)
 
 
+def _descargar_texto(url: str, timeout: int = 45) -> str:
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": "AntivirusHogarPC"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
 def descargar_lista_servidores(url: str, timeout: int = 60) -> list[ServidorVPN]:
     """Descarga la lista pública de VPN Gate y la parsea.
 
@@ -111,12 +119,68 @@ def descargar_lista_servidores(url: str, timeout: int = 60) -> list[ServidorVPN]
     quien llama (la página, vía ui.services.seguro) la traduce a un
     ResultadoModulo con mensaje en español.
     """
-    import urllib.request
+    return parsear_csv_vpngate(_descargar_texto(url, timeout))
 
-    req = urllib.request.Request(url, headers={"User-Agent": "AntivirusHogarPC"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        texto = resp.read().decode("utf-8", errors="replace")
-    return parsear_csv_vpngate(texto)
+
+# --- Cadena con respaldo + semilla (v1.0.3, problema 5) ----------------------
+# En la v1.0.2 la lista se pedía UNA sola vez al endpoint HTTPS principal.
+# En un Windows real eso puede quedar vacío por: un corte TLS/conexión
+# transitorio, la lentitud de vpngate.net (servidores en Japón), o una
+# respuesta irreconocible — y no había ni reintento ni respaldo.
+# Verificado desde el entorno de construcción el 2026-11-24: el endpoint
+# HTTPS principal falló (conexión cortada) mientras el mismo API por
+# HTTP respondió 200 con 99 servidores; por eso la cadena prueba las
+# tres rutas, con reintento, antes de rendirse a la semilla.
+
+def descargar_lista_con_respaldo(urls, timeout: int = 45,
+                                 intentos_por_url: int = 2,
+                                 descargador=None,
+                                 dormir=None) -> tuple[list[ServidorVPN], str]:
+    """Prueba cada URL (con reintentos) hasta que una devuelva servidores.
+    Devuelve (servidores, url_que_funciono). Si todas fallan, lanza
+    RuntimeError con la causa del último intento. `descargador(url,
+    timeout) -> texto` y `dormir(segundos)` son inyectables para tests."""
+    import time as _time
+
+    bajar = descargador or _descargar_texto
+    esperar = dormir if dormir is not None else _time.sleep
+    ultimo_error: Exception | None = None
+    for url in urls:
+        for intento in range(max(1, intentos_por_url)):
+            try:
+                servidores = parsear_csv_vpngate(bajar(url, timeout))
+                if servidores:
+                    return servidores, url
+                ultimo_error = RuntimeError(
+                    "la respuesta de VPN Gate llegó vacía o en un formato "
+                    "que no se pudo leer")
+            except Exception as exc:  # red/TLS/timeout: a la siguiente ruta
+                ultimo_error = exc
+            if intento + 1 < max(1, intentos_por_url):
+                esperar(1.5)
+    raise RuntimeError(str(ultimo_error) if ultimo_error else
+                       "sin rutas de descarga configuradas")
+
+
+def leer_semilla_vpngate(carpeta_activos: str) -> tuple[list[ServidorVPN], str]:
+    """Lista SEMILLA incluida en la app (assets/vpngate_seed.csv):
+    servidores REALES descargados de la API al construir la versión.
+    Devuelve (servidores, fecha_de_la_descarga). Si el archivo no está
+    o no parsea, devuelve ([], "")."""
+    import os
+    import re
+
+    ruta = os.path.join(carpeta_activos, "vpngate_seed.csv")
+    try:
+        with open(ruta, encoding="utf-8", errors="replace") as f:
+            texto = f.read()
+    except OSError:
+        return [], ""
+    fecha = ""
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", texto)
+    if m:
+        fecha = m.group(1)
+    return parsear_csv_vpngate(texto), fecha
 
 
 def paises_disponibles(servidores: list[ServidorVPN]) -> list[str]:

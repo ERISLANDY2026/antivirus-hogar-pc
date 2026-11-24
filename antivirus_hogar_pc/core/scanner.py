@@ -5,6 +5,7 @@ cada archivo y las contrasta con la base de firmas. No borra ni mueve nada:
 devuelve hallazgos y la DECISIÓN la toma el usuario, como en Android.
 """
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Optional
 
@@ -36,6 +37,7 @@ class ResultadoEscaneo:
     errores: int = 0
     hallazgos: list[Hallazgo] = field(default_factory=list)
     cancelado: bool = False
+    error: str = ""   # fallo global del escaneo (v1.0.3): la UI lo enseña
 
 
 # progreso(ruta_actual, revisados, total) — total puede ser None si aún no se sabe
@@ -74,6 +76,29 @@ def escanear(
     total = len(archivos)
     prefijos_forzados = tuple(os.path.normpath(p) for p in forzar_rehash_en)
 
+    # Progreso LIMITADO (v1.0.3): antes se emitía una señal por archivo y
+    # la cola de eventos de la ventana se inundaba (miles de archivos
+    # resueltos desde la caché en microsegundos), así que la barra se
+    # quedaba en «Escaneando…» hasta saltar al final. Ahora: un primer
+    # aviso con el total ya conocido (0 de N), después como mucho cada
+    # 25 archivos o cada 100 ms, y SIEMPRE el último (N de N). El conteo
+    # es de archivos PROCESADOS (revisados + con error), para que la
+    # barra llegue al total aunque algún archivo no se pueda leer.
+    procesados = 0
+    ultimo_aviso = 0.0
+
+    def avisar(ruta: str, forzar: bool = False) -> None:
+        nonlocal ultimo_aviso
+        if progreso is None:
+            return
+        ahora = time.monotonic()
+        if forzar or procesados % 25 == 0 or ahora - ultimo_aviso >= 0.1:
+            ultimo_aviso = ahora
+            progreso(ruta, procesados, total)
+
+    if progreso is not None and total:
+        progreso("", 0, total)
+
     for ruta in archivos:
         if debe_cancelar and debe_cancelar():
             resultado.cancelado = True
@@ -82,6 +107,8 @@ def escanear(
             st = os.stat(ruta)
         except OSError:
             resultado.errores += 1
+            procesados += 1
+            avisar(ruta)
             continue
         tamano, mtime = st.st_size, st.st_mtime
         forzado = any(os.path.normpath(ruta).startswith(p) for p in prefijos_forzados)
@@ -95,18 +122,22 @@ def escanear(
                 huellas = huellas_archivo(ruta)
             except OSError:
                 resultado.errores += 1
+                procesados += 1
+                avisar(ruta)
                 continue
             if cache is not None:
                 cache.guardar(ruta, tamano, mtime, huellas[0], huellas[1])
         resultado.archivos_revisados += 1
+        procesados += 1
         etiqueta = base.buscar(sha256=huellas[0], md5=huellas[1])
         if etiqueta:
             resultado.hallazgos.append(
                 Hallazgo(ruta=ruta, sha256=huellas[0], md5=huellas[1],
                          etiqueta=etiqueta, tamano=tamano)
             )
-        if progreso:
-            progreso(ruta, resultado.archivos_revisados, total)
+        avisar(ruta)
+    if progreso is not None and not resultado.cancelado and total:
+        progreso(archivos[-1] if archivos else "", total, total)
     if cache is not None:
         cache.confirmar()
     return resultado

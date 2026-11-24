@@ -58,42 +58,57 @@ def escanear_drivers_paso1() -> ResultadoModulo:
 
 def escanear_drivers_paso2_buscar(instalados) -> ResultadoModulo:
     """Paso 2 (v1.0.2, bug 5): consultar las fuentes (Windows Update).
-    datos = {"ofrecidas": [...], "wu_consultado": bool}. Si WU falla, NO
-    es un error fatal del escaneo: se anota y el paso 3 compara marcando
-    todo «sin confirmar», que es la verdad."""
+    datos = {"ofrecidas": [...], "wu_consultado": bool, "wu_causa": str}.
+    Si WU falla, NO es un error fatal del escaneo: se anota la CAUSA
+    REAL (v1.0.3) y el paso 3 compara marcando todo «sin confirmar»,
+    enseñando esa causa en la página — nunca en silencio."""
     try:
         ofrecidas = drivers_win.buscar_drivers_windows_update()
         return ResultadoModulo(
             ok=True,
             mensaje=f"Windows Update ofrece {len(ofrecidas)} driver(s).",
-            datos={"ofrecidas": ofrecidas, "wu_consultado": True})
+            datos={"ofrecidas": ofrecidas, "wu_consultado": True,
+                   "wu_causa": ""})
     except Exception as exc:
         return ResultadoModulo(
             ok=True,
             mensaje="Windows Update no respondió en este intento.",
-            datos={"ofrecidas": [], "wu_consultado": False},
+            datos={"ofrecidas": [], "wu_consultado": False,
+                   "wu_causa": str(exc)},
             detalle_tecnico=str(exc))
 
 
 def escanear_drivers_paso3_comparar(instalados, ofrecidas,
                                     wu_consultado: bool = True,
-                                    fabricante_pc: str = "") -> ResultadoModulo:
+                                    fabricante_pc: str = "",
+                                    wu_causa: str = "") -> ResultadoModulo:
     """Paso 3: comparar instalados contra lo ofrecido y armar el resultado
-    completo (estados, fabricante_pc, wu_consultado, ofrecidas_wu)."""
+    completo (estados, fabricante_pc, wu_consultado, ofrecidas_wu,
+    wu_causa).
+
+    Semántica v1.0.3: «al día» SOLO si la consulta a Windows Update
+    completó (wu_consultado=True, aunque ofrezca 0); «sin confirmar»
+    SOLO si la consulta falló, y entonces la causa viaja en los datos
+    y en el mensaje para que la página la enseñe."""
     if wu_consultado:
-        estados = drivers_logic.contrastar_con_windows_update(instalados, ofrecidas)
+        estados = drivers_logic.contrastar_con_windows_update(
+            instalados, ofrecidas, consulta_completada=True)
     else:
+        detalle = ("No se pudo consultar Windows Update en este intento; "
+                   "el estado de este driver queda sin confirmar.")
+        if wu_causa:
+            detalle += f" Causa: {wu_causa}"
         estados = [
             drivers_logic.EstadoDriver(
-                driver=d, estado="sin_datos",
-                detalle="No se pudo consultar Windows Update en este intento; "
-                        "el estado de este driver queda sin confirmar.")
+                driver=d, estado="sin_datos", detalle=detalle)
             for d in instalados
         ]
     nuevos = sum(1 for e in estados if e.estado == "hay_uno_mas_nuevo")
     if not wu_consultado:
-        mensaje = (f"Se leyeron {len(instalados)} drivers, pero Windows Update "
-                   "no respondió: ningún estado está confirmado.")
+        mensaje = (f"Se leyeron {len(instalados)} drivers, pero la consulta "
+                   "a Windows Update falló: ningún estado está confirmado.")
+        if wu_causa:
+            mensaje += f" Causa: {wu_causa}"
     elif nuevos:
         mensaje = (f"{len(instalados)} drivers revisados contra Windows Update: "
                    f"{nuevos} con una versión más nueva disponible.")
@@ -104,6 +119,7 @@ def escanear_drivers_paso3_comparar(instalados, ofrecidas,
         "estados": estados,
         "fabricante_pc": fabricante_pc,
         "wu_consultado": wu_consultado,
+        "wu_causa": wu_causa if not wu_consultado else "",
         "ofrecidas_wu": len(ofrecidas),
     })
 
@@ -115,7 +131,8 @@ def escanear_drivers_paso2(instalados, fabricante_pc: str = "") -> ResultadoModu
     datos = buscar.datos or {}
     return escanear_drivers_paso3_comparar(
         instalados, datos.get("ofrecidas", []),
-        bool(datos.get("wu_consultado")), fabricante_pc)
+        bool(datos.get("wu_consultado")), fabricante_pc,
+        str(datos.get("wu_causa", "")))
 
 
 def escanear_drivers() -> ResultadoModulo:

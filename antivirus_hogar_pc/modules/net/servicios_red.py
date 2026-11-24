@@ -15,7 +15,9 @@ from antivirus_hogar_pc.core.v102 import valorar_velocidad
 from antivirus_hogar_pc.core.velocidad import medir_velocidad
 from antivirus_hogar_pc.core.vpngate import (
     ServidorVPN,
+    descargar_lista_con_respaldo,
     descargar_lista_servidores,
+    leer_semilla_vpngate,
     ordenar_servidores,
     paises_disponibles,
 )
@@ -40,31 +42,55 @@ def _sobre(res) -> ResultadoModulo:
 def descargar_servidores_completos() -> ResultadoModulo:
     """Descarga la lista pública de VPN Gate SIN filtrar ni ordenar.
 
-    datos = lista completa de ServidorVPN. La página la guarda y aplica el
-    país/orden en local (core.vpngate.ordenar_servidores) sin re-descargar.
+    v1.0.3 (problema 5): cadena de rutas con reintento
+    (core.vpngate.descargar_lista_con_respaldo sobre config.VPNGATE_APIS)
+    y, si TODAS fallan, LISTA SEMILLA incluida en la app: la página
+    puebla la tabla y el desplegable con la semilla y enseña el aviso
+    de respaldo con su fecha y la causa — nunca la lista vacía en
+    silencio.
+
+    datos = {"servidores": [...], "es_semilla": bool,
+             "fecha_semilla": str, "causa": str}. La página guarda la
+    lista y aplica país/orden en local sin re-descargar.
     """
-    res = seguro(descargar_lista_servidores, config.VPNGATE_API)
-    if not res.ok:
+    try:
+        servidores, _url = descargar_lista_con_respaldo(config.VPNGATE_APIS)
+    except Exception as exc:
+        causa = str(exc)
+        semilla, fecha = leer_semilla_vpngate(config.carpeta_activos())
+        if semilla:
+            return ResultadoModulo(
+                ok=True,
+                mensaje=(f"Lista de respaldo del {fecha or 'la versión'} "
+                         f"({len(semilla)} servidores): no se pudo conectar "
+                         f"con VPN Gate ({causa}). Los servidores son "
+                         "reales pero pueden haber cambiado; pulsa "
+                         "«Reintentar descarga» para la lista en vivo."),
+                datos={"servidores": semilla, "es_semilla": True,
+                       "fecha_semilla": fecha, "causa": causa},
+                detalle_tecnico=causa,
+            )
         return ResultadoModulo(
             ok=False,
             mensaje=("No se pudo descargar la lista de servidores de VPN Gate. "
-                     f"Causa: {res.mensaje} "
+                     f"Causa: {causa} "
                      "Pulsa «Reintentar descarga» para intentarlo otra vez."),
-            detalle_tecnico=res.mensaje,
-        )
-    servidores: list[ServidorVPN] = res.datos or []
-    if not servidores:
-        return ResultadoModulo(
-            ok=False,
-            mensaje=("La lista de VPN Gate llegó vacía o en un formato que no "
-                     "se pudo leer: no hay servidores que mostrar. Pulsa "
-                     "«Reintentar descarga» para intentarlo otra vez."),
+            detalle_tecnico=causa,
         )
     return ResultadoModulo(
         ok=True,
         mensaje=f"{len(servidores)} servidores disponibles.",
-        datos=servidores,
+        datos={"servidores": servidores, "es_semilla": False,
+               "fecha_semilla": "", "causa": ""},
     )
+
+
+def _servidores_de(datos) -> list[ServidorVPN]:
+    """Desempaqueta datos de descargar_servidores_completos (dict v1.0.3;
+    se tolera la lista pelada de la v1.0.2 por compatibilidad)."""
+    if isinstance(datos, dict):
+        return list(datos.get("servidores") or [])
+    return list(datos or [])
 
 
 def servidores_vpn(criterio: str = "velocidad", pais: str = "") -> ResultadoModulo:
@@ -72,23 +98,24 @@ def servidores_vpn(criterio: str = "velocidad", pais: str = "") -> ResultadoModu
     completo = descargar_servidores_completos()
     if not completo.ok:
         return completo
-    servidores: list[ServidorVPN] = completo.datos or []
+    servidores = _servidores_de(completo.datos)
     if pais:
         servidores = [s for s in servidores if s.pais == pais]
     servidores = ordenar_servidores(servidores, criterio)
     return ResultadoModulo(
         ok=True,
-        mensaje=f"{len(servidores)} servidores disponibles.",
+        mensaje=completo.mensaje,
         datos=servidores,
     )
 
 
 def lista_paises() -> ResultadoModulo:
     """Países presentes en la lista actual de VPN Gate (para el desplegable)."""
-    res = seguro(descargar_lista_servidores, config.VPNGATE_API)
-    if not res.ok:
-        return ResultadoModulo(ok=False, mensaje=res.mensaje)
-    return ResultadoModulo(ok=True, datos=paises_disponibles(res.datos or []))
+    completo = descargar_servidores_completos()
+    if not completo.ok:
+        return ResultadoModulo(ok=False, mensaje=completo.mensaje)
+    return ResultadoModulo(
+        ok=True, datos=paises_disponibles(_servidores_de(completo.datos)))
 
 
 def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:

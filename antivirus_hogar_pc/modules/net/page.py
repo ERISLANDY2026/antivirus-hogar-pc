@@ -27,8 +27,8 @@ from antivirus_hogar_pc.core.v102 import valorar_velocidad
 from antivirus_hogar_pc.core.vpngate import ordenar_servidores, paises_disponibles
 from antivirus_hogar_pc.core.wifi_parse import valorar_wifi
 from antivirus_hogar_pc.ui import theme
-from antivirus_hogar_pc.ui.paginas_base import etiqueta, fila_estado, pagina_base, tarjeta
-from antivirus_hogar_pc.ui.widgets_v102 import BarraProgreso
+from antivirus_hogar_pc.ui.paginas_base import boton_principal, etiqueta, fila_estado, pagina_base, tarjeta
+from antivirus_hogar_pc.ui.widgets_v102 import BarraProgreso, BotonPulso
 
 from . import servicios_red as srv
 
@@ -116,16 +116,19 @@ class _PaginaActualizaciones(QWidget):
 
         # --- La propia app -----------------------------------------------------
         tarjeta_app, lay = tarjeta("Antivirus Hogar PC")
+        self._tarjeta_app = tarjeta_app
         self._lbl_app = etiqueta(f"Estás en la versión {config.VERSION}.")
         lay.addWidget(self._lbl_app)
-        self._btn_app = QPushButton("Buscar actualizaciones de la app")
+        self._btn_app = BotonPulso("Buscar actualizaciones de la app")
         self._btn_app.setObjectName("verde")
+        self._btn_app.activar_pulso(True)
         self._btn_app.clicked.connect(lambda: self._buscar_app(silencioso=False))
         lay.addWidget(self._btn_app)
         layout.addWidget(tarjeta_app)
 
         # --- Programas (winget) --------------------------------------------------
         tarjeta_winget, lay_w = tarjeta("Programas desactualizados (winget)")
+        self._tarjeta_winget = tarjeta_winget
         self._barra_winget = BarraProgreso()
         lay_w.addWidget(self._barra_winget)
         self._lbl_winget = etiqueta("Pulsa buscar para ver qué programas tienen "
@@ -136,7 +139,7 @@ class _PaginaActualizaciones(QWidget):
             ["Programa", "Versión", "Disponible", "Origen", "Acción"])
         lay_w.addWidget(self._tabla_winget)
         fila_w = QHBoxLayout()
-        self._btn_winget = QPushButton("Buscar programas desactualizados")
+        self._btn_winget = boton_principal("Buscar programas desactualizados", "primario")
         self._btn_winget.clicked.connect(self._buscar_winget)
         self._btn_todo = QPushButton("Actualizar todo")
         self._btn_todo.clicked.connect(self._actualizar_todo)
@@ -148,6 +151,7 @@ class _PaginaActualizaciones(QWidget):
 
         # --- Windows Update ---------------------------------------------------------
         tarjeta_wu, lay_u = tarjeta("Actualizaciones de Windows pendientes")
+        self._tarjeta_wu = tarjeta_wu
         self._barra_wu = BarraProgreso()
         lay_u.addWidget(self._barra_wu)
         self._lbl_wu = etiqueta("Pulsa buscar para consultar Windows Update.")
@@ -155,7 +159,7 @@ class _PaginaActualizaciones(QWidget):
         self._lista_wu = QListWidget()
         lay_u.addWidget(self._lista_wu)
         fila_u = QHBoxLayout()
-        self._btn_wu = QPushButton("Buscar actualizaciones de Windows")
+        self._btn_wu = boton_principal("Buscar actualizaciones de Windows", "primario")
         self._btn_wu.clicked.connect(self._buscar_wu)
         self._btn_abrir_wu = QPushButton("Abrir Windows Update")
         self._btn_abrir_wu.clicked.connect(
@@ -216,12 +220,14 @@ class _PaginaActualizaciones(QWidget):
 
     # -- winget ---------------------------------------------------------------------
     def _buscar_winget(self) -> None:
+        self._tarjeta_winget.fijar_activa(True)
         self._barra_winget.fijar_texto("Buscando con winget…")
         self._lbl_winget.setText("Buscando con winget… puede tardar un poco.")
         self._fijar_ocupado(True)
         _lanzar(self, srv.programas_desactualizados, self._winget_buscado)
 
     def _winget_buscado(self, resultado: ResultadoModulo) -> None:
+        self._tarjeta_winget.fijar_activa(False)
         self._fijar_ocupado(False)
         self._lbl_winget.setText(resultado.mensaje)
         self._programas = resultado.datos or []
@@ -297,6 +303,7 @@ class _PaginaActualizaciones(QWidget):
 
     # -- Windows Update ----------------------------------------------------------------
     def _buscar_wu(self) -> None:
+        self._tarjeta_wu.fijar_activa(True)
         self._barra_wu.fijar_texto(
             "Consultando Windows Update… (Windows no informa porcentaje)")
         self._lbl_wu.setText("Consultando Windows Update… la primera vez tarda.")
@@ -304,6 +311,7 @@ class _PaginaActualizaciones(QWidget):
         _lanzar(self, srv.actualizaciones_windows, self._wu_buscado)
 
     def _wu_buscado(self, resultado: ResultadoModulo) -> None:
+        self._tarjeta_wu.fijar_activa(False)
         self._fijar_ocupado(False)
         self._lbl_wu.setText(resultado.mensaje)
         self._lista_wu.clear()
@@ -341,6 +349,7 @@ class _PaginaRed(QWidget):
 
         # --- Wi-Fi ----------------------------------------------------------------
         tarjeta_wifi, lay = tarjeta("Wi-Fi")
+        self._tarjeta_wifi = tarjeta_wifi
         self._fila_wifi = lay
         self._contenedor_wifi = QWidget()
         self._lay_wifi = QVBoxLayout(self._contenedor_wifi)
@@ -350,7 +359,7 @@ class _PaginaRed(QWidget):
         lay.addWidget(self._lbl_wifi_detalle)
         self._lbl_perfiles = etiqueta("", suave=True)
         lay.addWidget(self._lbl_perfiles)
-        self._btn_wifi = QPushButton("Actualizar datos de Wi-Fi")
+        self._btn_wifi = boton_principal("Actualizar datos de Wi-Fi", "primario")
         self._btn_wifi.clicked.connect(self._cargar_wifi)
         lay.addWidget(self._btn_wifi)
         self._barra_wifi = BarraProgreso()
@@ -362,11 +371,12 @@ class _PaginaRed(QWidget):
 
         # --- Velocidad de internet y estado VPN -------------------------------------
         tarjeta_vel, lay_vel = tarjeta("Velocidad de internet y estado VPN")
+        self._tarjeta_vel = tarjeta_vel
         self._lbl_velocidad = etiqueta("Todavía no se ha medido la velocidad.")
         lay_vel.addWidget(self._lbl_velocidad)
         self._lbl_valoracion = etiqueta("", suave=True)
         lay_vel.addWidget(self._lbl_valoracion)
-        self._btn_velocidad = QPushButton("Medir velocidad")
+        self._btn_velocidad = boton_principal("Medir velocidad", "primario")
         self._btn_velocidad.clicked.connect(self._medir_velocidad)
         lay_vel.addWidget(self._btn_velocidad)
         self._lbl_estado_vpn = etiqueta("Estado VPN sin consultar.", suave=True)
@@ -378,6 +388,7 @@ class _PaginaRed(QWidget):
 
         # --- VPN Gate ----------------------------------------------------------------
         tarjeta_vpn, lay_v = tarjeta("VPN Gate (servidores de voluntarios)")
+        self._tarjeta_vpn = tarjeta_vpn
         aviso = etiqueta(
             "AVISO: estos servidores los ofrecen VOLUNTARIOS y el operador puede "
             "registrar la conexión. Úsalos para navegar con otra ubicación, "
@@ -410,7 +421,7 @@ class _PaginaRed(QWidget):
         self._combo_orden.addItem("Puntuación", "puntuacion")
         self._combo_orden.currentIndexChanged.connect(self._repintar_servidores)
         fila_ctrl.addWidget(self._combo_orden)
-        self._btn_servidores = QPushButton("Actualizar lista de servidores")
+        self._btn_servidores = boton_principal("Actualizar lista de servidores", "primario")
         self._btn_servidores.clicked.connect(self._cargar_servidores)
         fila_ctrl.addWidget(self._btn_servidores)
         fila_ctrl.addStretch(1)
@@ -451,6 +462,7 @@ class _PaginaRed(QWidget):
     # -- Wi-Fi ----------------------------------------------------------------------
     def _cargar_wifi(self) -> None:
         # Feedback INMEDIATO (bug 4): antes el botón no hacía nada visible.
+        self._tarjeta_wifi.fijar_activa(True)
         self._btn_wifi.setEnabled(False)
         self._btn_wifi.setText("Leyendo…")
         self._barra_wifi.setVisible(True)
@@ -461,6 +473,7 @@ class _PaginaRed(QWidget):
     def _wifi_cargado(self, resultado: ResultadoModulo) -> None:
         import time as _time
 
+        self._tarjeta_wifi.fijar_activa(False)
         self._btn_wifi.setEnabled(True)
         self._btn_wifi.setText("Actualizar datos de Wi-Fi")
         self._barra_wifi.terminar()
@@ -507,11 +520,14 @@ class _PaginaRed(QWidget):
 
     # -- VPN Gate ---------------------------------------------------------------------
     def _cargar_servidores(self) -> None:
+        self._tarjeta_vpn.fijar_activa(True)
+        self._lbl_vpn.setStyleSheet("")
         self._lbl_vpn.setText("Descargando la lista de VPN Gate…")
         self._btn_servidores.setEnabled(False)
         _lanzar(self, srv.descargar_servidores_completos, self._servidores_cargados)
 
     def _servidores_cargados(self, resultado: ResultadoModulo) -> None:
+        self._tarjeta_vpn.fijar_activa(False)
         self._btn_servidores.setEnabled(True)
         if not resultado.ok:
             # Error VISIBLE con la causa y reintento (nada de vacío en silencio)
@@ -519,9 +535,31 @@ class _PaginaRed(QWidget):
             self._lbl_vpn.setText(resultado.mensaje)
             self._btn_servidores.setText("Reintentar descarga")
             return
+        if isinstance(resultado.datos, dict):
+            datos = resultado.datos
+            self._servidores = list(datos.get("servidores") or [])
+        else:  # compatibilidad: la lista pelada de la v1.0.2
+            datos = {}
+            self._servidores = list(resultado.datos or [])
+        self._es_semilla_activa = bool(datos.get("es_semilla"))
+        self._fecha_semilla = str(datos.get("fecha_semilla") or "")
+        if datos.get("es_semilla"):
+            # Lista SEMILLA (v1.0.3): la tabla y el desplegable se
+            # pueblan igual, pero el aviso de respaldo queda VISIBLE
+            # (ámbar) con la fecha y la causa, y el botón invita a
+            # reintentar la descarga en vivo.
+            self._lbl_vpn.setStyleSheet(f"color: {theme.AMBAR}; font-weight: 600;")
+            self._lbl_vpn.setText("⚠ " + resultado.mensaje)
+            self._btn_servidores.setText("Reintentar descarga")
+            self._poblar_combo_paises()
+            self._repintar_servidores()
+            return
         self._lbl_vpn.setStyleSheet("")
         self._btn_servidores.setText("Actualizar lista de servidores")
-        self._servidores = resultado.datos or []
+        self._poblar_combo_paises()
+        self._repintar_servidores()
+
+    def _poblar_combo_paises(self) -> None:
         pais_actual = self._combo_pais.currentData()
         self._combo_pais.blockSignals(True)
         self._combo_pais.clear()
@@ -531,7 +569,6 @@ class _PaginaRed(QWidget):
         indice = self._combo_pais.findData(pais_actual or "")
         self._combo_pais.setCurrentIndex(indice if indice >= 0 else 0)
         self._combo_pais.blockSignals(False)
-        self._repintar_servidores()
 
     def _repintar_servidores(self) -> None:
         if not self._servidores:
@@ -540,7 +577,15 @@ class _PaginaRed(QWidget):
         criterio = self._combo_orden.currentData() or "velocidad"
         visibles = [s for s in self._servidores if not pais or s.pais == pais]
         self._visibles = ordenar_servidores(visibles, criterio)
-        self._lbl_vpn.setText(f"{len(self._visibles)} servidores en la lista.")
+        texto = f"{len(self._visibles)} servidores en la lista."
+        if getattr(self, "_es_semilla_activa", False):
+            # El aviso de respaldo NO se pierde al repintar/filtrar.
+            texto = ("⚠ Lista de respaldo del "
+                     f"{getattr(self, '_fecha_semilla', '')} "
+                     "(sin conexión con VPN Gate). " + texto)
+            self._lbl_vpn.setStyleSheet(
+                f"color: {theme.AMBAR}; font-weight: 600;")
+        self._lbl_vpn.setText(texto)
         tabla = self._tabla_vpn
         tabla.setRowCount(len(self._visibles))
         for i, s in enumerate(self._visibles):
@@ -584,12 +629,14 @@ class _PaginaRed(QWidget):
 
     # -- Velocidad y estado VPN -------------------------------------------------------
     def _medir_velocidad(self) -> None:
+        self._tarjeta_vel.fijar_activa(True)
         self._lbl_velocidad.setText("Midiendo la velocidad… (descarga real de prueba)")
         self._lbl_valoracion.setText("")
         self._btn_velocidad.setEnabled(False)
         _lanzar(self, srv.prueba_velocidad, self._velocidad_medida)
 
     def _velocidad_medida(self, resultado: ResultadoModulo) -> None:
+        self._tarjeta_vel.fijar_activa(False)
         self._btn_velocidad.setEnabled(True)
         if not resultado.ok:
             self._lbl_velocidad.setText(resultado.mensaje)

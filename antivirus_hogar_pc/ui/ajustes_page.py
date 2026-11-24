@@ -3,11 +3,11 @@
 No es un módulo de carril: vive en la carcasa porque toca el contexto
 compartido. La lógica de actualización es core.updater.
 """
-from PySide6.QtWidgets import QCheckBox, QLineEdit, QPushButton
+from PySide6.QtWidgets import QCheckBox, QLineEdit
 
 from .. import config
 from ..contracts import ContextoModulo
-from .paginas_base import etiqueta, pagina_base, tarjeta
+from .paginas_base import boton_principal, etiqueta, pagina_base, tarjeta
 
 
 def crear_pagina_ajustes(ctx: ContextoModulo):
@@ -31,7 +31,7 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
         "Al buscar actualizaciones se compara la versión y, si hay una nueva, "
         "se enseña «Qué trae esta actualización» antes de descargar nada. "
         "El instalador se verifica por su huella SHA-256.", suave=True))
-    boton_guardar = QPushButton("Guardar canal")
+    boton_guardar = boton_principal("Guardar canal", "primario")
     if ajustes is not None:
         def _guardar() -> None:
             ajustes.url_actualizacion = campo_url.text().strip()

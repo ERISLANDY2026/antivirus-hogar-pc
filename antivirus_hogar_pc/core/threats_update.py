@@ -29,16 +29,17 @@ def _peticion(url: str, datos: bytes | None = None, auth_key: str = "",
         return resp.read().decode("utf-8", errors="replace")
 
 
-def parsear_export_hashes(texto: str) -> list[tuple[str, str]]:
-    """Export TXT de abuse.ch: una huella por línea (# = comentario).
-    Devuelve [(huella, etiqueta)] con etiqueta genérica de la fuente."""
+def parsear_export_hashes(texto: str,
+                          etiqueta: str = "Malware conocido (abuse.ch)") -> list[tuple[str, str]]:
+    """Lista de huellas en texto: una por línea (# = comentario).
+    Devuelve [(huella, etiqueta)] con la etiqueta de la fuente."""
     salida: list[tuple[str, str]] = []
     for linea in texto.splitlines():
         huella = linea.strip().lower()
         if not huella or huella.startswith("#"):
             continue
         if len(huella) in (32, 64) and all(c in "0123456789abcdef" for c in huella):
-            salida.append((huella, "Malware conocido (abuse.ch)"))
+            salida.append((huella, etiqueta))
     return salida
 
 
@@ -109,6 +110,19 @@ import urllib.error
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+# Huellas SIN clave (v1.0.3): el proyecto malicious-hash (GitHub, licencia
+# MIT, actualización horaria) agrega varias fuentes públicas de hashes de
+# malware confirmado y las publica como texto plano, una huella por línea.
+# Verificado en vivo el 2026-11-24 desde el entorno de construcción:
+# full-hash-sha256-aa.txt = 130.905 SHA-256 válidas; full-hash-md5-aa.txt
+# = 4.049 MD5 válidas. Con esto las huellas ya NO dependen de la Auth-Key
+# de abuse.ch (que queda como fuente opcional para quien la tenga).
+URL_MALICIOUS_HASH_SHA256 = ("https://raw.githubusercontent.com/romainmarcoux/"
+                             "malicious-hash/main/full-hash-sha256-aa.txt")
+URL_MALICIOUS_HASH_MD5 = ("https://raw.githubusercontent.com/romainmarcoux/"
+                          "malicious-hash/main/full-hash-md5-aa.txt")
+ETIQUETA_MALICIOUS_HASH = "Malware conocido (malicious-hash)"
+
 URL_URLHAUS_FILTER = "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-domains.txt"
 URL_PHISHING_DATABASE = ("https://raw.githubusercontent.com/Phishing-Database/"
                          "Phishing.Database/master/phishing-domains-ACTIVE.txt")
@@ -121,6 +135,8 @@ class ResultadoFuente:
     nombre: str
     cantidad: int = 0          # huellas + dominios aportados (tras fusionar, brutos)
     error: str = ""            # causa real si falló
+    opcional: bool = False     # fuente opcional no consultada (p. ej. sin clave):
+                               # no cuenta como «falló» en el resumen
 
 
 @dataclass
@@ -136,7 +152,9 @@ class ResultadoMultifuente:
     def resumen(self) -> str:
         partes = []
         for f in self.por_fuente:
-            if f.error:
+            if f.opcional:
+                partes.append(f"{f.nombre}: opcional (sin clave; no se consultó)")
+            elif f.error:
                 partes.append(f"{f.nombre}: falló ({f.error})")
             else:
                 partes.append(f"{f.nombre}: {f.cantidad} firmas")
@@ -187,13 +205,12 @@ def parsear_dominios_de_urls(texto: str) -> list[str]:
 
 
 def _fuente_abusech(descargador, auth_key: str) -> ResultadoFuente:
-    """MalwareBazaar (huellas) vía API con Auth-Key; sin clave se intenta
-    igual y la causa queda registrada (la API la exige desde 2025)."""
+    """MalwareBazaar (huellas) vía API con Auth-Key. OPCIONAL (v1.0.3):
+    sin clave NO se consulta y NO cuenta como fallo — las huellas llegan
+    de malicious-hash, que no pide clave. Con clave, se consulta y suma."""
     nombre = "abuse.ch (MalwareBazaar)"
     if not auth_key:
-        return ResultadoFuente(
-            nombre, 0,
-            "requiere la Auth-Key gratuita de abuse.ch (se guarda en Ajustes)"), []
+        return ResultadoFuente(nombre, 0, "", opcional=True), []
     try:
         datos = b"query=get_recent&selector=100"
         texto = descargador(MALWAREBAZAAR_API, datos, auth_key, 45)
@@ -211,13 +228,28 @@ def actualizar_firmas_multifuente(auth_key: str = "", descargador=None) -> Resul
     hashes: dict[str, str] = {}
     dominios: set[str] = set()
 
-    # 1) abuse.ch con Auth-Key (huellas)
+    # 1) abuse.ch con Auth-Key (huellas, OPCIONAL: sin clave no es fallo)
     fuente, entradas = _fuente_abusech(bajar, auth_key)
     resultado.por_fuente.append(fuente)
     for huella, etiqueta in entradas:
         hashes[huella] = etiqueta
 
-    # 2-5) fuentes de dominios sin clave
+    # 2) malicious-hash (huellas SIN clave): SHA-256 y MD5 por separado,
+    # para que el resumen enseñe cuánto trajo cada archivo.
+    for nombre, url in (
+        ("malicious-hash (SHA-256)", URL_MALICIOUS_HASH_SHA256),
+        ("malicious-hash (MD5)", URL_MALICIOUS_HASH_MD5),
+    ):
+        try:
+            texto = bajar(url, None, "", 60)
+            encontrados = parsear_export_hashes(texto, ETIQUETA_MALICIOUS_HASH)
+            resultado.por_fuente.append(ResultadoFuente(nombre, len(encontrados)))
+            for huella, etiqueta in encontrados:
+                hashes[huella] = etiqueta
+        except Exception as exc:
+            resultado.por_fuente.append(ResultadoFuente(nombre, 0, _causa(exc)))
+
+    # 3-6) fuentes de dominios sin clave
     for nombre, url, parser in (
         ("URLhaus (vía malware-filter)", URL_URLHAUS_FILTER, parsear_dominios_texto),
         ("Phishing.Database", URL_PHISHING_DATABASE, parsear_dominios_texto),

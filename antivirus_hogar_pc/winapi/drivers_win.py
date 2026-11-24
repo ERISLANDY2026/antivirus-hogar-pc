@@ -57,20 +57,54 @@ def _fecha_legible(valor) -> str:
 
 
 def buscar_drivers_windows_update() -> list[dict]:
-    """Actualizaciones de tipo Driver ofrecidas por Windows Update."""
+    """Actualizaciones de tipo Driver ofrecidas por Windows Update.
+
+    v1.0.3 (problema «todo Sin confirmar»): la búsqueda va envuelta en
+    try/catch y devuelve un JSON ESTRUCTURADO {ok, codigo, causa,
+    actualizaciones}. Antes, si el COM de búsqueda fallaba, PowerShell
+    terminaba sin salida útil y el resultado vacío se confundía con
+    «no hay novedades»: TODOS los drivers quedaban «Sin confirmar» sin
+    que nadie supiera por qué. Ahora:
+    - Búsqueda completada (ResultCode 2 o 3), ofrezca 0 o N: se devuelve
+      la lista (vacía = sin novedades, la consulta SÍ se hizo).
+    - Búsqueda fallida o incompleta: se LANZA RuntimeError con la causa
+      real (mensaje/HRESULT de Windows Update) para que la app la
+      enseñe; nada de vacío silencioso."""
     script = (
+        "$ErrorActionPreference = 'Stop'; "
+        "try { "
         "$s = New-Object -ComObject Microsoft.Update.Session; "
         "$b = $s.CreateUpdateSearcher(); "
         "$r = $b.Search(\"Type='Driver' and IsInstalled=0 and IsHidden=0\"); "
-        "$r.Updates | ForEach-Object { [PSCustomObject]@{ "
+        "$cod = [int]$r.ResultCode; "
+        "$ups = @($r.Updates | ForEach-Object { [PSCustomObject]@{ "
         "Titulo = $_.Title; Id = $_.Identity.UpdateID; "
-        "Fecha = [string]$_.LastDeploymentChangeTime } } | ConvertTo-Json"
+        "Fecha = [string]$_.LastDeploymentChangeTime } }); "
+        "$bien = ($cod -eq 2 -or $cod -eq 3); "
+        "$causa = ''; if (-not $bien) { $causa = "
+        "\"Windows Update terminó la búsqueda con código $cod "
+        "(2=correcta, 3=correcta con avisos)\" }; "
+        "[PSCustomObject]@{ ok = $bien; codigo = $cod; causa = $causa; "
+        "actualizaciones = $ups } | ConvertTo-Json -Depth 4 "
+        "} catch { "
+        "[PSCustomObject]@{ ok = $false; codigo = -1; "
+        "causa = $_.Exception.Message; actualizaciones = @() } "
+        "| ConvertTo-Json -Depth 4 }"
     )
-    datos = como_lista(ejecutar_powershell_json(script, timeout=900))
+    datos = ejecutar_powershell_json(script, timeout=900)
+    if not isinstance(datos, dict) or "ok" not in datos:
+        raise RuntimeError(
+            "Windows Update no devolvió una respuesta interpretable "
+            "al buscar drivers (la búsqueda COM no completó).")
+    if not datos.get("ok"):
+        causa = str(datos.get("causa") or "").strip()
+        raise RuntimeError(
+            "La búsqueda de drivers en Windows Update falló"
+            + (f": {causa}" if causa else " sin detalle de Windows."))
     return [
         {"titulo": d.get("Titulo", ""), "id": d.get("Id", ""),
          "fecha": d.get("Fecha", ""), "version": ""}
-        for d in datos
+        for d in como_lista(datos.get("actualizaciones"))
     ]
 
 

@@ -2,7 +2,7 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.2.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.3.exe
 ;
 ; La app se instala por máquina en Archivos de programa: escribir el hosts,
 ; crear la tarea semanal y tocar Defender exigen administrador, y la propia
@@ -11,7 +11,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.2"
+#define AppVersion "1.0.3"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 

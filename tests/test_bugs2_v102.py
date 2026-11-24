@@ -20,6 +20,9 @@ from antivirus_hogar_pc.core import threats_update as tu
 # === Bug 6: multi-fuente =====================================================
 
 def _descargador_falso(url, datos=None, auth_key="", timeout=45):
+    if "malicious-hash" in url:
+        return ""  # v1.0.3: sin huellas en este fake; el caso con huellas
+        # lo cubre test_v103.py
     if "urlhaus-filter" in url:
         return "# comentario\n0.0.0.0 malo-uno.example\nmalo-dos.example\n"
     if "Phishing.Database" in url:
@@ -43,10 +46,13 @@ def test_multifuente_fusiona_y_reporta_por_fuente():
     assert por_nombre["Phishing.Database"].error  # caída, con causa
     assert por_nombre["OpenPhish"].cantidad == 0
     assert not por_nombre["OpenPhish"].error  # vacía no es error de conexión
-    # abuse.ch sin clave: causa honesta, no «revisa tu conexión»
-    assert "Auth-Key" in por_nombre["abuse.ch (MalwareBazaar)"].error
+    # abuse.ch sin clave (v1.0.3): fuente OPCIONAL, no un fallo —
+    # las huellas llegan de malicious-hash, que no pide clave.
+    assert por_nombre["abuse.ch (MalwareBazaar)"].opcional
+    assert not por_nombre["abuse.ch (MalwareBazaar)"].error
     resumen = r.resumen()
     assert "URLhaus" in resumen and "falló" in resumen
+    assert "opcional" in resumen
 
 
 def test_multifuente_todo_caido_es_error_total_con_causas():

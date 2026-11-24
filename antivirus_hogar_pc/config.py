@@ -7,7 +7,7 @@ import os
 import sys
 
 APP_ID = "AntivirusHogarPC"
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 # ---------------------------------------------------------------------------
 # Canal de actualización propio (mismo esquema que en Android: un
@@ -24,6 +24,14 @@ MALWAREBAZAAR_API = "https://mb-api.abuse.ch/api/v1/"
 URLHAUS_HOSTFILE = "https://urlhaus.abuse.ch/downloads/hostfile/"
 OPENPHISH_FEED = "https://openphish.com/feed.txt"
 VPNGATE_API = "https://www.vpngate.net/api/iphone/"
+# Cadena de rutas del API de VPN Gate (v1.0.3): la principal HTTPS, la
+# HTTPS sin «www» y la HTTP del mismo servicio oficial. Verificado en
+# construcción: cuando la HTTPS principal corta, la HTTP responde.
+VPNGATE_APIS = (
+    "https://www.vpngate.net/api/iphone/",
+    "https://vpngate.net/api/iphone/",
+    "http://www.vpngate.net/api/iphone/",
+)
 
 # DNS filtrantes ofrecidos en el modo reforzado del bloqueador.
 DNS_FILTRANTES = {

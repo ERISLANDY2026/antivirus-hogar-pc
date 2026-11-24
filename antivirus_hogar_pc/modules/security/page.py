@@ -27,10 +27,10 @@ from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
 from antivirus_hogar_pc.core import seguridad
 from antivirus_hogar_pc.core.hashing import tamano_legible
-from antivirus_hogar_pc.core.scanner import Hallazgo, analizar_archivo, escanear
+from antivirus_hogar_pc.core.scanner import Hallazgo, ResultadoEscaneo, analizar_archivo, escanear
 from antivirus_hogar_pc.core.threats_update import descargar_firmas_recientes, escribir_archivo_firmas
 from antivirus_hogar_pc.ui import theme
-from antivirus_hogar_pc.ui.paginas_base import etiqueta, fila_estado, pagina_base, tarjeta
+from antivirus_hogar_pc.ui.paginas_base import boton_principal, etiqueta, fila_estado, pagina_base, tarjeta
 from antivirus_hogar_pc.ui.services import seguro
 from antivirus_hogar_pc.ui.widgets_v102 import BarraProgreso
 from antivirus_hogar_pc.winapi import defender, tasks, tuneup_win
@@ -73,16 +73,25 @@ class _TrabajadorEscaneo(QThread):
         self._cancelado = True
 
     def run(self):
-        resultado = escanear(
-            self._raices,
-            self._servicios.base_firmas,
-            self._servicios.cache,
-            solo_ejecutables=True,
-            forzar_rehash_en=self._forzar,
-            progreso=lambda ruta, n, total: self.progreso.emit(ruta, n, total or 0),
-            debe_cancelar=lambda: self._cancelado,
-        )
-        self._servicios.registrar_escaneo(resultado)
+        # v1.0.3: si escanear() lanza, «terminado» llega IGUAL con el
+        # error dentro del resultado; antes la excepción mataba el hilo
+        # en silencio y la barra quedaba en «Escaneando…» para siempre.
+        try:
+            resultado = escanear(
+                self._raices,
+                self._servicios.base_firmas,
+                self._servicios.cache,
+                solo_ejecutables=True,
+                forzar_rehash_en=self._forzar,
+                progreso=lambda ruta, n, total: self.progreso.emit(ruta, n, total or 0),
+                debe_cancelar=lambda: self._cancelado,
+            )
+        except Exception as exc:
+            resultado = ResultadoEscaneo(errores=1, error=str(exc))
+        try:
+            self._servicios.registrar_escaneo(resultado)
+        except Exception:
+            pass  # el registro es un extra; el resultado ya viaja a la UI
         self.terminado.emit(resultado)
 
 
@@ -200,8 +209,7 @@ def crear_pagina_escaner(ctx: ContextoModulo):
     lay.addWidget(lbl_actual)
 
     fila1 = QHBoxLayout()
-    b_rapido = QPushButton("Escaneo rápido")
-    b_rapido.setObjectName("primario")
+    b_rapido = boton_principal("Escaneo rápido", "primario")
     b_completo = QPushButton("Escaneo completo")
     b_carpeta = QPushButton("Elegir carpeta…")
     b_cancelar = QPushButton("Cancelar")
@@ -320,8 +328,15 @@ def crear_pagina_escaner(ctx: ContextoModulo):
 
     def _al_terminar(resultado):
         b_cancelar.setEnabled(False)
+        tarjeta_escaneo.fijar_activa(False)
         for b in (b_rapido, b_completo, b_carpeta, b_defender, b_archivo):
             b.setEnabled(True)
+        if getattr(resultado, "error", ""):
+            barra.fijar_texto("El escaneo falló")
+            lbl_actual.setText("")
+            lbl_estado.setText(
+                f"⚠ El escaneo no se pudo completar: {resultado.error}")
+            return
         if resultado.cancelado:
             if estado["ultimo_total"] > 0:
                 barra.fijar(resultado.archivos_revisados,
@@ -356,6 +371,7 @@ def crear_pagina_escaner(ctx: ContextoModulo):
         b_cancelar.setEnabled(True)
         estado["ultimo_revisados"] = 0
         estado["ultimo_total"] = 0
+        tarjeta_escaneo.fijar_activa(True)
         barra.fijar_texto("Escaneando…")
         lbl_estado.setText("Escaneando…")
         trabajador.start()
@@ -511,17 +527,24 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
     lay_b.addWidget(lbl_base)
     lay_b.addWidget(etiqueta(
         "La actualización consulta VARIAS fuentes gratuitas independientes "
-        "y fusiona lo que trae cada una: abuse.ch (con la Auth-Key de "
-        "Ajustes), URLhaus, Phishing.Database, OpenPhish y CERT.PL. Si una "
-        "falla, las demás siguen; la base local incluida queda siempre "
-        "como respaldo sin conexión.", suave=True))
+        "y fusiona lo que trae cada una: malicious-hash (huellas, sin "
+        "clave), URLhaus, Phishing.Database, OpenPhish y CERT.PL; "
+        "abuse.ch suma huellas si tienes su Auth-Key en Ajustes, pero ya "
+        "no hace falta. Si una fuente falla, las demás siguen; la base "
+        "local incluida queda siempre como respaldo sin conexión.", suave=True))
     lbl_fuentes = etiqueta("", suave=True)
     lay_b.addWidget(lbl_fuentes)
-    b_actualizar_base = QPushButton("Actualizar firmas (varias fuentes)")
+    barra_base = BarraProgreso()
+    barra_base.setVisible(False)
+    lay_b.addWidget(barra_base)
+    b_actualizar_base = boton_principal("Actualizar firmas (varias fuentes)")
     lay_b.addWidget(b_actualizar_base)
 
     def actualizar_base():
         b_actualizar_base.setEnabled(False)
+        tarjeta_base.fijar_activa(True)
+        barra_base.setVisible(True)
+        barra_base.fijar_texto("Consultando las fuentes…")
         lbl_fuentes.setText("Consultando las fuentes… puede tardar un poco.")
 
         def trabajo():
@@ -554,6 +577,8 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
 
         def _al_terminar_base(res: ResultadoModulo):
             b_actualizar_base.setEnabled(True)
+            tarjeta_base.fijar_activa(False)
+            barra_base.terminar()
             datos = res.datos if isinstance(res.datos, dict) else {}
             lbl_fuentes.setText(datos.get("resumen", res.mensaje))
             lbl_base.setText(
@@ -686,9 +711,11 @@ def crear_pagina_informes(ctx: ContextoModulo):
         "Programas instalados, claves Run/RunOnce, carpeta de inicio, tareas "
         "programadas sospechosas y servicios de terceros. Solo lectura: "
         "la app no desactiva ni borra nada."))
-    b_generar = QPushButton("Generar informe")
-    b_generar.setObjectName("primario")
+    b_generar = boton_principal("Generar informe", "primario")
     lay.addWidget(b_generar)
+    barra_informe = BarraProgreso()
+    barra_informe.setVisible(False)
+    lay.addWidget(barra_informe)
     lbl_resumen = etiqueta("")
     lay.addWidget(lbl_resumen)
     layout.addWidget(tarjeta_gen)
@@ -709,6 +736,8 @@ def crear_pagina_informes(ctx: ContextoModulo):
 
     def al_generar(res: ResultadoModulo):
         b_generar.setEnabled(True)
+        tarjeta_gen.fijar_activa(False)
+        barra_informe.terminar()
         lbl_resumen.setText(res.mensaje)
         if res.ok and res.datos:
             estado["texto"] = seguridad.texto_informe(res.datos)
@@ -717,6 +746,9 @@ def crear_pagina_informes(ctx: ContextoModulo):
 
     def generar():
         b_generar.setEnabled(False)
+        tarjeta_gen.fijar_activa(True)
+        barra_informe.setVisible(True)
+        barra_informe.fijar_texto("Generando el informe…")
         lbl_resumen.setText("Generando el informe…")
         trabajador = _Trabajador(seguridad.generar_informe, pagina)
         trabajador.terminado.connect(al_generar)

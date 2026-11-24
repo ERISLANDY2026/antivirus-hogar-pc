@@ -78,12 +78,20 @@ def version_en_titulo(titulo: str) -> str:
 
 # --- Contraste con Windows Update -------------------------------------------
 def contrastar_con_windows_update(
-    drivers: list[DriverInstalado], actualizaciones_wu: list[dict]
+    drivers: list[DriverInstalado], actualizaciones_wu: list[dict],
+    consulta_completada: bool = False,
 ) -> list[EstadoDriver]:
     """actualizaciones_wu: lista de dicts con al menos «titulo» (y si la hay,
     «version»). Un driver se marca «hay uno más nuevo» si alguna actualización
     de driver ofrecida por Windows Update menciona su dispositivo o su
-    fabricante y (si hay versión) es mayor que la instalada."""
+    fabricante y (si hay versión) es mayor que la instalada.
+
+    `consulta_completada` (v1.0.3): True SOLO si la búsqueda en Windows
+    Update terminó con éxito (aunque ofrezca 0 actualizaciones). En ese
+    caso, un driver sin coincidencia queda «al_dia»: la consulta SÍ se
+    hizo y no hay nada más nuevo. Sin ese dato (False, comportamiento
+    histórico), una lista vacía no confirma nada y el estado queda
+    «sin_datos»: jamás se marca «al día» sin consulta exitosa real."""
     estados: list[EstadoDriver] = []
     for d in drivers:
         estado = EstadoDriver(driver=d, estado="sin_datos",
@@ -108,11 +116,13 @@ def contrastar_con_windows_update(
             )
             break
         else:
-            if not actualizaciones_wu:
+            if not actualizaciones_wu and not consulta_completada:
                 estado.detalle = "Sin datos de Windows Update todavía: pulsa «Escanear drivers»."
-        if estado.estado == "sin_datos" and actualizaciones_wu:
+        if estado.estado == "sin_datos" and (actualizaciones_wu or consulta_completada):
             estado.estado = "al_dia"
-            estado.detalle = "Windows Update no ofrece una versión más nueva."
+            estado.detalle = ("Windows Update completó la consulta y no "
+                              "ofrece una versión más nueva para este "
+                              "dispositivo.")
         estados.append(estado)
     return estados
 

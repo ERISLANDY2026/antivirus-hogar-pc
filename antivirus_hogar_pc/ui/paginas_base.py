@@ -8,7 +8,20 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLay
 
 from . import theme
 from .icons import IconoAnimado
-from .widgets_v102 import TarjetaAnimada
+from .widgets_v102 import BotonPulso, TarjetaAnimada
+
+
+def boton_principal(texto: str, nombre_objeto: str = "") -> BotonPulso:
+    """LA acción principal de una tarjeta/página (v1.0.3): BotonPulso
+    con el pulso ENCENDIDO, conservando el objectName del tema
+    («primario», «verde», «peligro») para el gradiente cromado del QSS.
+    En la v1.0.2 BotonPulso existía pero no se usaba en ninguna página:
+    fuera del Panel todo eran QPushButton pelados."""
+    boton = BotonPulso(texto)
+    if nombre_objeto:
+        boton.setObjectName(nombre_objeto)
+    boton.activar_pulso(True)
+    return boton
 
 
 def pagina_base(titulo: str, subtitulo: str = "", demo: bool = False) -> tuple[QWidget, QVBoxLayout]:
