@@ -5,5 +5,5 @@ real; esta app aporta escaneo bajo demanda por huellas, limpieza, informes,
 VPN delegada y utilidades. Ante una amenaza decide siempre el usuario.
 """
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 NOMBRE_APP = "Antivirus Hogar PC"

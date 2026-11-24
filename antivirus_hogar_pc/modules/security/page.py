@@ -28,6 +28,7 @@ from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
 from antivirus_hogar_pc.core import seguridad
 from antivirus_hogar_pc.core.hashing import tamano_legible
 from antivirus_hogar_pc.core.scanner import Hallazgo, ResultadoEscaneo, analizar_archivo, escanear
+from antivirus_hogar_pc.core.textos_error import mensaje_para_usuario
 from antivirus_hogar_pc.core.threats_update import descargar_firmas_recientes, escribir_archivo_firmas
 from antivirus_hogar_pc.ui import theme
 from antivirus_hogar_pc.ui.paginas_base import boton_principal, etiqueta, fila_estado, pagina_base, tarjeta
@@ -87,7 +88,15 @@ class _TrabajadorEscaneo(QThread):
                 debe_cancelar=lambda: self._cancelado,
             )
         except Exception as exc:
-            resultado = ResultadoEscaneo(errores=1, error=str(exc))
+            # v1.0.4: en pantalla, frase clara en español; el detalle
+            # técnico crudo (p. ej. el de sqlite) va solo al registro.
+            try:
+                self._servicios.registrar_actividad(
+                    "escaneo", f"Error técnico del escaneo: {exc!r}")
+            except Exception:
+                pass
+            resultado = ResultadoEscaneo(
+                errores=1, error=mensaje_para_usuario(exc))
         try:
             self._servicios.registrar_escaneo(resultado)
         except Exception:
