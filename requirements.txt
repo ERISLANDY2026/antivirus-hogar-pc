@@ -1,0 +1,14 @@
+# Antivirus Hogar PC — dependencias
+# Interfaz
+PySide6>=6.6
+# Panel de salud y tune-up (CPU, memoria, discos, procesos) — multiplataforma
+psutil>=5.9
+# Lectura SMART en Windows (envoltorio de smartctl; el instalador incluye
+# smartctl.exe de smartmontools). Si pySMART no está, el módulo de discos
+# usa Get-PhysicalDisk como respaldo.
+pySMART>=1.2
+# Tema: se usa el QSS propio del proyecto (paleta aprobada por el usuario).
+# qt-material queda como alternativa documentada en CONTRATOS.md; NO se usa
+# QFluentWidgets (GPLv3).
+# Solo para construir el .exe (en Windows):
+#   pyinstaller>=6.0

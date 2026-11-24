@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Builds PyInstaller / Inno Setup
+build/
+dist/
+dist-instalador/
+*.egg-info/
+
+# Datos de la app en desarrollo
+*.sqlite3
+cuarentena/
+respaldos/
+
+# Sistema
+Thumbs.db
+.DS_Store

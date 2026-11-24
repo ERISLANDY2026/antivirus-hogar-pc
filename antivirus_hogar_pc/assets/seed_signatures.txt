@@ -1,0 +1,3 @@
+# Base inicial de fabrica de Antivirus Hogar (se reemplaza con la primera actualizacion)
+# Formato: sha256  etiqueta
+275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f EICAR-Test-File (archivo de prueba antivirus)

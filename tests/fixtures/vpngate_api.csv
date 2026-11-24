@@ -1,0 +1,7 @@
+*vpn_servers
+*HostName,IP,Score,Ping,Speed,CountryLong,CountryShort,NumVpnSessions,Uptime,TotalUsers,TotalTraffic,LogType,Operator,Message,OpenVPN_ConfigData_Base64
+#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort,NumVpnSessions,Uptime,TotalUsers,TotalTraffic,LogType,Operator,Message,OpenVPN_ConfigData_Base64
+vpn-ejemplo-1.opengw.net,203.0.113.10,812345,18,450000000,Japan,JP,12,123456,3400,987654321,2weeks,operador-uno,Bienvenido, servidor rapido, sin registros,Y2xpZW50CmRldiB0dW4KcHJvdG8gdWRwCnJlbW90ZSB2cG4tZWplbXBsby0xLm9wZW5ndy5uZXQgMTE5NAo=
+vpn-ejemplo-2.opengw.net,198.51.100.7,640120,95,210000000,United States,US,30,98765,8900,123456789,2weeks,operador-dos,Servidor sencillo,Y2xpZW50CmRldiB0dW4KcHJvdG8gdWRwCnJlbW90ZSB2cG4tZWplbXBsby0yLm9wZW5ndy5uZXQgMTE5NAo=
+fila-rota,203.0.113.99
+*EOF
