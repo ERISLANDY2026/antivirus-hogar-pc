@@ -1,0 +1,56 @@
+# Compilación en la nube de Antivirus Hogar PC (Carril E).
+#
+# Runner Windows de GitHub Actions: instala Python y dependencias, corre la
+# suite de pruebas (headless, sin Qt), compila con PyInstaller usando el
+# MISMO .spec del proyecto y empaqueta con Inno Setup usando el MISMO .iss
+# que la compilación local. El instalador .exe queda como artefacto del run.
+#
+# Estado: workflow LISTO y documentado, pero todavía no se ejecuta en
+# ninguna cuenta: el proyecto aún no está subido a GitHub (no hay cuenta
+# del usuario vinculada). Para activarlo basta con subir el repositorio a
+# GitHub; el workflow se dispara a mano (workflow_dispatch) o al publicar
+# un tag v*.
+name: Construir instalador Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pytest
+
+      - name: Pruebas (logica pura, sin Qt)
+        run: python -m pytest tests/ -q
+
+      - name: Compilar con PyInstaller (--onedir)
+        run: pyinstaller packaging/antivirus-hogar-pc.spec --noconfirm
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Crear el instalador con Inno Setup
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\instalador.iss'
+
+      - name: Subir el instalador como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Instalador-AntivirusHogarPC
+          path: dist-instalador/*.exe
+          if-no-files-found: error
