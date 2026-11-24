@@ -52,11 +52,16 @@ decenas de MB de binario). La compilación en la nube
    `VPNCMGR_X64.EXE` → `vpncmgr_x64.exe`,
    `RAW_HAMCORE.SE2` → `hamcore.se2`. OJO: los recursos `.exe` van
    **comprimidos** con el formato del fabricante (prefijo de 4 bytes
-   con el tamaño real + flujo zlib); la compilación los descomprime
-   y verifica tamaño y firma «MZ» antes de seguir (el `hamcore` sí
-   va crudo — de ahí el `RAW_` — y lleva su firma real «HamCore»).
-   Deja dentro `SOFTETHER-CLIENT.txt` con la versión y la huella, y
-   hace una prueba de humo con `vpncmd` ya descomprimido.
+   + flujo zlib); la compilación los descomprime y valida el PE
+   resultante por su estructura (firma «MZ», Machine 0x8664 y
+   secciones dentro del archivo; el descomprimido conserva incluso
+   su firma digital como overlay final). El `hamcore` sí va crudo
+   — de ahí el `RAW_` — y lleva su firma real «HamCore». Deja
+   dentro `SOFTETHER-CLIENT.txt` con la versión y la huella, y hace
+   una prueba de humo: en la corrida 45502795985 el `vpncmd`
+   incorporado arrancó en el runner, imprimió su banner oficial
+   «Version 4.44 Build 9807» y solo falló al conectar (no hay
+   servicio de cliente en el runner: es el resultado correcto).
 4. Si algo falta, la compilación **falla**: la 1.0.7 no sale sin
    SoftEther.
 
