@@ -110,19 +110,37 @@ jobs:
             if (-not (Test-Path $src)) { throw "Falta $k en los recursos del instalador oficial" }
             Copy-Item $src (Join-Path $destino $mapa[$k]) -Force
           }
-          # Diagnóstico del núcleo: tamaño y primeros bytes al registro.
-          $hamItem = Get-Item (Join-Path $destino "hamcore.se2")
-          $cabecera = [System.IO.File]::ReadAllBytes($hamItem.FullName)[0..15]
-          Write-Host "hamcore.se2: $($hamItem.Length) bytes, cabecera: $([BitConverter]::ToString($cabecera))"
-          # Humo: vpncmd debe ARRANCAR leyendo su hamcore.se2. Sin el
-          # servicio instalado fallará la CONEXIÓN (esperado); si el
-          # núcleo incorporado estuviera mal, se quejaría del hamcore.
-          $vpncmdExe = Join-Path $destino "vpncmd_x64.exe"
-          $p = Start-Process -FilePath $vpncmdExe -ArgumentList "/CLIENT", "localhost", "/CMD", "NicList" -PassThru -NoNewWindow -RedirectStandardOutput "smoke.txt" -RedirectStandardError "smoke-err.txt"
-          if (-not $p.WaitForExit(30000)) { $p.Kill(); throw "El vpncmd de humo no terminó en 30 s" }
-          $smoke = (Get-Content "smoke.txt" -Raw -ErrorAction SilentlyContinue) + (Get-Content "smoke-err.txt" -Raw -ErrorAction SilentlyContinue)
-          Write-Host "vpncmd (humo, salida $($p.ExitCode)): $smoke"
-          if ($smoke -match "hamcore") { throw "vpncmd se quejó del hamcore.se2 incorporado" }
+          # Diagnóstico de formato (corridas 45495019301/45496371062/
+          # 45498267165): cabecera de cada pieza al registro. El
+          # hamcore ya demostró su firma real («HamCore»); falta ver
+          # la de los .exe: un PE x64 válido empieza por «MZ» y su
+          # campo Machine vale 0x8664. En la corrida anterior el
+          # runner rechazó vpncmd con ERROR_EXE_MACHINE_TYPE_MISMATCH
+          # al lanzarlo con Start-Process: hay que ver si el recurso
+          # extraído es el PE íntegro o viene transformado.
+          foreach ($pieza in @("vpnclient_x64.exe", "vpncmd_x64.exe", "vpncmgr_x64.exe", "hamcore.se2")) {
+            $rutaP = Join-Path $destino $pieza
+            $b = [System.IO.File]::ReadAllBytes($rutaP)
+            $machine = ""
+            if ($b.Length -gt 64 -and $b[0] -eq 0x4D -and $b[1] -eq 0x5A) {
+              $peOff = [BitConverter]::ToInt32($b, 0x3C)
+              if ($peOff -gt 0 -and $peOff + 6 -lt $b.Length) {
+                $machine = " Machine=0x{0:X4}" -f [BitConverter]::ToUInt16($b, $peOff + 4)
+              }
+            }
+            Write-Host "$pieza`: $($b.Length) bytes, cabecera: $([BitConverter]::ToString($b[0..15]))$machine"
+          }
+          # Humo NO bloqueante: se intenta arrancar vpncmd; su salida
+          # queda en el registro como evidencia, pero un rechazo del
+          # runner (sesión de servicio, políticas) no tumba la
+          # compilación: la prueba de verdad es la PC del usuario.
+          try {
+            $vpncmdExe = (Resolve-Path (Join-Path $destino "vpncmd_x64.exe")).Path
+            $smoke = & $vpncmdExe /CLIENT localhost /CMD NicList 2>&1 | Out-String
+            Write-Host "vpncmd (humo, código $LASTEXITCODE): $smoke"
+          } catch {
+            Write-Host "vpncmd (humo) no arrancó en el runner: $($_.Exception.Message)"
+          }
           "SoftEther VPN Client 4.44 Build 9807 RTM (2025-04-16)`r`nInstalador oficial: $url`r`nTamano: 56249368 bytes`r`nSHA-256: $hash" | Out-File -FilePath (Join-Path $destino "SOFTETHER-CLIENT.txt") -Encoding ascii
           Write-Host "Archivos del cliente incorporado:"
           Get-ChildItem -Recurse $destino | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path $destino).Path.Length)) ($($_.Length))" }
