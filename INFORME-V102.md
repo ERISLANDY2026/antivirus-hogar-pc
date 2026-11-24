@@ -255,6 +255,24 @@ abuse.ch sin clave con su causa),
 
 - Suite local completa con Qt offscreen real: **98 passed, 0 skipped**
   (primera ronda: 87 passed, 2 skipped sin Qt en local).
-- Reconstrucción: commit y run de Actions y datos del instalador
-  nuevo, en la nota de entrega de esta ronda (el zip de Drive y el
-  version-pc.json se actualizaron en sitio con el SHA-256 nuevo).
+- Reconstrucción: commits remotos `a88f41aa0011bace1bd319f6e7d9ccadb708a520`
+  (código) y `1562a0ce1ae54297171da6550bcefd79d6caca17` (un test). El
+  primer run de esta ronda (45418870020) falló en la suite de Windows
+  por el test del radar: el runner reporta SPI_GETANIMATION en «off» y
+  el test asumía Linux; la función hacía lo correcto (respetar a
+  Windows) y se corrigió el test. Run definitivo **45419221556:
+  completed / success** (suite en Windows + verificación de los 4
+  registros dentro del .exe).
+  https://github.com/ERISLANDY2026/antivirus-hogar-pc/actions/runs/45419221556
+- Instalador reconstruido: `Instalador-AntivirusHogarPC-1.0.2.exe`,
+  **39,758,134 bytes**, PE32 GUI, MD5
+  `d2ca8c53898e05edf6b65a0d3936a734`, SHA-256
+  `4f8ccb40d08d5bafdbfd56d8f8285c5dbe0b69c99568505ca0d5a844d7bd0d1c`.
+- Drive actualizado EN SITIO (mismos ID y enlaces, verificado por
+  tamaño y MD5 contra local): zip `1ZHiCO9lInsLv6GJBCdCj6GtTMjGf6hTG`
+  (39,201,374 B, MD5 `fdd7e5bbaf495ddcc4c47c6ff9e4fe09`) y .exe suelto
+  `1zmtcu-NL-PvCbGisbAXbFwVwyBlI5_ql` (MD5 idéntico al del instalador).
+  El version-pc.json (mismo ID `1Kfd_pELWJhp37fO1iaERdSIzpRkAqK4R`)
+  lleva el SHA-256 nuevo y las notas de la edición completa;
+  verificado en vivo: desde 1.0.1 → ofrece la 1.0.2 con ese SHA-256;
+  desde 1.0.2 → «al día».
