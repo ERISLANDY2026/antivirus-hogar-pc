@@ -182,11 +182,11 @@ end;
   Defender borró la 1.0.6 instalada en la PC del usuario (ejecutable
   PyInstaller sin firmar). El instalador —que ya corre como admin—
   ejecuta el script versionado junto a la app: añade la exclusión
-  SOLO para {app} y para la carpeta de datos, la VERIFICA leyéndola
-  de vuelta (Get-MpPreference) y deja el resultado en
-  defender-exclusion.json. Si una política lo impide, el JSON lo
-  dice y la app avisa al abrir con el paso manual: aquí no se finge
-  nada. Queda constancia en ese JSON (declarado, no oculto). }
+  SOLO para la carpeta de instalación y para la de datos, la
+  VERIFICA leyéndola de vuelta (Get-MpPreference) y deja el
+  resultado en defender-exclusion.json. Si una política lo impide,
+  el JSON lo dice y la app avisa al abrir con el paso manual: aquí
+  no se finge nada. Queda constancia en ese JSON (declarado). }
 procedure AplicarExclusionDefender();
 var
   ResultCode: Integer;
