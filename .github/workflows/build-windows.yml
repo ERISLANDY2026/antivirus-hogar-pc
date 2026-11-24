@@ -87,25 +87,42 @@ jobs:
           if (-not (Test-Path $7z)) { throw "7-Zip no está en el runner" }
           New-Item -ItemType Directory -Force -Path se-extract | Out-Null
           & $7z x $exe -ose-extract -y | Out-Null
-          Get-ChildItem -Recurse se-extract -Filter *.cab | ForEach-Object { & $7z x $_.FullName "-ose-extract" -y | Out-Null }
-          # Diagnóstico (la primera corrida, 45495019301, juntó el
-          # cliente pero el control de completitud falló sin decir qué
-          # faltaba): se imprime el árbol extraído ENTERO.
-          Write-Host "Contenido extraido del instalador oficial:"
-          Get-ChildItem -Recurse se-extract -File | ForEach-Object { Write-Host "  $($_.FullName) ($($_.Length))" }
-          # Se fusiona en el destino la carpeta de CADA pieza clave
-          # (cliente, vpncmd, gestor y el núcleo hamcore.se2 estén
-          # donde estén de la extracción).
+          # El instalador oficial es un PE: su carga va como RECURSOS
+          # en .rsrc\0\DATAFILE con los nombres internos del fabricante
+          # (comprobado en la corrida 45496371062: VPNCLIENT_X64.EXE,
+          # VPNCMD_X64.EXE —que es vpncmd—, VPNCMGR_X64.EXE y el núcleo
+          # RAW_HAMCORE.SE2). Se copian con el nombre que llevan en una
+          # instalación real de SoftEther, que es como la app los busca.
+          $datafile = Get-ChildItem -Recurse se-extract -Directory | Where-Object { $_.Name -eq "DATAFILE" } | Select-Object -First 1
+          if (-not $datafile) { throw "No apareció la carpeta DATAFILE del instalador oficial" }
+          Write-Host "DATAFILE del instalador oficial:"
+          Get-ChildItem $datafile.FullName -File | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length))" }
           $destino = "packaging\softether\client"
           New-Item -ItemType Directory -Force -Path $destino | Out-Null
-          foreach ($patron in @("vpnclient_x64.exe", "vpnclient.exe", "vpncmd_x64.exe", "vpncmd.exe", "vpncmgr_x64.exe", "vpncmgr.exe", "hamcore.se2")) {
-            $hallado = Get-ChildItem -Recurse se-extract -Filter $patron | Select-Object -First 1
-            if ($hallado) { Copy-Item (Join-Path $hallado.Directory.FullName "*") $destino -Recurse -Force }
+          $mapa = @{
+            "VPNCLIENT_X64.EXE" = "vpnclient_x64.exe"
+            "VPNCMD_X64.EXE"    = "vpncmd_x64.exe"
+            "VPNCMGR_X64.EXE"   = "vpncmgr_x64.exe"
+            "RAW_HAMCORE.SE2"   = "hamcore.se2"
           }
-          $cliente = Get-ChildItem -Recurse $destino -Include "vpnclient_x64.exe", "vpnclient.exe"
-          $vpncmd = Get-ChildItem -Recurse $destino -Include "vpncmd_x64.exe", "vpncmd.exe"
-          $ham = Get-ChildItem -Recurse $destino -Filter "hamcore.se2"
-          if (-not $cliente -or -not $vpncmd -or -not $ham) { throw "El paquete SoftEther quedó incompleto (cliente=$([bool]$cliente) vpncmd=$([bool]$vpncmd) hamcore=$([bool]$ham))" }
+          foreach ($k in $mapa.Keys) {
+            $src = Join-Path $datafile.FullName $k
+            if (-not (Test-Path $src)) { throw "Falta $k en los recursos del instalador oficial" }
+            Copy-Item $src (Join-Path $destino $mapa[$k]) -Force
+          }
+          # Diagnóstico del núcleo: tamaño y primeros bytes al registro.
+          $hamItem = Get-Item (Join-Path $destino "hamcore.se2")
+          $cabecera = [System.IO.File]::ReadAllBytes($hamItem.FullName)[0..15]
+          Write-Host "hamcore.se2: $($hamItem.Length) bytes, cabecera: $([BitConverter]::ToString($cabecera))"
+          # Humo: vpncmd debe ARRANCAR leyendo su hamcore.se2. Sin el
+          # servicio instalado fallará la CONEXIÓN (esperado); si el
+          # núcleo incorporado estuviera mal, se quejaría del hamcore.
+          $vpncmdExe = Join-Path $destino "vpncmd_x64.exe"
+          $p = Start-Process -FilePath $vpncmdExe -ArgumentList "/CLIENT", "localhost", "/CMD", "NicList" -PassThru -NoNewWindow -RedirectStandardOutput "smoke.txt" -RedirectStandardError "smoke-err.txt"
+          if (-not $p.WaitForExit(30000)) { $p.Kill(); throw "El vpncmd de humo no terminó en 30 s" }
+          $smoke = (Get-Content "smoke.txt" -Raw -ErrorAction SilentlyContinue) + (Get-Content "smoke-err.txt" -Raw -ErrorAction SilentlyContinue)
+          Write-Host "vpncmd (humo, salida $($p.ExitCode)): $smoke"
+          if ($smoke -match "hamcore") { throw "vpncmd se quejó del hamcore.se2 incorporado" }
           "SoftEther VPN Client 4.44 Build 9807 RTM (2025-04-16)`r`nInstalador oficial: $url`r`nTamano: 56249368 bytes`r`nSHA-256: $hash" | Out-File -FilePath (Join-Path $destino "SOFTETHER-CLIENT.txt") -Encoding ascii
           Write-Host "Archivos del cliente incorporado:"
           Get-ChildItem -Recurse $destino | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path $destino).Path.Length)) ($($_.Length))" }
