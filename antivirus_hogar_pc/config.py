@@ -7,7 +7,7 @@ import os
 import sys
 
 APP_ID = "AntivirusHogarPC"
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 # ---------------------------------------------------------------------------
 # Canal de actualización propio (mismo esquema que en Android: un
@@ -15,7 +15,7 @@ VERSION = "1.0.1"
 # La URL se puede cambiar en Ajustes; si está vacía, la app avisa de que el
 # canal aún no está configurado en vez de fallar.
 # ---------------------------------------------------------------------------
-UPDATE_VERSION_URL = "https://drive.usercontent.google.com/download?id=1BpcVersionJsonPendiente&export=download"
+UPDATE_VERSION_URL = "https://drive.usercontent.google.com/download?id=1Kfd_pELWJhp37fO1iaERdSIzpRkAqK4R&export=download"
 
 # Fuentes de inteligencia de amenazas (abuse.ch). La API exige Auth-Key
 # gratuita desde 2025; la clave la crea el usuario una vez y se guarda en
@@ -74,3 +74,7 @@ def ruta_respaldos() -> str:
     ruta = os.path.join(carpeta_datos(), "respaldos")
     os.makedirs(ruta, exist_ok=True)
     return ruta
+
+
+def ruta_actividad() -> str:
+    return os.path.join(carpeta_datos(), "actividad.jsonl")

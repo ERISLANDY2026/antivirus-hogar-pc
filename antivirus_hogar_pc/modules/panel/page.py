@@ -9,12 +9,13 @@
 from datetime import datetime
 
 from PySide6.QtCore import QThread, QTimer, Signal
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QPushButton, QVBoxLayout
 
 from antivirus_hogar_pc.contracts import ContextoModulo, InformeSalud, ResultadoModulo
 from antivirus_hogar_pc.ui import theme
 from antivirus_hogar_pc.ui.health_ring import AnilloSalud
 from antivirus_hogar_pc.ui.paginas_base import etiqueta, fila_estado, pagina_base, tarjeta
+from antivirus_hogar_pc.ui.widgets_v102 import Medidor
 from antivirus_hogar_pc.winapi import es_windows
 
 from .datos import leer_datos_panel, recoger_informe
@@ -172,12 +173,12 @@ def crear_pagina(ctx: ContextoModulo):
 
     # --- El equipo ahora mismo (psutil, en vivo) ----------------------------------
     tarjeta_sistema, lay_sistema = tarjeta("El equipo ahora mismo")
-    lbl_cpu = etiqueta("Procesador: —")
-    lbl_ram = etiqueta("Memoria: —")
-    lbl_disco = etiqueta("Disco del sistema: —")
+    med_cpu = Medidor("Procesador")
+    med_ram = Medidor("Memoria")
+    med_disco = Medidor("Disco del sistema")
     lbl_encendido = etiqueta("Encendido desde hace: —")
-    for lbl in (lbl_cpu, lbl_ram, lbl_disco, lbl_encendido):
-        lay_sistema.addWidget(lbl)
+    for widget in (med_cpu, med_ram, med_disco, lbl_encendido):
+        lay_sistema.addWidget(widget)
     layout.addWidget(tarjeta_sistema)
 
     # --- Último escaneo + acciones --------------------------------------------------
@@ -195,20 +196,82 @@ def crear_pagina(ctx: ContextoModulo):
     fila_botones.addStretch(1)
     lay_escaneo.addLayout(fila_botones)
     layout.addWidget(tarjeta_escaneo)
+
+    # --- Registro de actividad ------------------------------------------------------
+    tarjeta_actividad, lay_actividad = tarjeta("Registro de actividad")
+    lay_lista_actividad = QVBoxLayout()
+    lay_actividad.addLayout(lay_lista_actividad)
+    fila_actividad = QHBoxLayout()
+    boton_refrescar_actividad = QPushButton("Actualizar")
+    boton_exportar_actividad = QPushButton("Exportar registro")
+    fila_actividad.addWidget(boton_refrescar_actividad)
+    fila_actividad.addWidget(boton_exportar_actividad)
+    fila_actividad.addStretch(1)
+    lay_actividad.addLayout(fila_actividad)
+    layout.addWidget(tarjeta_actividad)
     layout.addStretch(1)
+
+    def repintar_actividad() -> None:
+        _vaciar(lay_lista_actividad)
+        entradas = []
+        if servicios is not None:
+            actividad = getattr(servicios, "actividad", None)
+            if actividad is not None:
+                try:
+                    entradas = actividad.leer(8)
+                except Exception:
+                    entradas = []
+        if not entradas:
+            lay_lista_actividad.addWidget(
+                etiqueta("Sin actividad registrada todavía.", suave=True))
+            return
+        for entrada in entradas:
+            lay_lista_actividad.addWidget(etiqueta(
+                f"{entrada.fecha_legible()} — {entrada.detalle}"))
+
+    def exportar_actividad() -> None:
+        if servicios is None:
+            return
+        actividad = getattr(servicios, "actividad", None)
+        if actividad is None:
+            return
+        ruta, _filtro = QFileDialog.getSaveFileName(
+            pagina, "Exportar registro", "registro-actividad.txt",
+            "Texto (*.txt)")
+        if not ruta:
+            return
+        try:
+            with open(ruta, "w", encoding="utf-8") as f:
+                f.write(actividad.exportar_texto())
+        except OSError:
+            pass
+
+    boton_refrescar_actividad.clicked.connect(repintar_actividad)
+    boton_exportar_actividad.clicked.connect(exportar_actividad)
+    repintar_actividad()
 
     # --- Refresco en vivo de psutil ---------------------------------------------------
     def refrescar_sistema() -> None:
         p = leer_datos_panel()
-        lbl_cpu.setText(f"Procesador: {p.cpu_pct:.0f} %" if p.cpu_pct is not None
-                        else "Procesador: —")
+        med_cpu.fijar(p.cpu_pct,
+                      f"{p.cpu_pct:.0f} %" if p.cpu_pct is not None else "—")
         if p.ram_pct is not None and p.ram_total_gb is not None:
-            lbl_ram.setText(f"Memoria: {p.ram_pct:.0f} % "
-                            f"({p.ram_usada_gb} de {p.ram_total_gb} GB)")
+            detalle_ram = (f"{p.ram_pct:.0f} % "
+                           f"({p.ram_usada_gb} de {p.ram_total_gb} GB)")
+        elif p.ram_pct is not None:
+            detalle_ram = f"{p.ram_pct:.0f} %"
+        else:
+            detalle_ram = "—"
+        med_ram.fijar(p.ram_pct, detalle_ram)
         if p.disco_sistema_pct is not None and p.disco_total_gb is not None:
-            lbl_disco.setText(f"Disco del sistema: {p.disco_sistema_pct:.0f} % usado "
-                              f"({p.disco_libre_gb:.0f} GB libres de "
-                              f"{p.disco_total_gb:.0f} GB)")
+            detalle_disco = (f"{p.disco_sistema_pct:.0f} % usado "
+                             f"({p.disco_libre_gb:.0f} GB libres de "
+                             f"{p.disco_total_gb:.0f} GB)")
+        elif p.disco_sistema_pct is not None:
+            detalle_disco = f"{p.disco_sistema_pct:.0f} % usado"
+        else:
+            detalle_disco = "—"
+        med_disco.fijar(p.disco_sistema_pct, detalle_disco)
         lbl_encendido.setText(
             f"Encendido desde hace: {_formatear_encendido(p.tiempo_encendido_h)}")
 

@@ -2,20 +2,29 @@
 
 - Drivers: winapi.drivers_win + core.drivers_logic — cadena oficial del
   usuario (Windows Update/Catálogo → chip → marca de la PC), punto de
-  restauración antes de instalar y solo drivers firmados.
+  restauración antes de instalar y solo drivers firmados. La tabla da el
+  ancho flexible SOLO al dispositivo: la columna «Acción» tiene ancho
+  fijo y queda siempre visible a la derecha.
 - Discos: contracts.SmartInfo vía pySMART/smartctl con respaldo
   Get-PhysicalDisk; sin datos = «no se puede leer», nunca «sano».
   Optimización con Optimize-Volume (TRIM en SSD, defrag en HDD).
-- Limpieza: informe antes de borrar, borrado tras confirmación, arranque
-  reversible y respaldo (punto de restauración + copia del registro).
+  Mapa de uso por carpetas del usuario, con % sobre el total medido.
+- Limpieza: informe antes de borrar, borrado tras confirmación con
+  progreso real por partidas, arranque reversible con su impacto, y
+  respaldo (punto de restauración + copia del registro).
   SIN limpiador de registro.
+
+Las barras son ui.widgets_v102.BarraProgreso: porcentaje SOLO donde se
+puede contar de verdad (pasos del escaneo, partidas de la limpieza,
+carpetas del mapa); donde Windows no informa % (la instalación de
+Windows Update) se enseña la etapa, nunca un porcentaje inventado.
 
 Todo el trabajo pesado corre en un hilo (QThread) tras la barra de
 progreso: la ventana nunca se congela y los procesos quedan ocultos.
 """
-from PySide6.QtCore import QThread, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMessageBox, QProgressBar,
+from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                                QPushButton, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
@@ -25,6 +34,7 @@ from antivirus_hogar_pc.core.hashing import tamano_legible
 from antivirus_hogar_pc.ui import theme
 from antivirus_hogar_pc.ui.paginas_base import (etiqueta, fila_estado,
                                                 pagina_base, tarjeta)
+from antivirus_hogar_pc.ui.widgets_v102 import BarraProgreso
 
 from . import servicios_sistema as svc
 
@@ -35,24 +45,67 @@ _TEXTOS_ESTADO = {
 }
 _TEXTOS_SALUD = {"bien": "buena", "regular": "con aviso",
                  "mal": "mala", "desconocido": "sin leer"}
+_IMPACTO = {
+    "alto": ("Alto", theme.ROJO),
+    "medio": ("Medio", theme.AMBAR),
+    "bajo": ("Bajo", theme.VERDE),
+}
+
+
+def _registrar(ctx: ContextoModulo, tipo: str, detalle: str) -> None:
+    """Registro de actividad vía ctx.servicios.registrar_actividad, si
+    existe (en pruebas puede ser un fake sin ese método): nunca rompe."""
+    try:
+        registrar = getattr(getattr(ctx, "servicios", None),
+                            "registrar_actividad", None)
+        if callable(registrar):
+            registrar(tipo, detalle)
+    except Exception:
+        pass  # el registro es un extra; jamás debe tumbar la página
 
 
 class _Trabajador(QThread):
-    """Ejecuta una función de servicios fuera del hilo de la ventana."""
-    terminado = Signal(object)
+    """Ejecuta una función de servicios fuera del hilo de la ventana.
 
-    def __init__(self, funcion, *args):
+    Si se le pide progreso, la función recibe como primer argumento un
+    emisor seguro entre hilos: progreso(*valores) viaja por señal Qt."""
+    terminado = Signal(object)
+    progreso = Signal(object)
+
+    def __init__(self, funcion, *args, con_progreso: bool = False):
         super().__init__()
         self._funcion = funcion
         self._args = args
+        self._con_progreso = con_progreso
 
     def run(self):  # noqa: N802 (API de Qt)
         try:
-            resultado = self._funcion(*self._args)
+            if self._con_progreso:
+                resultado = self._funcion(
+                    lambda *valores: self.progreso.emit(tuple(valores)),
+                    *self._args)
+            else:
+                resultado = self._funcion(*self._args)
         except Exception as exc:  # los servicios ya no lanzan; red de seguridad
             resultado = ResultadoModulo(ok=False,
                                         mensaje=f"No se pudo completar: {exc}")
         self.terminado.emit(resultado)
+
+
+class _ReceptorProgreso(QObject):
+    """Recibe el progreso en el hilo de la ventana (la señal llega en
+    cola desde el hilo trabajador) y lo pasa a la barra."""
+
+    def __init__(self, al_progreso):
+        super().__init__()
+        self._al_progreso = al_progreso
+
+    @Slot(object)
+    def recibir(self, valores):
+        try:
+            self._al_progreso(*valores)
+        except Exception:
+            pass
 
 
 class _GestorTrabajos:
@@ -60,13 +113,22 @@ class _GestorTrabajos:
 
     def __init__(self):
         self._activos: list[_Trabajador] = []
+        self._receptores: list[_ReceptorProgreso] = []
 
-    def lanzar(self, funcion, al_terminar, *args) -> None:
-        trabajador = _Trabajador(funcion, *args)
+    def lanzar(self, funcion, al_terminar, *args, al_progreso=None) -> None:
+        trabajador = _Trabajador(funcion, *args,
+                                 con_progreso=al_progreso is not None)
+        receptor = None
+        if al_progreso is not None:
+            receptor = _ReceptorProgreso(al_progreso)
+            trabajador.progreso.connect(receptor.recibir)
+            self._receptores.append(receptor)
 
         def _fin(resultado):
             if trabajador in self._activos:
                 self._activos.remove(trabajador)
+            if receptor is not None and receptor in self._receptores:
+                self._receptores.remove(receptor)
             al_terminar(resultado)
 
         trabajador.terminado.connect(_fin)
@@ -84,13 +146,6 @@ def _vaciar(layout: QVBoxLayout) -> None:
         widget = item.widget()
         if widget is not None:
             widget.deleteLater()
-
-
-def _barra_progreso() -> QProgressBar:
-    barra = QProgressBar()
-    barra.setRange(0, 0)  # indeterminada: trabajo en curso
-    barra.setVisible(False)
-    return barra
 
 
 def _abrir(url: str) -> None:
@@ -118,13 +173,27 @@ def crear_pagina_drivers(ctx: ContextoModulo):
     estado_actual: dict = {"estados": [], "fabricante_pc": ""}
 
     tarjeta_escaner, lay_e = tarjeta("Drivers de esta PC")
-    barra = _barra_progreso()
+    barra = BarraProgreso()
+    barra.setVisible(False)
     lbl_estado = etiqueta("Todavía no se ha escaneado. Pulsa «Escanear drivers».",
                           suave=True)
     tabla = QTableWidget(0, 5)
     tabla.setHorizontalHeaderLabels(
         ["Dispositivo", "Versión instalada", "Fecha", "Estado", "Acción"])
-    tabla.horizontalHeader().setStretchLastSection(True)
+    # Sin estirar la última sección: la «Acción» tiene ancho FIJO y siempre
+    # visible; el ancho sobrante lo absorbe solo el nombre del dispositivo,
+    # que se corta con elipsis y enseña el nombre completo en el tooltip.
+    cabecera = tabla.horizontalHeader()
+    cabecera.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+    cabecera.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+    cabecera.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+    cabecera.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+    cabecera.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+    tabla.setColumnWidth(1, 150)   # Versión instalada, acotada
+    tabla.setColumnWidth(2, 110)   # Fecha, acotada
+    tabla.setColumnWidth(3, 130)   # Estado, acotada
+    tabla.setColumnWidth(4, 250)   # Acción: Actualizar + Fuentes oficiales
+    tabla.setTextElideMode(Qt.TextElideMode.ElideRight)
     btn_escanear = QPushButton("Escanear drivers")
     lay_e.addWidget(btn_escanear)
     lay_e.addWidget(barra)
@@ -163,9 +232,27 @@ def crear_pagina_drivers(ctx: ContextoModulo):
         contenedor_enlaces.addWidget(contenedor)
 
     def _al_terminar_actualizacion(resultado: ResultadoModulo):
-        barra.setVisible(False)
+        barra.terminar()
         btn_escanear.setEnabled(True)
         lbl_estado.setText(resultado.mensaje)
+        _registrar(ctx, "drivers", resultado.mensaje if resultado.ok else
+                   f"Actualización de drivers fallida: {resultado.mensaje}")
+
+    def _al_terminar_punto(resultado: ResultadoModulo):
+        if not resultado.ok:
+            # Sin punto de restauración NO se instala nada.
+            barra.terminar()
+            btn_escanear.setEnabled(True)
+            lbl_estado.setText(resultado.mensaje)
+            _registrar(ctx, "drivers",
+                       f"Actualización de drivers no realizada: "
+                       f"{resultado.mensaje}")
+            return
+        barra.fijar_etapas(2, 2, "Instalando con Windows Update "
+                                 "(Windows no informa el porcentaje)")
+        lbl_estado.setText("Punto de restauración creado. Instalando con "
+                           "Windows Update… puede tardar unos minutos.")
+        gestor.lanzar(svc.instalar_drivers_wu, _al_terminar_actualizacion)
 
     def _actualizar():
         if not _confirmar(
@@ -176,10 +263,10 @@ def crear_pagina_drivers(ctx: ContextoModulo):
                 "permiso de administrador. ¿Seguir?"):
             return
         barra.setVisible(True)
+        barra.fijar_etapas(1, 2, "Creando punto de restauración")
         btn_escanear.setEnabled(False)
-        lbl_estado.setText("Creando el punto de restauración e instalando "
-                           "con Windows Update… puede tardar unos minutos.")
-        gestor.lanzar(svc.actualizar_drivers, _al_terminar_actualizacion)
+        lbl_estado.setText("Creando el punto de restauración…")
+        gestor.lanzar(svc.crear_punto_para_drivers, _al_terminar_punto)
 
     def _pintar_tabla(estados):
         tabla.setRowCount(len(estados))
@@ -188,7 +275,9 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             nombre = d.dispositivo
             if not d.firmado:
                 nombre += "  (sin firma)"
-            tabla.setItem(i, 0, QTableWidgetItem(nombre))
+            item_nombre = QTableWidgetItem(nombre)
+            item_nombre.setToolTip(nombre)  # nombre completo, sin cortar
+            tabla.setItem(i, 0, item_nombre)
             tabla.setItem(i, 1, QTableWidgetItem(d.version or "—"))
             tabla.setItem(i, 2, QTableWidgetItem(d.fecha or "—"))
             texto, color = _TEXTOS_ESTADO[est.estado]
@@ -209,24 +298,37 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             fila.addWidget(btn_fuentes)
             fila.addStretch(1)
             tabla.setCellWidget(i, 4, celda)
-        tabla.resizeColumnsToContents()
 
     def _al_terminar_escaneo(resultado: ResultadoModulo):
-        barra.setVisible(False)
+        barra.terminar()
         btn_escanear.setEnabled(True)
         lbl_estado.setText(resultado.mensaje)
         if resultado.ok and isinstance(resultado.datos, dict):
             estado_actual.update(resultado.datos)
             _pintar_tabla(resultado.datos["estados"])
 
+    def _al_terminar_paso1(resultado: ResultadoModulo):
+        if not resultado.ok or not isinstance(resultado.datos, dict):
+            barra.terminar()
+            btn_escanear.setEnabled(True)
+            lbl_estado.setText(resultado.mensaje)
+            return
+        estado_actual.update(resultado.datos)
+        barra.fijar_etapas(2, 2, "Contrastando con Windows Update")
+        lbl_estado.setText("Drivers leídos. Consultando Windows Update… "
+                           "puede tardar unos minutos.")
+        gestor.lanzar(svc.escanear_drivers_paso2, _al_terminar_escaneo,
+                      resultado.datos["instalados"],
+                      resultado.datos.get("fabricante_pc", ""))
+
     def _escanear():
         if gestor.ocupado:
             return
         barra.setVisible(True)
+        barra.fijar_etapas(1, 2, "Enumerando los drivers instalados")
         btn_escanear.setEnabled(False)
-        lbl_estado.setText("Leyendo los drivers instalados y consultando "
-                           "Windows Update… puede tardar unos minutos.")
-        gestor.lanzar(svc.escanear_drivers, _al_terminar_escaneo)
+        lbl_estado.setText("Leyendo los drivers instalados…")
+        gestor.lanzar(svc.escanear_drivers_paso1, _al_terminar_paso1)
 
     btn_escanear.clicked.connect(_escanear)
     _pintar_enlaces()
@@ -268,7 +370,8 @@ def crear_pagina_discos(ctx: ContextoModulo):
     datos_actuales: dict = {"fisicos": [], "volumenes": []}
 
     tarjeta_discos, lay_d = tarjeta("Salud de los discos")
-    barra = _barra_progreso()
+    barra = BarraProgreso()
+    barra.setVisible(False)
     lbl_estado = etiqueta("Todavía no se ha analizado ningún disco.", suave=True)
     btn_analizar = QPushButton("Analizar discos")
     contenedor_discos = QVBoxLayout()
@@ -286,6 +389,23 @@ def crear_pagina_discos(ctx: ContextoModulo):
     contenedor_volumenes = QVBoxLayout()
     lay_v.addLayout(contenedor_volumenes)
     layout.addWidget(tarjeta_vol)
+
+    tarjeta_mapa, lay_m = tarjeta("Mapa de uso de disco")
+    lay_m.addWidget(etiqueta(
+        "Cuánto ocupa cada carpeta tuya (Descargas, Documentos, Escritorio, "
+        "Imágenes, Vídeos, Música) más la carpeta temporal. El porcentaje de "
+        "cada una es sobre el total medido de esas carpetas, no sobre todo "
+        "el disco."))
+    btn_mapa = QPushButton("Calcular mapa")
+    barra_mapa = BarraProgreso()
+    barra_mapa.setVisible(False)
+    lbl_mapa = etiqueta("Todavía no se ha calculado el mapa.", suave=True)
+    contenedor_mapa = QVBoxLayout()
+    lay_m.addWidget(btn_mapa)
+    lay_m.addWidget(barra_mapa)
+    lay_m.addWidget(lbl_mapa)
+    lay_m.addLayout(contenedor_mapa)
+    layout.addWidget(tarjeta_mapa)
     layout.addStretch(1)
 
     def _frase_smart(info) -> tuple[str, str]:
@@ -308,7 +428,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
         return frase, color
 
     def _al_terminar_optimizacion(resultado: ResultadoModulo):
-        barra.setVisible(False)
+        barra.terminar()
         btn_analizar.setEnabled(True)
         lbl_estado.setText(resultado.mensaje)
 
@@ -322,6 +442,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
                           "¿Seguir?"):
             return
         barra.setVisible(True)
+        barra.fijar_texto(f"Optimizando la unidad {letra}: con Windows…")
         btn_analizar.setEnabled(False)
         lbl_estado.setText(f"Optimizando la unidad {letra}: con Windows…")
         gestor.lanzar(svc.optimizar_volumen, _al_terminar_optimizacion,
@@ -361,7 +482,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
             contenedor_volumenes.addWidget(contenedor)
 
     def _al_terminar_analisis(resultado: ResultadoModulo):
-        barra.setVisible(False)
+        barra.terminar()
         btn_analizar.setEnabled(True)
         lbl_estado.setText(resultado.mensaje)
         if resultado.ok:
@@ -371,11 +492,47 @@ def crear_pagina_discos(ctx: ContextoModulo):
         if gestor.ocupado:
             return
         barra.setVisible(True)
+        barra.fijar_texto("Leyendo la salud SMART…")
         btn_analizar.setEnabled(False)
         lbl_estado.setText("Leyendo la salud SMART de los discos…")
         gestor.lanzar(svc.salud_discos, _al_terminar_analisis)
 
+    def _pintar_mapa(resultado: ResultadoModulo):
+        _vaciar(contenedor_mapa)
+        for fila_datos in resultado.datos or []:
+            nombre = fila_datos.get("nombre", "")
+            pct = int(fila_datos.get("pct", 0))
+            fila = QHBoxLayout()
+            fila.addWidget(etiqueta(
+                f"{nombre} — {tamano_legible(fila_datos.get('bytes', 0))}"), 1)
+            barra_fila = BarraProgreso()
+            barra_fila.fijar(pct, 100)
+            fila.addWidget(barra_fila, 1)
+            contenedor = QWidget()
+            contenedor.setLayout(fila)
+            contenedor_mapa.addWidget(contenedor)
+
+    def _al_terminar_mapa(resultado: ResultadoModulo):
+        barra_mapa.terminar()
+        btn_mapa.setEnabled(True)
+        lbl_mapa.setText(resultado.mensaje)
+        if resultado.ok:
+            _pintar_mapa(resultado)
+
+    def _calcular_mapa():
+        if gestor.ocupado:
+            return
+        barra_mapa.setVisible(True)
+        barra_mapa.fijar_texto("Midiendo las carpetas…")
+        btn_mapa.setEnabled(False)
+        lbl_mapa.setText("Midiendo el tamaño de cada carpeta… puede tardar "
+                         "si hay muchos archivos.")
+        gestor.lanzar(svc.mapa_disco, _al_terminar_mapa,
+                      al_progreso=lambda i, n: barra_mapa.fijar(
+                          i, n, "carpetas"))
+
     btn_analizar.clicked.connect(_analizar)
+    btn_mapa.clicked.connect(_calcular_mapa)
     return pagina
 
 
@@ -391,7 +548,8 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
     gestor = _GestorTrabajos()
 
     tarjeta_inf, lay_i = tarjeta("Temporales y papelera")
-    barra = _barra_progreso()
+    barra = BarraProgreso()
+    barra.setVisible(False)
     lbl_estado = etiqueta("Pulsa «Analizar» para ver cuánto se puede liberar. "
                           "No se borra nada sin tu confirmación.", suave=True)
     btn_analizar = QPushButton("Analizar")
@@ -418,7 +576,9 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
         "Desactivar es reversible: el acceso se guarda en Respaldos y "
         "puedes restaurarlo cuando quieras; nada se borra a la primera. "
         "En esta versión solo se desactivan así los de la carpeta de "
-        "inicio; el resto se enseña con su origen."))
+        "inicio; el resto se enseña con su origen. Cada programa enseña "
+        "su impacto al arrancar: alto en rojo, medio en ámbar, bajo en "
+        "verde."))
     btn_ver_arranque = QPushButton("Ver programas de arranque")
     contenedor_arranque = QVBoxLayout()
     btn_restaurar = QPushButton("Restaurar todo lo desactivado")
@@ -441,7 +601,12 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
     layout.addStretch(1)
 
     def _ocupado(activo: bool, texto: str = ""):
-        barra.setVisible(activo)
+        if activo:
+            barra.setVisible(True)
+            if texto:
+                barra.fijar_texto(texto)
+        else:
+            barra.terminar()
         btn_analizar.setEnabled(not activo)
         if texto:
             lbl_estado.setText(texto)
@@ -471,11 +636,14 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
         if gestor.ocupado:
             return
         _ocupado(True, "Analizando temporales y papelera…")
+        barra.fijar_texto("Analizando temporales…")
         gestor.lanzar(svc.analizar_limpieza, _al_terminar_analisis)
 
     def _al_terminar_limpieza(resultado: ResultadoModulo):
         _ocupado(False)
         lbl_estado.setText(resultado.mensaje)
+        _registrar(ctx, "limpieza", resultado.mensaje if resultado.ok else
+                   f"Limpieza de temporales fallida: {resultado.mensaje}")
         if resultado.ok:
             _analizar()  # refresca el informe con lo que quede
 
@@ -486,7 +654,17 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
                           "¿Seguir?"):
             return
         _ocupado(True, "Limpiando temporales…")
-        gestor.lanzar(svc.limpiar_temporales, _al_terminar_limpieza)
+        gestor.lanzar(svc.limpiar_con_progreso, _al_terminar_limpieza,
+                      al_progreso=lambda borradas, total:
+                      barra.fijar(borradas, total, "partidas"))
+
+    def _al_terminar_papelera(resultado: ResultadoModulo):
+        _ocupado(False)
+        lbl_estado.setText(resultado.mensaje)
+        _registrar(ctx, "papelera", resultado.mensaje if resultado.ok else
+                   f"Vaciado de papelera fallido: {resultado.mensaje}")
+        if resultado.ok:
+            _analizar()  # refresca el informe con lo que quede
 
     def _papelera():
         if not _confirmar(pagina, "Vaciar papelera",
@@ -494,16 +672,30 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
                           "definitivo. ¿Seguir?"):
             return
         _ocupado(True, "Vaciando la papelera…")
-        gestor.lanzar(svc.vaciar_papelera, _al_terminar_limpieza)
+        gestor.lanzar(svc.vaciar_papelera, _al_terminar_papelera)
+
+    def _etiqueta_impacto(elemento: dict) -> QLabel:
+        nivel = elemento.get("impacto", "bajo")
+        texto_nivel, color = _IMPACTO.get(nivel, _IMPACTO["bajo"])
+        lbl = QLabel(f"Impacto {texto_nivel.lower()}")
+        lbl.setStyleSheet(f"color: {color}; font-weight: 600;")
+        motivo = elemento.get("impacto_motivo", "")
+        if motivo:
+            lbl.setToolTip(motivo)
+        return lbl
 
     def _pintar_arranque(resultado: ResultadoModulo):
         _vaciar(contenedor_arranque)
         for elemento in resultado.datos or []:
             nombre = elemento.get("nombre", "")
             origen = elemento.get("ubicacion", "")
+            nivel = elemento.get("impacto", "bajo")
+            texto_nivel, _color = _IMPACTO.get(nivel, _IMPACTO["bajo"])
+            motivo = elemento.get("impacto_motivo", "")
             if elemento.get("reversible"):
                 fila = QHBoxLayout()
                 fila.addWidget(etiqueta(f"{nombre} — carpeta de inicio"), 1)
+                fila.addWidget(_etiqueta_impacto(elemento))
                 btn = QPushButton("Desactivar (reversible)")
                 btn.clicked.connect(
                     lambda _=False, arch=elemento["archivo_inicio"]:
@@ -513,10 +705,14 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
                 contenedor.setLayout(fila)
                 contenedor_arranque.addWidget(contenedor)
             else:
+                frase = (f"Origen: {origen or 'registro'} — Impacto "
+                         f"{texto_nivel.lower()}")
+                if motivo:
+                    frase += f": {motivo}"
+                frase += (" Se enseña; para desactivarlo usa el "
+                          "Administrador de tareas.")
                 contenedor_arranque.addWidget(fila_estado(
-                    "inicio", "estatico", nombre,
-                    f"Origen: {origen or 'registro'} — se enseña; para "
-                    "desactivarlo usa el Administrador de tareas."))
+                    "inicio", "estatico", nombre, frase))
 
     def _al_terminar_arranque(resultado: ResultadoModulo):
         _ocupado(False)
@@ -531,9 +727,17 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
         gestor.lanzar(svc.elementos_arranque, _al_terminar_arranque)
 
     def _desactivar(nombre_archivo: str):
+        def _fin(resultado: ResultadoModulo):
+            _ocupado(False)
+            lbl_estado.setText(resultado.mensaje)
+            if resultado.ok:
+                _registrar(ctx, "arranque",
+                           f"Arranque desactivado (reversible): "
+                           f"{nombre_archivo}")
+                _ver_arranque()
+
         _ocupado(True, "Desactivando el arranque (reversible)…")
-        gestor.lanzar(svc.desactivar_arranque, _al_terminar_arranque_simple,
-                      nombre_archivo)
+        gestor.lanzar(svc.desactivar_arranque, _fin, nombre_archivo)
 
     def _al_terminar_arranque_simple(resultado: ResultadoModulo):
         _ocupado(False)
@@ -546,7 +750,7 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
         gestor.lanzar(svc.restaurar_arranque, _al_terminar_arranque_simple)
 
     def _al_terminar_respaldo(resultado: ResultadoModulo):
-        barra.setVisible(False)
+        barra.terminar()
         btn_punto.setEnabled(True)
         btn_registro.setEnabled(True)
         lbl_respaldo.setText(resultado.mensaje)
@@ -555,6 +759,7 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
         if gestor.ocupado:
             return
         barra.setVisible(True)
+        barra.fijar_texto("Creando el punto de restauración…")
         btn_punto.setEnabled(False)
         lbl_respaldo.setText("Creando el punto de restauración… Windows "
                              "pedirá permiso de administrador.")
@@ -564,6 +769,7 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
         if gestor.ocupado:
             return
         barra.setVisible(True)
+        barra.fijar_texto("Guardando la copia del registro…")
         btn_registro.setEnabled(False)
         lbl_respaldo.setText("Guardando la copia del registro en Respaldos… "
                              "puede tardar un poco.")

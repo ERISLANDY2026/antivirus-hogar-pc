@@ -23,10 +23,12 @@ from PySide6.QtWidgets import (
 
 from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
+from antivirus_hogar_pc.core.v102 import valorar_velocidad
 from antivirus_hogar_pc.core.vpngate import ordenar_servidores, paises_disponibles
 from antivirus_hogar_pc.core.wifi_parse import valorar_wifi
 from antivirus_hogar_pc.ui import theme
 from antivirus_hogar_pc.ui.paginas_base import etiqueta, fila_estado, pagina_base, tarjeta
+from antivirus_hogar_pc.ui.widgets_v102 import BarraProgreso
 
 from . import servicios_red as srv
 
@@ -103,6 +105,9 @@ class _PaginaActualizaciones(QWidget):
         self._trabajos: list[_Trabajo] = []
         self._programas: list = []
         self._ocupado = False
+        self._todo_restantes: list = []
+        self._todo_total = 0
+        self._todo_completados = 0
 
         pagina, layout = pagina_base(
             "Actualizaciones",
@@ -121,6 +126,8 @@ class _PaginaActualizaciones(QWidget):
 
         # --- Programas (winget) --------------------------------------------------
         tarjeta_winget, lay_w = tarjeta("Programas desactualizados (winget)")
+        self._barra_winget = BarraProgreso()
+        lay_w.addWidget(self._barra_winget)
         self._lbl_winget = etiqueta("Pulsa buscar para ver qué programas tienen "
                                     "una versión más nueva.")
         lay_w.addWidget(self._lbl_winget)
@@ -141,6 +148,8 @@ class _PaginaActualizaciones(QWidget):
 
         # --- Windows Update ---------------------------------------------------------
         tarjeta_wu, lay_u = tarjeta("Actualizaciones de Windows pendientes")
+        self._barra_wu = BarraProgreso()
+        lay_u.addWidget(self._barra_wu)
         self._lbl_wu = etiqueta("Pulsa buscar para consultar Windows Update.")
         lay_u.addWidget(self._lbl_wu)
         self._lista_wu = QListWidget()
@@ -207,6 +216,7 @@ class _PaginaActualizaciones(QWidget):
 
     # -- winget ---------------------------------------------------------------------
     def _buscar_winget(self) -> None:
+        self._barra_winget.fijar_texto("Buscando con winget…")
         self._lbl_winget.setText("Buscando con winget… puede tardar un poco.")
         self._fijar_ocupado(True)
         _lanzar(self, srv.programas_desactualizados, self._winget_buscado)
@@ -228,10 +238,12 @@ class _PaginaActualizaciones(QWidget):
         tabla.resizeColumnsToContents()
 
     def _actualizar_uno(self, programa) -> None:
+        self._barra_winget.fijar_etapas(1, 1, f"Actualizando {programa.nombre}")
         self._lbl_winget.setText(f"Actualizando «{programa.nombre}»…")
         self._fijar_ocupado(True)
 
         def al_terminar(r: ResultadoModulo) -> None:
+            self._barra_winget.terminar()
             self._lbl_winget.setText(r.mensaje)
             self._buscar_winget()
 
@@ -241,22 +253,52 @@ class _PaginaActualizaciones(QWidget):
     def _actualizar_todo(self) -> None:
         respuesta = QMessageBox.question(
             self, "Actualizar todo",
-            "Se actualizarán TODOS los programas de la lista con winget. "
-            "Algunos pueden pedir confirmación o reiniciar su instalador. "
-            "¿Seguimos?")
+            "Se actualizarán TODOS los programas de la lista con winget, "
+            "uno a uno. Algunos pueden pedir confirmación o reiniciar su "
+            "instalador. ¿Seguimos?")
         if respuesta != QMessageBox.StandardButton.Yes:
             return
-        self._lbl_winget.setText("Actualizando todo con winget… puede tardar varios minutos.")
+        if not self._programas:
+            self._lbl_winget.setText(
+                "Primero pulsa «Buscar programas desactualizados» para tener la lista.")
+            return
+        self._todo_restantes = list(self._programas)
+        self._todo_total = len(self._todo_restantes)
+        self._todo_completados = 0
+        self._barra_winget.fijar(0, self._todo_total, "programas")
+        self._lbl_winget.setText(
+            f"Actualizando {self._todo_total} programas, uno a uno…")
         self._fijar_ocupado(True)
+        self._actualizar_siguiente()
 
-        def al_terminar(r: ResultadoModulo) -> None:
-            self._lbl_winget.setText(r.mensaje)
+    def _actualizar_siguiente(self) -> None:
+        if not self._todo_restantes:
+            self._barra_winget.terminar()
+            self._lbl_winget.setText(
+                f"Actualización en cadena terminada: {self._todo_completados} "
+                f"de {self._todo_total} programas procesados.")
             self._buscar_winget()
+            return
+        programa = self._todo_restantes.pop(0)
+        self._lbl_winget.setText(
+            f"Actualizando «{programa.nombre}» "
+            f"({self._todo_completados + 1} de {self._todo_total})…")
 
-        _lanzar(self, srv.actualizar_todo, al_terminar)
+        def al_terminar(r: ResultadoModulo, prog=programa) -> None:
+            self._todo_completados += 1
+            self._barra_winget.fijar(
+                self._todo_completados, self._todo_total, "programas")
+            if r.mensaje:
+                self._lbl_winget.setText(r.mensaje)
+            self._actualizar_siguiente()
+
+        _lanzar(self, lambda prog=programa: srv.actualizar_programa(
+            prog.id_paquete, prog.nombre), al_terminar)
 
     # -- Windows Update ----------------------------------------------------------------
     def _buscar_wu(self) -> None:
+        self._barra_wu.fijar_texto(
+            "Consultando Windows Update… (Windows no informa porcentaje)")
         self._lbl_wu.setText("Consultando Windows Update… la primera vez tarda.")
         self._fijar_ocupado(True)
         _lanzar(self, srv.actualizaciones_windows, self._wu_buscado)
@@ -313,6 +355,22 @@ class _PaginaRed(QWidget):
         lay.addWidget(self._btn_wifi)
         layout.addWidget(tarjeta_wifi)
 
+        # --- Velocidad de internet y estado VPN -------------------------------------
+        tarjeta_vel, lay_vel = tarjeta("Velocidad de internet y estado VPN")
+        self._lbl_velocidad = etiqueta("Todavía no se ha medido la velocidad.")
+        lay_vel.addWidget(self._lbl_velocidad)
+        self._lbl_valoracion = etiqueta("", suave=True)
+        lay_vel.addWidget(self._lbl_valoracion)
+        self._btn_velocidad = QPushButton("Medir velocidad")
+        self._btn_velocidad.clicked.connect(self._medir_velocidad)
+        lay_vel.addWidget(self._btn_velocidad)
+        self._lbl_estado_vpn = etiqueta("Estado VPN sin consultar.", suave=True)
+        lay_vel.addWidget(self._lbl_estado_vpn)
+        self._btn_estado_vpn = QPushButton("Ver estado VPN")
+        self._btn_estado_vpn.clicked.connect(self._ver_estado_vpn)
+        lay_vel.addWidget(self._btn_estado_vpn)
+        layout.addWidget(tarjeta_vel)
+
         # --- VPN Gate ----------------------------------------------------------------
         tarjeta_vpn, lay_v = tarjeta("VPN Gate (servidores de voluntarios)")
         aviso = etiqueta(
@@ -321,6 +379,17 @@ class _PaginaRed(QWidget):
             "nunca para banca, compras ni datos sensibles.")
         aviso.setStyleSheet(f"color: {theme.AMBAR};")
         lay_v.addWidget(aviso)
+
+        # Interruptor general de la VPN (v1.0.2): estado + apagado desde la app
+        fila_switch = QHBoxLayout()
+        self._lbl_switch_vpn = etiqueta("VPN: consultando el estado…")
+        fila_switch.addWidget(self._lbl_switch_vpn, 1)
+        self._btn_desconectar = QPushButton("Desconectar VPN")
+        self._btn_desconectar.setObjectName("peligro")
+        self._btn_desconectar.setEnabled(False)
+        self._btn_desconectar.clicked.connect(self._desconectar_vpn)
+        fila_switch.addWidget(self._btn_desconectar)
+        lay_v.addLayout(fila_switch)
 
         fila_ctrl = QHBoxLayout()
         fila_ctrl.addWidget(QLabel("País:"))
@@ -365,6 +434,11 @@ class _PaginaRed(QWidget):
         layout.addStretch(1)
 
         QTimer.singleShot(300, self._cargar_wifi)
+        # Carga AUTOMÁTICA de la lista de VPN Gate al abrir la sección
+        # (v1.0.2: antes solo se descargaba a mano y un fallo dejaba el
+        # desplegable de países vacío en silencio).
+        QTimer.singleShot(500, self._cargar_servidores)
+        QTimer.singleShot(800, self._ver_estado_vpn)
 
     def widget(self) -> QWidget:
         return self._scroll
@@ -418,8 +492,13 @@ class _PaginaRed(QWidget):
     def _servidores_cargados(self, resultado: ResultadoModulo) -> None:
         self._btn_servidores.setEnabled(True)
         if not resultado.ok:
+            # Error VISIBLE con la causa y reintento (nada de vacío en silencio)
+            self._lbl_vpn.setStyleSheet(f"color: {theme.ROJO};")
             self._lbl_vpn.setText(resultado.mensaje)
+            self._btn_servidores.setText("Reintentar descarga")
             return
+        self._lbl_vpn.setStyleSheet("")
+        self._btn_servidores.setText("Actualizar lista de servidores")
         self._servidores = resultado.datos or []
         pais_actual = self._combo_pais.currentData()
         self._combo_pais.blockSignals(True)
@@ -455,14 +534,83 @@ class _PaginaRed(QWidget):
 
     def _conectar(self, servidor) -> None:
         self._lbl_vpn.setText(f"Preparando el perfil de {servidor.hostname}…")
-        _lanzar(self, lambda: srv.conectar_vpn(servidor),
-                lambda r: self._lbl_vpn.setText(r.mensaje))
+
+        def _al_conectar(r: ResultadoModulo) -> None:
+            self._lbl_vpn.setText(r.mensaje)
+            if r.ok:
+                self._ver_estado_vpn()  # el interruptor refleja el servidor
+
+        _lanzar(self, lambda: srv.conectar_vpn(servidor), _al_conectar)
+
+    def _desconectar_vpn(self) -> None:
+        self._btn_desconectar.setEnabled(False)
+        self._lbl_switch_vpn.setText("VPN: desconectando…")
+        _lanzar(self, srv.desconectar_vpn, self._vpn_desconectada)
+
+    def _vpn_desconectada(self, resultado: ResultadoModulo) -> None:
+        self._lbl_switch_vpn.setText(
+            "VPN: Desconectada" if resultado.ok else f"VPN: {resultado.mensaje}")
+        self._btn_desconectar.setEnabled(False)
+        self._lbl_estado_vpn.setText(resultado.mensaje)
+        self._consultar_ip()  # la IP pública se refresca tras desconectar
 
     def _consultar_ip(self) -> None:
         self._lbl_ip.setText("Consultando tu IP pública…")
         _lanzar(self, srv.ip_publica,
                 lambda r: self._lbl_ip.setText(
                     f"Tu IP pública: {r.datos}" if r.ok else r.mensaje))
+
+    # -- Velocidad y estado VPN -------------------------------------------------------
+    def _medir_velocidad(self) -> None:
+        self._lbl_velocidad.setText("Midiendo la velocidad… (descarga real de prueba)")
+        self._lbl_valoracion.setText("")
+        self._btn_velocidad.setEnabled(False)
+        _lanzar(self, srv.prueba_velocidad, self._velocidad_medida)
+
+    def _velocidad_medida(self, resultado: ResultadoModulo) -> None:
+        self._btn_velocidad.setEnabled(True)
+        if not resultado.ok:
+            self._lbl_velocidad.setText(resultado.mensaje)
+            self._lbl_valoracion.setText("")
+            return
+        datos = resultado.datos or {}
+        ping = datos.get("ping_ms")
+        bajada = float(datos.get("bajada_mbps") or 0.0)
+        ping_txt = f"{ping} ms" if ping is not None else "—"
+        self._lbl_velocidad.setText(f"Ping: {ping_txt} · Bajada: {bajada:.1f} Mbps")
+        self._lbl_valoracion.setText(valorar_velocidad(bajada))
+
+    def _ver_estado_vpn(self) -> None:
+        self._lbl_estado_vpn.setText("Consultando el estado VPN…")
+        self._btn_estado_vpn.setEnabled(False)
+        _lanzar(self, srv.estado_vpn, self._estado_vpn_visto)
+
+    def _estado_vpn_visto(self, resultado: ResultadoModulo) -> None:
+        self._btn_estado_vpn.setEnabled(True)
+        if not resultado.ok:
+            self._lbl_estado_vpn.setText(resultado.mensaje)
+            return
+        datos = resultado.datos or {}
+        clientes = datos.get("clientes") or []
+        ip = datos.get("ip") or ""
+        # Interruptor general: estado real (proceso openvpn) + servidor anotado
+        if datos.get("conectada"):
+            servidor = datos.get("servidor") or "un servidor"
+            pais = datos.get("pais") or ""
+            self._lbl_switch_vpn.setText(
+                f"VPN: CONECTADA a {servidor}" + (f" ({pais})" if pais else ""))
+            self._btn_desconectar.setEnabled(True)
+        else:
+            self._lbl_switch_vpn.setText("VPN: Desconectada")
+            self._btn_desconectar.setEnabled(False)
+        lineas = [
+            "Clientes VPN instalados: " + (", ".join(clientes) if clientes else "ninguno"),
+            "IP pública actual: " + (ip if ip else "sin consultar / no disponible"),
+            ("El túnel lo crea el cliente VPN con el perfil que la app le "
+             "entrega; el interruptor «Desconectar VPN» sí lo apaga desde "
+             "aquí cerrando el proceso de OpenVPN."),
+        ]
+        self._lbl_estado_vpn.setText("\n".join(lineas))
 
 
 def crear_pagina_red(ctx: ContextoModulo):

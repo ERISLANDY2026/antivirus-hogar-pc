@@ -11,6 +11,8 @@ import time
 from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import ActualizacionWindows, ResultadoModulo
 from antivirus_hogar_pc.core import updater
+from antivirus_hogar_pc.core.v102 import valorar_velocidad
+from antivirus_hogar_pc.core.velocidad import medir_velocidad
 from antivirus_hogar_pc.core.vpngate import (
     ServidorVPN,
     descargar_lista_servidores,
@@ -45,11 +47,19 @@ def descargar_servidores_completos() -> ResultadoModulo:
     if not res.ok:
         return ResultadoModulo(
             ok=False,
-            mensaje="No se pudo descargar la lista de servidores de VPN Gate. "
-                    "Revisa tu conexión a internet e inténtalo de nuevo.",
+            mensaje=("No se pudo descargar la lista de servidores de VPN Gate. "
+                     f"Causa: {res.mensaje} "
+                     "Pulsa «Reintentar descarga» para intentarlo otra vez."),
             detalle_tecnico=res.mensaje,
         )
     servidores: list[ServidorVPN] = res.datos or []
+    if not servidores:
+        return ResultadoModulo(
+            ok=False,
+            mensaje=("La lista de VPN Gate llegó vacía o en un formato que no "
+                     "se pudo leer: no hay servidores que mostrar. Pulsa "
+                     "«Reintentar descarga» para intentarlo otra vez."),
+        )
     return ResultadoModulo(
         ok=True,
         mensaje=f"{len(servidores)} servidores disponibles.",
@@ -110,6 +120,7 @@ def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:
     cliente = clientes[0]
     res_abrir = seguro(vpn_win.abrir_perfil_vpn, ruta, cliente["ruta"])
     if res_abrir.ok and res_abrir.datos:
+        _guardar_estado_vpn(servidor)
         return ResultadoModulo(
             ok=True,
             mensaje=(f"Perfil entregado a {cliente['nombre']}. Termina la conexión "
@@ -130,6 +141,134 @@ def ip_publica() -> ResultadoModulo:
     if ip:
         return ResultadoModulo(ok=True, datos=ip)
     return ResultadoModulo(ok=False, mensaje="No se pudo consultar tu IP pública.")
+
+
+# --- Velocidad de internet y estado VPN -------------------------------------------
+def prueba_velocidad() -> ResultadoModulo:
+    """Descarga real contra speed.cloudflare.com (core.velocidad).
+
+    datos = {"ok", "ping_ms", "bajada_mbps", "bytes"} tal como lo devuelve
+    medir_velocidad(); el mensaje lleva la valoración en español.
+    """
+    try:
+        datos = medir_velocidad()
+    except Exception as exc:  # medir ya captura red; último seguro para la UI
+        return ResultadoModulo(
+            ok=False, mensaje=f"No se pudo medir la velocidad: {exc}")
+    if not datos.get("ok"):
+        return ResultadoModulo(
+            ok=False,
+            mensaje="No se pudo medir la velocidad. Revisa tu conexión a internet.",
+            datos=datos)
+    bajada = float(datos.get("bajada_mbps") or 0.0)
+    ping = datos.get("ping_ms")
+    mensaje = (f"Ping: {ping} ms · Bajada: {bajada:.1f} Mbps. "
+               f"{valorar_velocidad(bajada)}")
+    return ResultadoModulo(ok=True, mensaje=mensaje, datos=datos)
+
+
+# --- Estado de la conexión VPN (v1.0.2): sí/no + desconexión -------------------
+def _ruta_estado_vpn() -> str:
+    return os.path.join(config.carpeta_datos(), "vpn_estado.json")
+
+
+def _guardar_estado_vpn(servidor) -> None:
+    """Anota qué perfil se entregó al cliente (servidor/país y cuándo)."""
+    import json as _json
+    import time as _time
+
+    try:
+        with open(_ruta_estado_vpn(), "w", encoding="utf-8") as f:
+            _json.dump({
+                "hostname": getattr(servidor, "hostname", ""),
+                "pais": getattr(servidor, "pais", ""),
+                "desde": _time.time(),
+            }, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _leer_estado_vpn() -> dict:
+    import json as _json
+
+    try:
+        with open(_ruta_estado_vpn(), "r", encoding="utf-8") as f:
+            datos = _json.load(f)
+        return datos if isinstance(datos, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _borrar_estado_vpn() -> None:
+    try:
+        os.remove(_ruta_estado_vpn())
+    except OSError:
+        pass
+
+
+def estado_vpn() -> ResultadoModulo:
+    """Estado de la VPN: clientes, IP pública y si hay túnel vivo.
+
+    datos = {"clientes": [nombres], "ip": str, "conectada": bool,
+             "servidor": str, "pais": str}. «conectada» es REAL: hay un
+    proceso openvpn en marcha (el túnel lo crea el cliente, no la app);
+    el servidor/país salen del último perfil que la app entregó.
+    """
+    res_clientes = seguro(vpn_win.clientes_vpn_instalados)
+    clientes_raw = res_clientes.datos if res_clientes.ok else []
+    nombres = []
+    for cliente in clientes_raw or []:
+        if isinstance(cliente, dict):
+            nombres.append(str(cliente.get("nombre", "") or "Cliente VPN"))
+        else:
+            nombres.append(str(cliente))
+    res_ip = seguro(vpn_win.ip_publica_actual)
+    ip = str(res_ip.datos) if res_ip.ok and res_ip.datos else ""
+    guardado = _leer_estado_vpn()
+    conectada = bool(seguro(vpn_win.hay_tunel_openvpn).datos)
+    if conectada:
+        mensaje = (f"VPN CONECTADA a {guardado.get('hostname') or 'un servidor'}"
+                   f" ({guardado.get('pais') or 'país sin anotar'}).")
+    else:
+        mensaje = ("VPN desconectada: no hay ningún túnel OpenVPN en marcha. "
+                   "El túnel lo crea el cliente VPN con el perfil que la app "
+                   "le entrega; esta app sí puede cerrarlo con «Desconectar VPN».")
+    return ResultadoModulo(ok=True, mensaje=mensaje, datos={
+        "clientes": nombres, "ip": ip, "conectada": conectada,
+        "servidor": guardado.get("hostname", ""), "pais": guardado.get("pais", ""),
+    })
+
+
+def desconectar_vpn() -> ResultadoModulo:
+    """Apaga la VPN desde la app cerrando el proceso openvpn del túnel.
+
+    OpenVPN Connect/GUI no ofrecen un comando de desconexión para
+    terceros; terminar su proceso openvpn cierra la conexión al momento
+    (winapi.vpn_win.terminar_procesos_openvpn). SoftEther usa su propio
+    servicio y no se toca: si no hay proceso openvpn pero sí estado
+    guardado, se limpia el estado y se dice con honestidad."""
+    res = seguro(vpn_win.terminar_procesos_openvpn)
+    cerrados = int(res.datos) if res.ok and res.datos else 0
+    habia_estado = bool(_leer_estado_vpn())
+    _borrar_estado_vpn()
+    if cerrados:
+        return ResultadoModulo(
+            ok=True,
+            mensaje=(f"VPN desconectada: se cerró el proceso de OpenVPN "
+                    f"({cerrados} conexión(es)). Tu IP pública volverá a ser "
+                    "la de tu proveedor en unos segundos."))
+    if habia_estado:
+        return ResultadoModulo(
+            ok=True,
+            mensaje=("No se encontró ningún proceso OpenVPN en marcha (la "
+                    "conexión ya estaba cerrada o la lleva SoftEther, que "
+                    "se desconecta en su propia ventana). El estado guardado "
+                    "quedó limpio: VPN desconectada."))
+    return ResultadoModulo(
+        ok=False,
+        mensaje=("No hay ninguna conexión VPN activa que esta app pueda "
+                 "cerrar. Si conectaste con SoftEther VPN Client, "
+                 "desconecta desde su ventana."))
 
 
 # --- Wi-Fi -----------------------------------------------------------------------
@@ -267,15 +406,38 @@ def comprobar_actualizacion_app(ajustes) -> ResultadoModulo:
         return ResultadoModulo(
             ok=False,
             mensaje="El canal de actualizaciones aún no está configurado en Ajustes.")
-    res = seguro(updater.comprobar_actualizacion, url, config.VERSION)
-    if not res.ok:
+    # Mensajes HONESTOS por causa (bug v1.0.1: todo caía en «revisa tu
+    # conexión» aunque el fallo era que el archivo de versión no existía).
+    try:
+        info = updater.comprobar_actualizacion(url, config.VERSION)
+    except updater.ErrorActualizacion as exc:
+        mensajes = {
+            "sin_conexion": (
+                "No se pudo conectar con el canal de actualizaciones: parece "
+                "que no hay conexión a internet. Revisa tu conexión e "
+                "inténtalo de nuevo."),
+            "no_encontrado": (
+                "El canal de actualizaciones respondió «no encontrado»: el "
+                "archivo de versión no está publicado. No es tu conexión: "
+                "hay que volver a publicarlo en el canal (avísanos)."),
+            "respuesta_invalida": (
+                "El canal de actualizaciones respondió, pero su archivo de "
+                "versión no es válido. No es tu conexión: hay que corregirlo "
+                "en el canal (avísanos)."),
+        }
         return ResultadoModulo(
             ok=False,
-            mensaje="No se pudo comprobar si hay una actualización. "
-                    "Revisa tu conexión a internet.",
-            detalle_tecnico=res.mensaje,
+            mensaje=mensajes.get(exc.tipo, mensajes["sin_conexion"]),
+            detalle_tecnico=exc.detalle,
         )
-    info = res.datos
+    except Exception as exc:  # último seguro, clasificado como conexión
+        return ResultadoModulo(
+            ok=False,
+            mensaje="No se pudo conectar con el canal de actualizaciones: "
+                    "parece que no hay conexión a internet. Revisa tu "
+                    "conexión e inténtalo de nuevo.",
+            detalle_tecnico=repr(exc),
+        )
     if info is None:
         return ResultadoModulo(
             ok=True, mensaje=f"Estás en la última versión ({config.VERSION}).", datos=None)

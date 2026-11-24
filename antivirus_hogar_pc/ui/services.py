@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass, field
 
 from .. import config
+from ..core.actividad import RegistroActividad
 from ..core.quarantine import Cuarentena
 from ..core.scancache import CacheEscaneo
 from ..core.signatures import BaseFirmas
@@ -74,10 +75,18 @@ class ServiciosApp:
         extra = os.path.join(config.carpeta_datos(), "firmas_extra.txt")
         self.base_firmas.cargar_archivo(extra)
         self.cache = CacheEscaneo(config.ruta_bd_cache())
+        self.actividad = RegistroActividad(config.ruta_actividad())
         self.cuarentena = Cuarentena(config.ruta_cuarentena())
         self.en_windows = es_windows()
         self._foto_programas: dict | None = None
         self._ultimo_escaneo: dict = {}
+
+    # -- actividad ---------------------------------------------------------------
+    def registrar_actividad(self, tipo, detalle) -> None:
+        try:
+            self.actividad.registrar(tipo, detalle)
+        except Exception:
+            pass  # el registro nunca debe romper la operación que anota
 
     # -- escaneo ---------------------------------------------------------------
     def registrar_escaneo(self, resultado) -> None:
@@ -86,6 +95,10 @@ class ServiciosApp:
             "revisados": resultado.archivos_revisados,
             "hallazgos": len(resultado.hallazgos),
         }
+        self.registrar_actividad(
+            "escaneo",
+            f"Escaneo: {resultado.archivos_revisados} archivos revisados, "
+            f"{len(resultado.hallazgos)} hallazgo(s).")
 
     def hallazgos_recientes(self) -> int:
         return int(self._ultimo_escaneo.get("hallazgos", 0))

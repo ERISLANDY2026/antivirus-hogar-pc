@@ -72,6 +72,59 @@ def ip_publica_actual(timeout: int = 15) -> str:
         return ""
 
 
+def procesos_openvpn() -> list[dict]:
+    """Procesos del motor OpenVPN en marcha (uno por conexión activa).
+
+    OpenVPN Connect y OpenVPN GUI lanzan un proceso openvpn por túnel:
+    si hay alguno, hay una conexión OpenVPN viva. Se lee con psutil
+    (multiplataforma); sin psutil o sin permisos, devuelve []."""
+    try:
+        import psutil
+    except ImportError:
+        return []
+    encontrados = []
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            nombre = (proc.info.get("name") or "").lower()
+        except Exception:
+            continue
+        if "openvpn" in nombre:
+            encontrados.append({"pid": proc.info.get("pid"), "nombre": nombre})
+    return encontrados
+
+
+def hay_tunel_openvpn() -> bool:
+    return bool(procesos_openvpn())
+
+
+def terminar_procesos_openvpn() -> int:
+    """Cierra los procesos openvpn: así se apaga el túnel desde la app.
+
+    MECANISMO HONESTO: ni OpenVPN Connect ni OpenVPN GUI ofrecen un
+    comando de desconexión limpio para terceros; lo que sí cierra la
+    conexión de forma inmediata es terminar su proceso openvpn (el
+    cliente lo relanza al volver a conectar). SoftEther VPN Client usa
+    su propio servicio y NO se toca: su desconexión se hace en su
+    ventana. Devuelve cuántos procesos se cerraron."""
+    try:
+        import psutil
+    except ImportError:
+        return 0
+    cerrados = 0
+    for datos in procesos_openvpn():
+        try:
+            proc = psutil.Process(datos["pid"])
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                proc.kill()
+            cerrados += 1
+        except Exception:
+            continue
+    return cerrados
+
+
 def carpeta_perfiles_vpn() -> str:
     from .. import config
 

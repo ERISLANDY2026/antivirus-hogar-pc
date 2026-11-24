@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLay
 
 from . import theme
 from .icons import IconoAnimado
+from .widgets_v102 import TarjetaAnimada
 
 
 def pagina_base(titulo: str, subtitulo: str = "", demo: bool = False) -> tuple[QWidget, QVBoxLayout]:
@@ -38,7 +39,9 @@ def pagina_base(titulo: str, subtitulo: str = "", demo: bool = False) -> tuple[Q
 
 
 def tarjeta(titulo: str = "") -> tuple[QFrame, QVBoxLayout]:
-    frame = QFrame()
+    # v1.0.2: TarjetaAnimada (QFrame con objectName "tarjeta"); se ve como
+    # la tarjeta del QSS y puede encender su borde RGB con fijar_activa().
+    frame = TarjetaAnimada()
     frame.setObjectName("tarjeta")
     layout = QVBoxLayout(frame)
     layout.setSpacing(8)

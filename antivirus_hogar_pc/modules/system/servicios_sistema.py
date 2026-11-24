@@ -16,7 +16,8 @@ import os
 from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import (InformeTuneUp, PartidaLimpieza,
                                           ResultadoModulo, SmartInfo)
-from antivirus_hogar_pc.core import drivers_logic
+from antivirus_hogar_pc.core import drivers_logic, v102
+from antivirus_hogar_pc.core.hashing import tamano_legible
 from antivirus_hogar_pc.winapi import WindowsNoDisponible
 from antivirus_hogar_pc.winapi import drivers_win, system_info, tuneup_win
 from antivirus_hogar_pc.winapi import disks as discos_win
@@ -34,8 +35,9 @@ def _fallo(exc: Exception, contexto: str) -> ResultadoModulo:
 
 
 # === DRIVERS ====================================================================
-def escanear_drivers() -> ResultadoModulo:
-    """Enumera los drivers instalados y los contrasta con Windows Update."""
+def escanear_drivers_paso1() -> ResultadoModulo:
+    """Paso 1 del escaneo: enumerar los drivers instalados y leer la marca
+    de la PC. datos = {"instalados": [...], "fabricante_pc": str}."""
     try:
         instalados = drivers_win.enumerar_drivers()
     except Exception as exc:
@@ -48,7 +50,16 @@ def escanear_drivers() -> ResultadoModulo:
         fabricante_pc = system_info.fabricante_y_modelo_pc().get("fabricante", "")
     except Exception:
         pass  # el enlace OEM es un respaldo; sin él la cadena sigue
+    return ResultadoModulo(
+        ok=True,
+        mensaje=f"Se leyeron {len(instalados)} drivers instalados.",
+        datos={"instalados": instalados, "fabricante_pc": fabricante_pc})
 
+
+def escanear_drivers_paso2(instalados, fabricante_pc: str = "") -> ResultadoModulo:
+    """Paso 2 del escaneo: contrastar los instalados con Windows Update.
+    Devuelve el resultado completo de siempre (estados, fabricante_pc,
+    wu_consultado, ofrecidas_wu)."""
     try:
         ofrecidas = drivers_win.buscar_drivers_windows_update()
         wu_consultado = True
@@ -84,16 +95,24 @@ def escanear_drivers() -> ResultadoModulo:
     })
 
 
+def escanear_drivers() -> ResultadoModulo:
+    """Envoltorio compatible: paso 1 (enumerar) + paso 2 (Windows Update)."""
+    paso1 = escanear_drivers_paso1()
+    if not paso1.ok or not isinstance(paso1.datos, dict):
+        return paso1
+    return escanear_drivers_paso2(paso1.datos["instalados"],
+                                  paso1.datos.get("fabricante_pc", ""))
+
+
 def enlaces_oficiales_driver(estado: drivers_logic.EstadoDriver,
                              fabricante_pc: str = "") -> list[tuple[str, str]]:
     """La cadena de respaldo (Catálogo → chip → OEM) para un driver."""
     return drivers_logic.enlaces_para_driver(estado, fabricante_pc)
 
 
-def actualizar_drivers() -> ResultadoModulo:
-    """Punto de restauración primero; si no se puede crear, NO se instala.
-    Después, Windows Update descarga e instala los drivers que ofrece
-    (todos firmados por Microsoft)."""
+def crear_punto_para_drivers() -> ResultadoModulo:
+    """Paso 1 de la actualización: crear el punto de restauración. Si este
+    paso falla, la actualización NO debe seguir a la instalación."""
     try:
         creado = drivers_win.crear_punto_restauracion(
             "Antivirus Hogar PC — antes de actualizar drivers")
@@ -105,11 +124,38 @@ def actualizar_drivers() -> ResultadoModulo:
             mensaje="No se pudo crear el punto de restauración, así que no se "
                     "instaló nada. Revisa que la protección del sistema esté "
                     "activada en la unidad C: e inténtalo de nuevo.")
+    return ResultadoModulo(ok=True, mensaje="Punto de restauración creado.")
+
+
+def instalar_drivers_wu() -> ResultadoModulo:
+    """Paso 2 de la actualización: Windows Update descarga e instala los
+    drivers que ofrece (todos firmados por Microsoft). Windows Update no
+    expone un porcentaje real de esta instalación."""
     try:
         instalado = drivers_win.instalar_drivers_windows_update()
     except Exception as exc:
         return _fallo(exc, "la instalación de drivers")
     if instalado:
+        return ResultadoModulo(
+            ok=True,
+            mensaje="Windows Update instaló los drivers nuevos. Vuelve a "
+                    "escanear para confirmar el estado; puede hacer falta "
+                    "reiniciar la PC.")
+    return ResultadoModulo(
+        ok=False,
+        mensaje="La instalación no se completó (puede haberse cancelado el "
+                "aviso de administrador). No pasa nada: inténtalo de nuevo "
+                "cuando quieras.")
+
+
+def actualizar_drivers() -> ResultadoModulo:
+    """Envoltorio compatible con la misma lógica de seguridad de siempre:
+    punto de restauración primero; si no se puede crear, NO se instala."""
+    punto = crear_punto_para_drivers()
+    if not punto.ok:
+        return punto
+    instalacion = instalar_drivers_wu()
+    if instalacion.ok:
         return ResultadoModulo(
             ok=True,
             mensaje="Punto de restauración creado y Windows Update instaló los "
@@ -255,6 +301,69 @@ def optimizar_volumen(letra: str, es_ssd: bool) -> ResultadoModulo:
                           "administrador).")
 
 
+def _tamano_carpeta(ruta: str) -> int:
+    """Bytes totales de una carpeta por recorrido os.walk; los errores de
+    lectura (permisos, archivos que desaparecen) se ignoran."""
+    total = 0
+    if not ruta or not os.path.isdir(ruta):
+        return 0
+    for dirpath, _dirs, archivos in os.walk(ruta):
+        for nombre in archivos:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, nombre))
+            except OSError:
+                continue
+    return total
+
+
+_CARPETAS_MAPA = (
+    ("Descargas", ("Descargas", "Downloads")),
+    ("Documentos", ("Documentos", "Documents")),
+    ("Escritorio", ("Escritorio", "Desktop")),
+    ("Imágenes", ("Imágenes", "Pictures")),
+    ("Vídeos", ("Vídeos", "Videos")),
+    ("Música", ("Música", "Music")),
+)
+
+
+def mapa_disco(progreso=None) -> ResultadoModulo:
+    """Mapa de uso: tamaño de las carpetas del usuario del perfil más la
+    temporal. datos = core.v102.mapa_desde_tamanos(...) -> [{nombre, bytes,
+    pct}] con pct sobre el TOTAL MEDIDO de esas carpetas (no del disco).
+    progreso(i, n_carpetas) se llama tras medir cada carpeta."""
+    try:
+        hogar = os.path.expanduser("~")
+        candidatas: list[tuple[str, str]] = []
+        for nombre, variantes in _CARPETAS_MAPA:
+            for variante in variantes:
+                ruta = os.path.join(hogar, variante)
+                if os.path.isdir(ruta):
+                    candidatas.append((nombre, ruta))
+                    break
+        temporal = os.environ.get("TEMP", "")
+        if temporal and os.path.isdir(temporal):
+            candidatas.append(("Temporales", temporal))
+        tamanos: dict[str, int] = {}
+        total_carpetas = len(candidatas)
+        for i, (nombre, ruta) in enumerate(candidatas, start=1):
+            tamanos[nombre] = _tamano_carpeta(ruta)
+            if progreso is not None:
+                try:
+                    progreso(i, total_carpetas)
+                except Exception:
+                    pass  # un fallo del indicador no detiene la medición
+        mapa = v102.mapa_desde_tamanos(tamanos)
+        total_med = sum(int(fila["bytes"]) for fila in mapa)
+        return ResultadoModulo(
+            ok=True,
+            mensaje=(f"Mapa calculado: {tamano_legible(total_med)} medidos en "
+                     f"{total_carpetas} carpeta(s). Los porcentajes son sobre "
+                     "ese total medido, no sobre todo el disco."),
+            datos=mapa)
+    except Exception as exc:
+        return _fallo(exc, "el cálculo del mapa de disco")
+
+
 # === LIMPIEZA (tune-up) ===========================================================
 def analizar_limpieza() -> ResultadoModulo:
     """Informe ANTES de borrar: qué carpetas temporales y cuánto ocupan,
@@ -287,6 +396,57 @@ def limpiar_temporales() -> ResultadoModulo:
         mensaje += (f" {resultado['errores']} no se pudieron borrar porque "
                     "están en uso; es normal y no pasa nada.")
     return ResultadoModulo(ok=True, mensaje=mensaje, datos=resultado)
+
+
+def limpiar_con_progreso(progreso) -> ResultadoModulo:
+    """Como limpiar_temporales(), pero con progreso REAL por partidas:
+    progreso(borradas, total_partidas) se llama tras procesar cada partida
+    del análisis (borradas = partidas ya procesadas), para que la barra
+    enseñe partidas x de y de verdad.
+
+    tuneup_win.limpiar_temporales() borra todas las carpetas de golpe y no
+    sirve por partidas, así que el borrado por partida vive aquí: se
+    reutiliza tuneup_win.analizar_temporales() para las partidas y se
+    respeta su misma regla de las miniaturas (solo archivos thumbcache).
+    Lo que esté en uso se salta solo, nunca se fuerza."""
+    try:
+        partidas = tuneup_win.analizar_temporales()
+    except Exception as exc:
+        return _fallo(exc, "el análisis de limpieza")
+    total_partidas = len(partidas)
+    borrados = 0
+    errores = 0
+    bytes_liberados = 0
+    for indice, partida in enumerate(partidas, start=1):
+        ruta = partida.get("ruta", "")
+        patron = "thumbcache" if "Miniaturas" in partida.get("nombre", "") else ""
+        if ruta and os.path.isdir(ruta):
+            for dirpath, _dirs, archivos in os.walk(ruta):
+                for nombre in archivos:
+                    if patron and patron not in nombre.lower():
+                        continue
+                    ruta_archivo = os.path.join(dirpath, nombre)
+                    try:
+                        tamano = os.path.getsize(ruta_archivo)
+                        os.remove(ruta_archivo)
+                        bytes_liberados += tamano
+                        borrados += 1
+                    except OSError:
+                        errores += 1
+        if progreso is not None:
+            try:
+                progreso(indice, total_partidas)
+            except Exception:
+                pass  # un fallo del indicador no detiene la limpieza
+    mensaje = (f"Temporales limpiados: {borrados} archivo(s) borrados "
+               f"({tamano_legible(bytes_liberados)} liberados).")
+    if errores:
+        mensaje += (f" {errores} no se pudieron borrar porque están en uso; "
+                    "es normal y no pasa nada.")
+    return ResultadoModulo(ok=True, mensaje=mensaje, datos={
+        "borrados": borrados, "errores": errores,
+        "bytes_liberados": bytes_liberados, "partidas": total_partidas,
+    })
 
 
 def vaciar_papelera() -> ResultadoModulo:
@@ -322,10 +482,14 @@ def elementos_arranque() -> ResultadoModulo:
     for elemento in elementos:
         nombre = elemento.get("nombre", "")
         archivo = archivos_inicio.get(nombre.lower(), "")
+        impacto, impacto_motivo = v102.clasificar_impacto_arranque(
+            nombre, elemento.get("comando", ""))
         salida.append({
             **elemento,
             "reversible": bool(archivo),
             "archivo_inicio": archivo,
+            "impacto": impacto,
+            "impacto_motivo": impacto_motivo,
         })
     return ResultadoModulo(
         ok=True,

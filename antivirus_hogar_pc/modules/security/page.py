@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -33,6 +32,7 @@ from antivirus_hogar_pc.core.threats_update import descargar_firmas_recientes, e
 from antivirus_hogar_pc.ui import theme
 from antivirus_hogar_pc.ui.paginas_base import etiqueta, fila_estado, pagina_base, tarjeta
 from antivirus_hogar_pc.ui.services import seguro
+from antivirus_hogar_pc.ui.widgets_v102 import BarraProgreso
 from antivirus_hogar_pc.winapi import defender, tasks, tuneup_win
 
 
@@ -191,9 +191,7 @@ def crear_pagina_escaner(ctx: ContextoModulo):
 
     # --- tarjeta de escaneo -------------------------------------------------
     tarjeta_escaneo, lay = tarjeta("Escaneo")
-    barra = QProgressBar()
-    barra.setRange(0, 100)
-    barra.setValue(0)
+    barra = BarraProgreso()
     lay.addWidget(barra)
     lbl_estado = etiqueta("Listo. La base local tiene "
                           f"{servicios.base_firmas.total} huellas conocidas.")
@@ -238,7 +236,7 @@ def crear_pagina_escaner(ctx: ContextoModulo):
     layout.addWidget(tarjeta_cuarentena)
     layout.addStretch(1)
 
-    estado = {"trabajador": None}
+    estado = {"trabajador": None, "ultimo_revisados": 0, "ultimo_total": 0}
 
     def _limpiar_layout(lay_out: QVBoxLayout):
         while lay_out.count():
@@ -313,18 +311,26 @@ def crear_pagina_escaner(ctx: ContextoModulo):
 
     def _al_progreso(ruta: str, revisados: int, total: int):
         lbl_actual.setText(ruta)
+        estado["ultimo_revisados"] = revisados
+        estado["ultimo_total"] = total
         if total > 0:
-            barra.setRange(0, total)
-            barra.setValue(revisados)
+            barra.fijar(revisados, total, "archivos")
         else:
-            barra.setRange(0, 0)
+            barra.fijar_texto("Contando archivos…")
 
     def _al_terminar(resultado):
         b_cancelar.setEnabled(False)
         for b in (b_rapido, b_completo, b_carpeta, b_defender, b_archivo):
             b.setEnabled(True)
-        barra.setRange(0, 100)
-        barra.setValue(100)
+        if resultado.cancelado:
+            if estado["ultimo_total"] > 0:
+                barra.fijar(resultado.archivos_revisados,
+                            estado["ultimo_total"], "archivos")
+            else:
+                barra.fijar_texto(
+                    f"Cancelado: {resultado.archivos_revisados} archivos revisados")
+        else:
+            barra.terminar()
         lbl_actual.setText("")
         texto = (f"Escaneo terminado: {resultado.archivos_revisados} archivos revisados "
                  f"({resultado.archivos_desde_cache} desde la caché), "
@@ -348,7 +354,9 @@ def crear_pagina_escaner(ctx: ContextoModulo):
         for b in (b_rapido, b_completo, b_carpeta, b_defender, b_archivo):
             b.setEnabled(False)
         b_cancelar.setEnabled(True)
-        barra.setRange(0, 0)
+        estado["ultimo_revisados"] = 0
+        estado["ultimo_total"] = 0
+        barra.fijar_texto("Escaneando…")
         lbl_estado.setText("Escaneando…")
         trabajador.start()
 
