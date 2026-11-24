@@ -25,6 +25,17 @@ def mensaje_para_usuario(exc: BaseException) -> str:
             "Hubo un problema con la base de datos interna de la app. "
             "Cierra la app, vuelve a abrirla e inténtalo de nuevo."
         )
+    if (
+        "being used by another process" in texto
+        or "used by another process" in texto
+        or "cannot access the file" in texto
+    ):
+        # El hosts agarrado por otro proceso (incidente del 2026-11-24):
+        # el error crudo de Copy-Item jamás debe llegar a la pantalla.
+        return (
+            "El archivo hosts está en uso por otro programa de Windows. "
+            "Reinicia la computadora e inténtalo de nuevo."
+        )
     if isinstance(exc, PermissionError):
         return (
             "Windows no dio permiso para leer o escribir algo que la app "

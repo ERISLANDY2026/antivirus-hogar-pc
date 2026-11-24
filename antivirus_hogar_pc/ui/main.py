@@ -195,6 +195,16 @@ def main(argv: list[str] | None = None) -> int:
             arranque_win.fijar_arranque_windows(True)
         except Exception:
             pass  # best-effort: la app abre igual
+    # Autorreparación del hosts (v1.0.6): si el bloque de Protección
+    # quedó dañado o una retirada programada para el reinicio sigue
+    # pendiente, se deja limpio al abrir y queda anotado en el
+    # registro de actividad. Best-effort: nunca impide abrir la app.
+    try:
+        from ..core import seguridad as _seguridad
+
+        _seguridad.autorreparar_al_inicio(servicios.registrar_actividad)
+    except Exception:
+        pass
     ventana = VentanaPrincipal(servicios)
     if "--inicio-automatico" in argv:
         # Arranque de Windows: minimizada, en segundo plano, y con la

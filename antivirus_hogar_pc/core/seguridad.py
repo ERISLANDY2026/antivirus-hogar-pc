@@ -8,6 +8,7 @@ operación que el usuario pidió con su botón.
 """
 import json
 import os
+import socket
 import time
 from dataclasses import asdict
 
@@ -16,6 +17,7 @@ from ..contracts import HostsEstado, ResultadoModulo
 from ..winapi import es_windows
 from ..winapi import system_info, tuneup_win
 from . import hosts_blocker
+from .textos_error import mensaje_para_usuario
 from .scanner import EXTENSIONES_EJECUTABLES, Hallazgo, analizar_archivo
 from .signatures import BaseFirmas
 from .watch_logic import ProgramaInstalado, diff_programas, ejecutables_nuevos
@@ -38,12 +40,21 @@ def _leer_estado_local() -> dict:
                 return datos
         except (OSError, ValueError):
             pass
-    return {"base": "semilla", "pausado": False}
+    return {"base": "semilla", "pausado": False, "pendiente": ""}
 
 
 def _guardar_estado_local(estado: dict) -> None:
     with open(_ruta_estado_local(), "w", encoding="utf-8") as f:
         json.dump(estado, f, ensure_ascii=False, indent=1)
+
+
+def _actualizar_estado_local(**cambios) -> dict:
+    """Mezcla cambios sobre el estado guardado (no pisa otras claves:
+    «pendiente» sobrevive a guardar la base o la pausa, y viceversa)."""
+    estado = _leer_estado_local()
+    estado.update(cambios)
+    _guardar_estado_local(estado)
+    return estado
 
 
 def _ultimo_respaldo_hosts() -> str:
@@ -92,8 +103,66 @@ def estado_hosts() -> HostsEstado:
     )
 
 
-def activar_hosts(base: str = "semilla") -> ResultadoModulo:
-    """Escribe el bloque de la app en el hosts (con respaldo y elevación)."""
+# --- Escritura robusta + autocomprobación (v1.0.6) ---------------------------
+#
+# Incidente del 2026-11-24: con el bloqueo activo la PC del usuario se
+# quedó «conectado, sin internet» y «Quitar bloqueo» falló porque el
+# Copy-Item elevado no pudo acceder al hosts («being used by another
+# process»). Las tres piezas de la corrección viven aquí y en
+# winapi.tuneup_win.escribir_hosts_robusto:
+#   1. escritura con reintentos y, si el archivo sigue en uso,
+#      reemplazo programado para el reinicio (aviso claro, sin el
+#      error crudo en pantalla);
+#   2. al activar, autocomprobación de resolución: si navegar deja de
+#      responder, reversión automática a la copia previa del hosts;
+#   3. autorreparación al abrir la app (autorreparar_al_inicio).
+
+MENSAJE_PROGRAMADO = (
+    "El archivo hosts estaba en uso por otro programa, así que el "
+    "cambio quedó programado y se aplicará al reiniciar la computadora."
+)
+
+# Dominios conocidos que NUNCA están en las bases de bloqueo: si ni
+# estos resuelven tras activar, la navegación quedó rota y se revierte.
+DOMINIOS_COMPROBACION = ("www.microsoft.com", "www.google.com")
+
+
+def _escribir_hosts_seguro(nuevo_texto: str) -> dict:
+    """Atajo a la escritura robusta de winapi, con su mismo contrato."""
+    return tuneup_win.escribir_hosts_robusto(nuevo_texto, config.ruta_respaldos())
+
+
+def _resolver_por_defecto(dominio: str) -> bool:
+    """True si el dominio resuelve a una dirección real (no a 0.0.0.0,
+    que es lo que devuelve el propio bloqueo, ni a un error)."""
+    try:
+        infos = socket.getaddrinfo(dominio, 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    for info in infos:
+        if info[4] and info[4][0] not in ("0.0.0.0", "::", ""):
+            return True
+    return False
+
+
+def _resolucion_ok(resolver=None) -> bool:
+    resolver = resolver or _resolver_por_defecto
+    return any(resolver(d) for d in DOMINIOS_COMPROBACION)
+
+
+def _revertir_al_respaldo(respaldo: str) -> dict:
+    """Vuelve a escribir el contenido del respaldo dado (o el último)."""
+    ruta = respaldo or _ultimo_respaldo_hosts()
+    if not ruta or not os.path.isfile(ruta):
+        return {"ok": False, "via": "", "detalle": "sin respaldo disponible"}
+    with open(ruta, "r", encoding="utf-8", errors="replace") as f:
+        texto = f.read()
+    return _escribir_hosts_seguro(texto)
+
+
+def activar_hosts(base: str = "semilla", *, _resolver=None) -> ResultadoModulo:
+    """Escribe el bloque de la app en el hosts (robusto, con respaldo,
+    elevación y autocomprobación de que la navegación sigue viva)."""
     if base not in ("semilla", "fusionada"):
         base = "semilla"
     try:
@@ -102,11 +171,36 @@ def activar_hosts(base: str = "semilla") -> ResultadoModulo:
             return ResultadoModulo(False, "No se encontró la base de dominios.")
         texto = tuneup_win.leer_hosts()
         nuevo = hosts_blocker.aplicar_bloque(texto, dominios)
-        if not tuneup_win.escribir_hosts_elevado(nuevo, config.ruta_respaldos()):
+        res = _escribir_hosts_seguro(nuevo)
+        if not res.get("ok"):
             return ResultadoModulo(
                 False, "Windows no confirmó la escritura del archivo hosts. "
-                       "Acepta el aviso de administrador e inténtalo de nuevo.")
-        _guardar_estado_local({"base": base, "pausado": False})
+                       "Acepta el aviso de administrador e inténtalo de nuevo.",
+                detalle_tecnico=res.get("detalle", ""))
+        if res.get("via") == "programada":
+            _actualizar_estado_local(base=base, pausado=False,
+                                     pendiente="activar")
+            return ResultadoModulo(
+                True, f"El bloqueo quedó programado. {MENSAJE_PROGRAMADO}",
+                datos=estado_hosts())
+        _actualizar_estado_local(base=base, pausado=False, pendiente="")
+        # Autocomprobación: la caché DNS ya la vació el script elevado;
+        # si ni los dominios conocidos resuelven, la navegación quedó
+        # rota por el cambio y se revierte SOLA a la copia previa.
+        if not _resolucion_ok(_resolver):
+            respaldo = _ultimo_respaldo_hosts()
+            reversion = _revertir_al_respaldo(respaldo)
+            _actualizar_estado_local(
+                pendiente="quitar" if reversion.get("via") == "programada" else "")
+            return ResultadoModulo(
+                False,
+                "Se activó el bloqueo, pero la comprobación de navegación "
+                "falló: se restauró tu archivo hosts anterior y el bloqueo "
+                "quedó desactivado. Tu internet no se toca.",
+                detalle_tecnico=(
+                    f"autocomprobación de resolución negativa; reversión: "
+                    f"{reversion}"),
+                datos=estado_hosts())
         estado = estado_hosts()
         nombre_base = "fusionada" if base == "fusionada" else "semilla"
         return ResultadoModulo(
@@ -115,37 +209,53 @@ def activar_hosts(base: str = "semilla") -> ResultadoModulo:
             f"con la base {nombre_base}.",
             datos=estado)
     except Exception as exc:
-        return ResultadoModulo(False, f"No se pudo activar el bloqueo: {exc}",
-                               detalle_tecnico=repr(exc))
+        return ResultadoModulo(
+            False, f"No se pudo activar el bloqueo: {mensaje_para_usuario(exc)}",
+            detalle_tecnico=repr(exc))
 
 
 def quitar_hosts() -> ResultadoModulo:
-    """Quita SOLO el bloque de la app; el resto del hosts queda intacto."""
+    """Quita SOLO el bloque de la app; el resto del hosts queda intacto.
+    Si el archivo está en uso, la retirada queda programada para el
+    reinicio en vez de fallar (v1.0.6)."""
     try:
         texto = tuneup_win.leer_hosts()
-        if not hosts_blocker.bloque_activo(texto):
+        if not hosts_blocker.analizar_bloque(texto)["presente"]:
+            _actualizar_estado_local(pendiente="")
             return ResultadoModulo(True, "El bloqueo ya estaba desactivado.",
                                    datos=estado_hosts())
-        nuevo = hosts_blocker.quitar_bloque(texto)
-        if not tuneup_win.escribir_hosts_elevado(nuevo, config.ruta_respaldos()):
-            return ResultadoModulo(False, "Windows no confirmó la escritura del archivo hosts.")
-        _guardar_estado_local({"base": _leer_estado_local().get("base", "semilla"),
-                               "pausado": False})
+        nuevo = hosts_blocker.quitar_bloque_robusto(texto)
+        res = _escribir_hosts_seguro(nuevo)
+        if not res.get("ok"):
+            return ResultadoModulo(
+                False, "Windows no confirmó la escritura del archivo hosts.",
+                detalle_tecnico=res.get("detalle", ""))
+        if res.get("via") == "programada":
+            _actualizar_estado_local(pausado=False, pendiente="quitar")
+            return ResultadoModulo(
+                True, f"Bloqueo retirado. {MENSAJE_PROGRAMADO}",
+                datos=estado_hosts())
+        _actualizar_estado_local(pausado=False, pendiente="")
         return ResultadoModulo(True, "Bloqueo quitado. El archivo hosts quedó como estaba.",
                                datos=estado_hosts())
     except Exception as exc:
-        return ResultadoModulo(False, f"No se pudo quitar el bloqueo: {exc}",
-                               detalle_tecnico=repr(exc))
+        return ResultadoModulo(
+            False, f"No se pudo quitar el bloqueo: {mensaje_para_usuario(exc)}",
+            detalle_tecnico=repr(exc))
 
 
 def pausar_hosts() -> ResultadoModulo:
     """Pausa = quitar el bloque recordando la base para poder reanudar."""
-    local = _leer_estado_local()
     resultado = quitar_hosts()
     if resultado.ok:
-        _guardar_estado_local({"base": local.get("base", "semilla"), "pausado": True})
-        resultado.mensaje = ("Bloqueo en pausa. Pulsa «Reanudar el bloqueo» "
-                             "cuando quieras volver a activarlo.")
+        _actualizar_estado_local(pausado=True)
+        if _leer_estado_local().get("pendiente") == "quitar":
+            resultado.mensaje = (
+                "Bloqueo en pausa: la retirada quedó programada y se "
+                "aplicará al reiniciar la computadora.")
+        else:
+            resultado.mensaje = ("Bloqueo en pausa. Pulsa «Reanudar el bloqueo» "
+                                 "cuando quieras volver a activarlo.")
         if resultado.datos is not None:
             resultado.datos = estado_hosts()
     return resultado
@@ -168,15 +278,106 @@ def restaurar_respaldo_hosts() -> ResultadoModulo:
     try:
         with open(respaldo, "r", encoding="utf-8", errors="replace") as f:
             texto = f.read()
-        if not tuneup_win.escribir_hosts_elevado(texto, config.ruta_respaldos()):
-            return ResultadoModulo(False, "Windows no confirmó la escritura del archivo hosts.")
-        _guardar_estado_local({"base": "semilla", "pausado": False})
+        res = _escribir_hosts_seguro(texto)
+        if not res.get("ok"):
+            return ResultadoModulo(
+                False, "Windows no confirmó la escritura del archivo hosts.",
+                detalle_tecnico=res.get("detalle", ""))
+        if res.get("via") == "programada":
+            _actualizar_estado_local(base="semilla", pausado=False,
+                                     pendiente="restaurar")
+            return ResultadoModulo(
+                True, f"Copia programada: {os.path.basename(respaldo)}. "
+                      f"{MENSAJE_PROGRAMADO}",
+                datos=estado_hosts())
+        _actualizar_estado_local(base="semilla", pausado=False, pendiente="")
         return ResultadoModulo(
             True, f"Copia restaurada: {os.path.basename(respaldo)}.",
             datos=estado_hosts())
     except Exception as exc:
-        return ResultadoModulo(False, f"No se pudo restaurar la copia: {exc}",
-                               detalle_tecnico=repr(exc))
+        return ResultadoModulo(
+            False,
+            f"No se pudo restaurar la copia: {mensaje_para_usuario(exc)}",
+            detalle_tecnico=repr(exc))
+
+
+def autorreparar_al_inicio(registrar=None) -> str:
+    """Autorreparación del hosts al abrir la app (v1.0.6).
+
+    Detecta la sección propia en estado DAÑADO (marcadores truncados,
+    duplicados o huérfanos: el estado que dejó sin navegación a la PC
+    del usuario) o una restauración/retirada que quedó PROGRAMADA para
+    el reinicio, y lo deja limpio o lo confirma, registrando lo hecho
+    en la actividad. Solo toca la sección de la app; el resto del
+    hosts queda intacto. Nunca lanza: si algo falla, la app abre
+    igual y el detalle queda en el registro. Devuelve un resumen
+    ("" si no había nada que reparar).
+    """
+    if not es_windows():
+        return ""
+    try:
+        texto = tuneup_win.leer_hosts()
+    except Exception:
+        return ""
+
+    def _anotar(detalle: str) -> None:
+        if registrar is not None:
+            try:
+                registrar("sistema", detalle)
+            except Exception:
+                pass
+
+    acciones: list[str] = []
+    try:
+        analisis = hosts_blocker.analizar_bloque(texto)
+        pendiente = _leer_estado_local().get("pendiente", "")
+        if analisis["danado"]:
+            limpio = hosts_blocker.quitar_bloque_robusto(texto)
+            res = _escribir_hosts_seguro(limpio)
+            if res.get("ok"):
+                _actualizar_estado_local(
+                    pausado=False,
+                    pendiente="quitar" if res.get("via") == "programada" else "")
+                detalle = (
+                    "Autorreparación al abrir: el bloque del archivo hosts "
+                    f"estaba dañado ({analisis['motivo']}) y la sección de "
+                    "la app se retiró"
+                    + (" (se aplicará al reiniciar)."
+                       if res.get("via") == "programada" else "."))
+                acciones.append(detalle)
+                _anotar(detalle)
+            else:
+                _anotar("Autorreparación del hosts no lograda: "
+                        f"{res.get('detalle', '')}")
+        elif pendiente == "quitar":
+            if not hosts_blocker.bloque_activo(texto):
+                _actualizar_estado_local(pendiente="")
+                detalle = ("La retirada del bloqueo programada se aplicó "
+                           "al reiniciar: el archivo hosts quedó limpio.")
+                acciones.append(detalle)
+                _anotar(detalle)
+            else:
+                resultado = quitar_hosts()
+                if resultado.ok:
+                    detalle = ("Autorreparación al abrir: la retirada del "
+                               "bloqueo seguía pendiente y se completó.")
+                    acciones.append(detalle)
+                    _anotar(detalle)
+        elif pendiente == "activar":
+            if hosts_blocker.bloque_activo(texto):
+                _actualizar_estado_local(pendiente="")
+                detalle = "El bloqueo programado quedó aplicado al reiniciar."
+                acciones.append(detalle)
+                _anotar(detalle)
+        elif pendiente == "restaurar":
+            _actualizar_estado_local(pendiente="")
+            detalle = "La copia del archivo hosts programada quedó restaurada al reiniciar."
+            acciones.append(detalle)
+            _anotar(detalle)
+    except Exception as exc:  # la autorreparación nunca rompe el arranque
+        _anotar(f"Autorreparación del hosts con error: {exc!r}")
+        return ""
+    return " ".join(acciones)
 
 
 # ---------------------------------------------------------------------------

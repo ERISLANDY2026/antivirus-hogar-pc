@@ -161,6 +161,10 @@ def respaldo_registro(carpeta_respaldos: str) -> list[str]:
 
 # --- Archivo hosts --------------------------------------------------------------
 RUTA_HOSTS = r"C:\Windows\System32\drivers\etc\hosts"
+# Escritura robusta (v1.0.6): reintentos ante «archivo en uso» antes de
+# rendirse a la vía programada para el reinicio (MoveFileEx).
+INTENTOS_ESCRITURA_HOSTS = 6
+ESPERA_REINTENTO_MS = 800
 
 
 def leer_hosts() -> str:
@@ -168,8 +172,74 @@ def leer_hosts() -> str:
         return f.read()
 
 
-def escribir_hosts_elevado(nuevo_texto: str, carpeta_respaldos: str) -> bool:
-    """Respalda el hosts actual y escribe el nuevo con elevación (UAC)."""
+def script_escribir_hosts(ruta_temporal: str, ruta_pendiente: str,
+                          ruta_resultado: str) -> str:
+    """Script ELEVADO de escritura robusta del hosts (v1.0.6).
+
+    El 2026-11-24 el Copy-Item simple falló en la PC del usuario con
+    «being used by another process» y el hosts quedó imposible de
+    restaurar desde la app. Este script, en UNA sola elevación:
+
+    1. Reintenta la copia hasta INTENTOS_ESCRITURA_HOSTS veces con
+       espera entre intentos (el proceso que retiene el archivo suele
+       soltarlo en segundos).
+    2. Si sigue ocupado, programa el reemplazo para el próximo
+       reinicio con MoveFileEx (MOVEFILE_REPLACE_EXISTING |
+       MOVEFILE_DELAY_UNTIL_REBOOT): copia primero el contenido a un
+       archivo «pendiente» estable y registra ESE como origen, para
+       que una operación posterior no pise lo programado.
+    3. Deja el desenlace en el archivo de resultado («DIRECTA»,
+       «PROGRAMADA» o «ERROR …») y vacía la caché DNS si copió.
+
+    Función pura (solo arma texto): la suite lo verifica sin Windows.
+    """
+    temp_esc = ruta_temporal.replace("'", "''")
+    pend_esc = ruta_pendiente.replace("'", "''")
+    res_esc = ruta_resultado.replace("'", "''")
+    return f"""
+$ErrorActionPreference = 'Stop'
+$destino = '{RUTA_HOSTS}'
+$hecho = $false
+for ($i = 0; $i -lt {INTENTOS_ESCRITURA_HOSTS}; $i++) {{
+    try {{
+        Copy-Item -Force '{temp_esc}' $destino -ErrorAction Stop
+        $hecho = $true
+        break
+    }} catch {{
+        Start-Sleep -Milliseconds {ESPERA_REINTENTO_MS}
+    }}
+}}
+if ($hecho) {{
+    ipconfig /flushdns | Out-Null
+    Set-Content -Path '{res_esc}' -Value 'DIRECTA' -Encoding ASCII
+    exit 0
+}}
+try {{
+    Copy-Item -Force '{temp_esc}' '{pend_esc}' -ErrorAction Stop
+    $firma = '[DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);'
+    $tipo = Add-Type -MemberDefinition $firma -Name 'MoverAlReinicio' -Namespace 'AntivirusHogar' -PassThru
+    # 0x1 = REPLACE_EXISTING, 0x4 = DELAY_UNTIL_REBOOT
+    if ($tipo::MoveFileEx('{pend_esc}', $destino, 5)) {{
+        Set-Content -Path '{res_esc}' -Value 'PROGRAMADA' -Encoding ASCII
+        exit 0
+    }}
+    throw 'MoveFileEx no acepto el reemplazo programado.'
+}} catch {{
+    Set-Content -Path '{res_esc}' -Value ('ERROR ' + $_.Exception.Message) -Encoding ASCII
+    exit 7
+}}
+""".strip()
+
+
+def escribir_hosts_robusto(nuevo_texto: str, carpeta_respaldos: str) -> dict:
+    """Escribe el hosts con respaldo, reintentos y vía programada.
+
+    Devuelve {"ok": bool, "via": "directa"|"programada"|"",
+    "detalle": str}: «programada» significa que el archivo estaba en
+    uso y el reemplazo quedó registrado para el próximo reinicio (el
+    contenido actual NO cambia hasta reiniciar). El detalle técnico
+    es solo para el registro de actividad, nunca para la pantalla.
+    """
     marca = time.strftime("%Y%m%d-%H%M%S")
     respaldo = os.path.join(carpeta_respaldos, f"hosts_{marca}.bak")
     try:
@@ -179,11 +249,39 @@ def escribir_hosts_elevado(nuevo_texto: str, carpeta_respaldos: str) -> bool:
     temporal = os.path.join(carpeta_respaldos, "hosts_nuevo.txt")
     with open(temporal, "w", encoding="utf-8", newline="\n") as f:
         f.write(nuevo_texto)
-    temp_esc = temporal.replace("'", "''")
-    return ejecutar_elevado(
-        f"Copy-Item -Force '{temp_esc}' '{RUTA_HOSTS}'; ipconfig /flushdns | Out-Null",
-        timeout=120,
-    )
+    pendiente = os.path.join(carpeta_respaldos, "hosts_pendiente_reinicio.txt")
+    resultado = os.path.join(carpeta_respaldos, "hosts_resultado.txt")
+    try:
+        os.remove(resultado)
+    except OSError:
+        pass
+    try:
+        lanzado = ejecutar_elevado(
+            script_escribir_hosts(temporal, pendiente, resultado),
+            timeout=180)
+    except Exception as exc:
+        return {"ok": False, "via": "", "detalle": f"elevación fallida: {exc!r}"}
+    desenlace = ""
+    if os.path.isfile(resultado):
+        try:
+            with open(resultado, "r", encoding="utf-8", errors="replace") as f:
+                desenlace = f.read().strip()
+        except OSError:
+            desenlace = ""
+    if desenlace == "DIRECTA":
+        return {"ok": True, "via": "directa", "detalle": ""}
+    if desenlace == "PROGRAMADA":
+        return {"ok": True, "via": "programada",
+                "detalle": "hosts en uso: reemplazo programado para el reinicio"}
+    if not lanzado and not desenlace:
+        return {"ok": False, "via": "",
+                "detalle": "la elevación no se completó (¿UAC cancelado?)"}
+    return {"ok": False, "via": "", "detalle": desenlace or "sin resultado"}
+
+
+def escribir_hosts_elevado(nuevo_texto: str, carpeta_respaldos: str) -> bool:
+    """Compatibilidad: True si el hosts quedó escrito o programado."""
+    return bool(escribir_hosts_robusto(nuevo_texto, carpeta_respaldos).get("ok"))
 
 
 # --- winget ---------------------------------------------------------------------

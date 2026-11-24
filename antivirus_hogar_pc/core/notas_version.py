@@ -29,6 +29,16 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.6",
+        "fecha": "24/11/2026",
+        "novedades": [
+            "Bloqueador a prueba de fallos: quitar o restaurar el bloqueo ya no puede fallar porque el archivo hosts esté en uso — la app reintenta y, si sigue ocupado, deja el cambio programado para aplicarse al reiniciar, avisándote claro.",
+            "Al activar el bloqueo, la app vacía la caché DNS y comprueba que tu navegación sigue viva; si algo fallara, restaura sola tu archivo hosts anterior. Tu internet no se toca.",
+            "Autorreparación al abrir: si la app detecta su propio bloque dañado en el archivo hosts o una restauración pendiente, lo deja limpio ella misma y lo anota en el registro de actividad.",
+            "Los errores del bloqueador se leen en español claro; el detalle técnico queda solo en el registro de actividad, no en pantalla.",
+        ],
+    },
+    {
         "version": "1.0.5",
         "fecha": "24/11/2026",
         "novedades": [
