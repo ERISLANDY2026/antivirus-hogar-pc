@@ -192,7 +192,11 @@ def test_radar_se_crea_y_se_apaga():
     app.processEvents()
 
 
-def test_animaciones_windows_fuera_de_windows_no_rompe():
+def test_animaciones_windows_no_rompe_y_devuelve_bool():
+    """En Linux devuelve True (sin lectura posible). En Windows devuelve
+    lo que diga SPI_GETANIMATION del sistema — el runner de Actions, por
+    ejemplo, reporta animaciones desactivadas y eso también es válido:
+    lo importante es que no rompa y devuelva un bool."""
     from antivirus_hogar_pc.modules.panel.datos import animaciones_windows_permitidas
 
-    assert animaciones_windows_permitidas() is True  # en Linux: permitido
+    assert isinstance(animaciones_windows_permitidas(), bool)
