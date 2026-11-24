@@ -208,6 +208,33 @@ jobs:
           # con todo lo demás bien): se deja a 0 explícitamente.
           $global:LASTEXITCODE = 0
 
+      # El extractor del auto-actualizador de SoftEther (punto 7 de
+      # la 1.0.7) se ejercita AQUÍ contra el instalador oficial REAL
+      # recién descargado: preparar_cliente debe extraer de sus
+      # recursos DATAFILE las 4 piezas, descomprimir los .exe a PE
+      # x64 válidos y verificar la firma del hamcore. Si el formato
+      # del fabricante cambiara, la compilación lo caza aquí y no en
+      # la PC del usuario.
+      - name: Ejercitar el extractor SoftEther del auto-actualizador
+        shell: pwsh
+        run: |
+          @'
+          import os, sys
+          sys.path.insert(0, ".")
+          from antivirus_hogar_pc.winapi.softether_update import preparar_cliente
+          datos = open("softether-oficial.exe", "rb").read()
+          escritos = preparar_cliente(datos, "se-autoupdate-test")
+          print("Extractor del auto-actualizador:", escritos)
+          esperados = {"vpnclient_x64.exe": 7048960,
+                       "vpncmd_x64.exe": 7055104,
+                       "vpncmgr_x64.exe": 7240448,
+                       "hamcore.se2": 23209854}
+          assert escritos == esperados, f"Tamaños inesperados: {escritos}"
+          print("Extractor OK: 4 piezas, tamaños y PE x64 verificados")
+          '@ | Set-Content -Path "se-probar-extractor.py" -Encoding ascii
+          python se-probar-extractor.py
+          if ($LASTEXITCODE -ne 0) { throw "El extractor del auto-actualizador de SoftEther falló contra el instalador oficial" }
+
       - name: Crear el instalador con Inno Setup
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\instalador.iss'
 

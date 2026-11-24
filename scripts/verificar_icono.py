@@ -15,10 +15,97 @@ pefile (dependencia de PyInstaller en Windows):
   pero no se tumba la compilación por eso).
 
 Sale con código 1 si falta el icono o no es el tamaño esperado.
+
+v1.0.7: se comprueba además que el fondo es TRANSPARENTE de verdad
+(el icono anterior llevaba el fondo blanco del arte pegado): la
+imagen de 256 debe ser PNG con canal alfa, con las cuatro esquinas
+totalmente transparentes y una parte apreciable de pixeles
+transparentes. El alfa se lee con un decodificador PNG mínimo
+propio (sin dependencias nuevas: en CI solo están pefile y lo de
+requirements.txt).
 """
 import hashlib
 import struct
 import sys
+import zlib
+
+
+def _alfa_de_png(datos: bytes) -> tuple[int, int, list[int]] | None:
+    """(ancho, alto, alfás) de un PNG RGBA de 8 bits no entrelazado.
+
+    Devuelve None si el PNG no tiene canal alfa o no se puede leer.
+    """
+    if datos[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    pos = 8
+    ancho = alto = 0
+    tipo_color = -1
+    idat = bytearray()
+    while pos + 8 <= len(datos):
+        tam, tipo = struct.unpack_from(">I4s", datos, pos)
+        cuerpo = datos[pos + 8:pos + 8 + tam]
+        if tipo == b"IHDR":
+            ancho, alto, profundidad, tipo_color, _c, _f, entrelazado = \
+                struct.unpack(">IIBBBBB", cuerpo)
+            if profundidad != 8 or entrelazado != 0:
+                return None
+        elif tipo == b"IDAT":
+            idat += cuerpo
+        elif tipo == b"IEND":
+            break
+        pos += 12 + tam
+    if tipo_color != 6 or not idat or not ancho:
+        return None  # sin canal alfa (RGB, paleta…)
+    crudo = zlib.decompress(bytes(idat))
+    paso = ancho * 4
+    alfas: list[int] = []
+    previo = bytearray(paso)
+    i = 0
+    for _y in range(alto):
+        filtro = crudo[i]
+        linea = bytearray(crudo[i + 1:i + 1 + paso])
+        i += 1 + paso
+        for x in range(paso):
+            a = linea[x - 4] if x >= 4 else 0
+            b = previo[x]
+            c = previo[x - 4] if x >= 4 else 0
+            if filtro == 1:
+                linea[x] = (linea[x] + a) & 0xFF
+            elif filtro == 2:
+                linea[x] = (linea[x] + b) & 0xFF
+            elif filtro == 3:
+                linea[x] = (linea[x] + (a + b) // 2) & 0xFF
+            elif filtro == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                linea[x] = (linea[x] + pr) & 0xFF
+        alfas.extend(linea[3::4])
+        previo = linea
+    return ancho, alto, alfas
+
+
+def _comprobar_transparencia(datos_png: bytes, donde: str) -> bool:
+    leido = _alfa_de_png(datos_png)
+    if leido is None:
+        print(f"FALLO: la imagen de 256 de {donde} no es un PNG con "
+              "canal alfa legible (¿fondo opaco?).")
+        return False
+    ancho, alto, alfas = leido
+    esquinas = [alfas[0], alfas[ancho - 1],
+                alfas[(alto - 1) * ancho], alfas[-1]]
+    transparentes = sum(1 for a in alfas if a == 0) / len(alfas)
+    print(f"Transparencia en {donde}: esquinas {esquinas} · "
+          f"{transparentes:.0%} de pixeles transparentes")
+    if any(a != 0 for a in esquinas):
+        print(f"FALLO: las esquinas de {donde} no son transparentes "
+              "(el fondo sigue pegado).")
+        return False
+    if transparentes < 0.10:
+        print(f"FALLO: apenas hay transparencia en {donde} "
+              "(¿icono con fondo?).")
+        return False
+    return True
 
 
 def _entradas_ico(ruta: str) -> list[dict]:
@@ -96,6 +183,11 @@ def main() -> int:
         print("AVISO: la imagen de 256 difiere en bytes del .ico de "
               "origen (posible recodificación de PyInstaller); tamaño "
               "y presencia verificados.")
+    # v1.0.7: el fondo debe ser transparente en el .ico y en el .exe.
+    if not _comprobar_transparencia(mayor_ico["datos"], "icono.ico"):
+        return 1
+    if not _comprobar_transparencia(mayor_exe["datos"], "el ejecutable"):
+        return 1
     print("Icono verificado dentro del ejecutable.")
     return 0
 

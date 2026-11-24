@@ -247,7 +247,9 @@ def test_conectar_softether_error_de_vpncmd_en_espanol(monkeypatch):
         monkeypatch, _VpncmdFalso(fallar_conexion=True))
     res = vpn_win.conectar_softether("vpn123.opengw.net", espera=5)
     assert res["ok"] is False
-    assert "No se pudo conectar con SoftEther" in res["mensaje"]
+    # Refuerzo 3 de la 1.0.7: cada error típico con su mensaje
+    # específico en español (aquí: el servidor no respondió).
+    assert "no respondió" in res["mensaje"]
     assert "Error Code: 2" in res["detalle"]  # la causa técnica, al detalle
 
 

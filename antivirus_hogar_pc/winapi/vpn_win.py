@@ -166,6 +166,7 @@ CUENTA_VPNGATE = "AntivirusHogarVPN"
 NIC_VPNGATE = "VPN"
 HUB_VPNGATE = "VPNGATE"
 USUARIO_VPNGATE = "vpn"
+CLAVE_VPNGATE = "vpn"
 CONTRASENA_VPNGATE = "vpn"
 PUERTO_VPNGATE = 443
 # Literal EXACTO que AccountStatusGet imprime con el túnel arriba
@@ -348,11 +349,18 @@ def conectar_softether(hostname: str, puerto: int = PUERTO_VPNGATE,
                             "otro de la lista."),
                 "detalle": _linea_error_vpncmd(salida), "datos": {}}
 
-    # 1. Tarjeta virtual: sin ella no hay túnel.
+    # 1. Tarjeta virtual: sin ella no hay túnel. Si ni siquiera se
+    # puede hablar con el cliente, casi siempre es su SERVICIO caído
+    # (refuerzo 3: cada error típico con su mensaje en español).
     codigo, salida = _ejecutar_vpncmd(["NicList"], timeout=30)
     if not _vpncmd_ok(codigo, salida):
-        return _fallo("no se pudo hablar con el servicio de SoftEther",
-                      salida)
+        return {"ok": False,
+                "mensaje": ("El servicio de SoftEther no responde: "
+                            "parece caído o sin arrancar. Abre "
+                            "«Servicios» de Windows y comprueba que "
+                            "«SoftEther VPN Client» está en ejecución, "
+                            "o reinstala la app para repararlo."),
+                "detalle": _linea_error_vpncmd(salida), "datos": {}}
     if NIC_VPNGATE.lower() not in [n.lower() for n in _nombres_nic(salida)]:
         codigo, salida = _ejecutar_vpncmd(["NicCreate", NIC_VPNGATE],
                                           timeout=120)
@@ -380,7 +388,22 @@ def conectar_softether(hostname: str, puerto: int = PUERTO_VPNGATE,
     codigo, salida = _ejecutar_vpncmd(["AccountConnect", CUENTA_VPNGATE],
                                       timeout=60)
     if not _vpncmd_ok(codigo, salida):
-        return _fallo("el servidor rechazó la conexión", salida)
+        bajo = (salida or "").lower()
+        if any(m in bajo for m in ("auth", "password", "contraseña",
+                                   "user name", "username")):
+            return {"ok": False,
+                    "mensaje": ("El servidor rechazó el inicio de "
+                                "sesión (autenticación): VPN Gate "
+                                "acepta usuario y contraseña «vpn»; "
+                                "si este servidor pide otra cosa, elige "
+                                "otro de la lista."),
+                    "detalle": _linea_error_vpncmd(salida), "datos": {}}
+        return {"ok": False,
+                "mensaje": (f"El servidor {hostname} no respondió o "
+                            "cortó la conexión. Suele ser un servidor "
+                            "apagado o saturado: elige otro de la "
+                            "lista e inténtalo de nuevo."),
+                "detalle": _linea_error_vpncmd(salida), "datos": {}}
     limite = time.time() + max(5, int(espera))
     ultimo = ""
     while time.time() < limite:
@@ -401,6 +424,128 @@ def conectar_softether(hostname: str, puerto: int = PUERTO_VPNGATE,
                         "puede estar saturado: elige otro de la lista e "
                         "inténtalo de nuevo."),
             "detalle": _linea_error_vpncmd(ultimo), "datos": {}}
+
+
+def interpretar_sc_query(salida: str) -> dict:
+    """Salida de `sc query SEVPNCLIENT` → {"registrado", "corriendo"}.
+
+    Sin servicio, sc devuelve error 1060 («The specified service
+    does not exist» / «no existe el servicio especificado»).
+    """
+    texto = salida or ""
+    bajo = texto.lower()
+    if "1060" in texto or "does not exist" in bajo or "no existe" in bajo:
+        return {"registrado": False, "corriendo": False}
+    return {"registrado": True,
+            "corriendo": "running" in bajo or "en ejecución" in bajo
+                         or "ejecutando" in bajo}
+
+
+def interpretar_sc_qc(salida: str) -> dict:
+    """Salida de `sc qc SEVPNCLIENT` → {"inicio": auto|manual|desactivado|""}."""
+    bajo = (salida or "").lower()
+    if "auto_start" in bajo or "inicio automático" in bajo \
+            or "inicio automatico" in bajo:
+        inicio = "auto"
+    elif "disabled" in bajo or "desactivado" in bajo:
+        inicio = "desactivado"
+    elif "demand_start" in bajo or "inicio manual" in bajo:
+        inicio = "manual"
+    else:
+        inicio = ""
+    return {"inicio": inicio}
+
+
+def estado_servicio_softether() -> dict:
+    """¿El servicio SEVPNCLIENT está registrado y cómo está?
+
+    {"registrado": bool|None, "corriendo": bool, "inicio": str}
+    registrado=None si ni siquiera se pudo consultar (no Windows).
+    """
+    from .powershell import ejecutar_comando
+
+    estado = {"registrado": None, "corriendo": False, "inicio": ""}
+    try:
+        _rc, out, err = ejecutar_comando(["sc", "query", "SEVPNCLIENT"],
+                                         timeout=30)
+        estado.update(interpretar_sc_query(out + err))
+        if estado["registrado"]:
+            _rc, out, err = ejecutar_comando(["sc", "qc", "SEVPNCLIENT"],
+                                             timeout=30)
+            estado.update(interpretar_sc_qc(out + err))
+    except Exception:
+        pass
+    return estado
+
+
+def diagnostico_softether() -> dict:
+    """Mini-diagnóstico de integración (puerta de diagnóstico VPN).
+
+    Reúne la evidencia de que el SoftEther incorporado está bien
+    integrado: vpncmd localizado en la ruta REAL de instalación,
+    servicio registrado/arrancable, tarjeta virtual presente y
+    cuentas consultables. No conecta nada: solo comprueba.
+    """
+    diag = {"instalado": False, "ruta_vpncmd": "", "servicio": {},
+            "nic": None, "cuentas": None, "conectado": False}
+    diag["ruta_vpncmd"] = ruta_vpncmd()
+    diag["instalado"] = bool(diag["ruta_vpncmd"])
+    if not diag["instalado"]:
+        return diag
+    diag["servicio"] = estado_servicio_softether()
+    codigo, salida = _ejecutar_vpncmd(["NicList"], timeout=30)
+    if _vpncmd_ok(codigo, salida):
+        diag["nic"] = NIC_VPNGATE.lower() in [
+            n.lower() for n in _nombres_nic(salida)]
+    codigo, salida = _ejecutar_vpncmd(["AccountList"], timeout=30)
+    if _vpncmd_ok(codigo, salida):
+        diag["cuentas"] = _nombres_cuentas(salida)
+    diag["conectado"] = estado_softether()["conectado"]
+    return diag
+
+
+def asegurar_cuenta_vpngate(hostname: str) -> dict:
+    """Deja la tarjeta y la cuenta de VPN Gate creadas SIN conectar.
+
+    La usa la re-sincronización tras una actualización de SoftEther
+    (punto 7): si la actualización borró la configuración, la app la
+    recrea igual que en la instalación inicial.
+    """
+    codigo, salida = _ejecutar_vpncmd(["NicList"], timeout=30)
+    if not _vpncmd_ok(codigo, salida):
+        return {"ok": False,
+                "mensaje": "El servicio de SoftEther no responde.",
+                "detalle": _linea_error_vpncmd(salida)}
+    if NIC_VPNGATE.lower() not in [n.lower() for n in _nombres_nic(salida)]:
+        codigo, salida = _ejecutar_vpncmd(["NicCreate", NIC_VPNGATE],
+                                          timeout=120)
+        if not _vpncmd_ok(codigo, salida):
+            return {"ok": False,
+                    "mensaje": "No se pudo crear la tarjeta virtual.",
+                    "detalle": _linea_error_vpncmd(salida)}
+    codigo, salida = _ejecutar_vpncmd(["AccountList"], timeout=30)
+    if _vpncmd_ok(codigo, salida) \
+            and CUENTA_VPNGATE in _nombres_cuentas(salida):
+        return {"ok": True, "mensaje": "La conexión ya estaba creada.",
+                "detalle": ""}
+    codigo, salida = _ejecutar_vpncmd(
+        ["AccountCreate", CUENTA_VPNGATE,
+         f"/SERVER:{hostname}:{PUERTO_VPNGATE}", f"/HUB:{HUB_VPNGATE}",
+         f"/USERNAME:{USUARIO_VPNGATE}", f"/NICNAME:{NIC_VPNGATE}"],
+        timeout=30)
+    if not _vpncmd_ok(codigo, salida):
+        return {"ok": False,
+                "mensaje": "No se pudo crear la conexión de VPN Gate.",
+                "detalle": _linea_error_vpncmd(salida)}
+    codigo, salida = _ejecutar_vpncmd(
+        ["AccountPasswordSet", CUENTA_VPNGATE,
+         f"/PASSWORD:{CLAVE_VPNGATE}", "/TYPE:standard"], timeout=30)
+    if not _vpncmd_ok(codigo, salida):
+        return {"ok": False,
+                "mensaje": "No se pudo fijar la contraseña de la conexión.",
+                "detalle": _linea_error_vpncmd(salida)}
+    return {"ok": True, "mensaje": "Conexión de VPN Gate recreada.",
+            "detalle": ""}
 
 
 def desconectar_softether() -> dict:

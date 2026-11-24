@@ -37,6 +37,10 @@ NOTAS_VERSION: list[dict] = [
             "Si SoftEther no estuviera en el equipo, se mantiene la vía de siempre: la app guarda el perfil .ovpn y te dice cómo abrirlo con tu cliente VPN.",
             "Discos: «Optimizar volúmenes» ahora confirma el resultado de verdad — además del aviso directo de Windows, la app comprueba el registro de eventos de Windows y la salida completa de la optimización; cuando consta que terminó, dice «Optimización finalizada», y si algo falló enseña la causa verdadera en vez de «causa desconocida».",
             "Actualizaciones: la carpeta donde se descargan las versiones nuevas se crea sola si no existe (en una PC faltaba y el botón de actualizar fallaba por eso; ya no puede volver a pasar).",
+            "Protección contra falsos positivos de Defender: el instalador pide a Microsoft Defender una exclusión SOLO para las carpetas propias de la app y lo verifica leyéndola de vuelta; si Windows no lo permite, la app te avisa al abrir con el paso manual. Al arrancar, la app comprueba además que sus archivos siguen íntegros y lo anota en el registro.",
+            "Icono junto al reloj: la app vive ahora en el área de notificación — doble clic para abrirla, menú con «Abrir», «Escaneo rápido» y «Salir»; al cerrar la ventana la app se queda ahí trabajando, y te avisa con un globito cuando la rutina de arranque termina o un escaneo encuentra algo.",
+            "Icono del espartano nuevo: sin fondo blanco y ocupando todo el cuadro, más grande y limpio en el escritorio, la barra de tareas y la bandeja.",
+            "SoftEther siempre al día: cada 3 días la app comprueba en segundo plano, contra las fuentes oficiales del proyecto, si hay una versión más nueva de SoftEther; si la hay, la descarga, la verifica y la aplica sin cortar nunca una conexión VPN activa, y después se re-sincroniza sola con la versión nueva (revisa la conexión de VPN Gate y la recrea si la actualización la hubiera borrado).",
         ],
     },
     {

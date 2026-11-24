@@ -85,6 +85,10 @@ Source: "smartctl\smartd.exe"; DestDir: "{app}"; Flags: ignoreversion
 #if FileExists("softether\client\SOFTETHER-CLIENT.txt")
 Source: "softether\client\*"; DestDir: "{app}\softether"; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
+; Script de la exclusión de Defender (v1.0.7, punto 4): lo ejecuta
+; el propio instalador al terminar (ver [Code]) y deja su resultado
+; verificado en {app}\defender-exclusion.json.
+Source: "exclusion_defender.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppNombre}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\icono.ico"
@@ -174,12 +178,54 @@ begin
   end;
 end;
 
+{ v1.0.7 (punto 4): exclusión de Defender anti-falso-positivo.
+  Defender borró la 1.0.6 instalada en la PC del usuario (ejecutable
+  PyInstaller sin firmar). El instalador —que ya corre como admin—
+  ejecuta el script versionado junto a la app: añade la exclusión
+  SOLO para {app} y para la carpeta de datos, la VERIFICA leyéndola
+  de vuelta (Get-MpPreference) y deja el resultado en
+  defender-exclusion.json. Si una política lo impide, el JSON lo
+  dice y la app avisa al abrir con el paso manual: aquí no se finge
+  nada. Queda constancia en ese JSON (declarado, no oculto). }
+procedure AplicarExclusionDefender();
+var
+  ResultCode: Integer;
+  Ps: String;
+  Args: String;
+begin
+  Ps := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Args := '-NoProfile -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{app}\exclusion_defender.ps1') +
+    '" -AppDir "' + ExpandConstant('{app}') +
+    '" -DatosDir "' + ExpandConstant('{localappdata}\AntivirusHogarPC') +
+    '" -Resultado "' + ExpandConstant('{app}\defender-exclusion.json') + '"';
+  Exec(Ps, Args, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+{ Manifiesto de componentes esperados: al abrir, la app lo usa para
+  comprobar que ningún antivirus se llevó piezas por el camino. }
+procedure EscribirManifiestoComponentes();
+var
+  Lineas: String;
+begin
+  Lineas := '["AntivirusHogarPC.exe", "icono.ico", "exclusion_defender.ps1"';
+  if SoftEtherExePath() <> '' then
+    Lineas := Lineas + ', "softether\vpnclient_x64.exe", ' +
+      '"softether\vpncmd_x64.exe", "softether\vpncmgr_x64.exe", ' +
+      '"softether\hamcore.se2"';
+  Lineas := Lineas + ']';
+  SaveStringToFile(ExpandConstant('{app}\componentes.json'),
+    Lineas, False);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
     SHChangeNotify($08000000, $0000, 0, 0); { SHCNE_ASSOCCHANGED }
     RegistrarServicioSoftEther();
+    AplicarExclusionDefender();
+    EscribirManifiestoComponentes();
   end;
 end;
 

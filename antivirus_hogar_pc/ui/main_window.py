@@ -146,6 +146,13 @@ class VentanaPrincipal(QMainWindow):
         layout_raiz.addWidget(self.pila, 1)
         self.setCentralWidget(raiz)
 
+        # Bandeja del sistema (v1.0.7): main la crea y la fija aquí;
+        # mientras exista, cerrar la ventana la OCULTA a la bandeja
+        # en vez de cerrar la app (salir es «Salir» del menú).
+        self._bandeja = None
+        self._saliendo = False
+        self._aviso_bandeja_dado = False
+
         primero = sorted(self._registros.values(), key=lambda r: r.orden)
         if primero:
             self.ir_a(primero[0].id)
@@ -181,6 +188,29 @@ class VentanaPrincipal(QMainWindow):
         gancho = getattr(pagina, "refrescar_rutina", None) if pagina else None
         if callable(gancho):
             gancho()
+
+    # -- bandeja del sistema (v1.0.7) ------------------------------------------
+    def fijar_bandeja(self, bandeja) -> None:
+        self._bandeja = bandeja
+
+    def salir(self) -> None:
+        """Salida de verdad (la opción «Salir» del menú de la bandeja)."""
+        self._saliendo = True
+        self.close()
+
+    def closeEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        if self._bandeja is not None and not self._saliendo:
+            evento.ignore()
+            self.hide()
+            if not self._aviso_bandeja_dado:
+                self._aviso_bandeja_dado = True
+                self._bandeja.avisar(
+                    "Antivirus Hogar PC",
+                    "La app sigue trabajando en la bandeja, junto al "
+                    "reloj. Doble clic en su icono para abrirla; "
+                    "«Salir» en su menú la cierra de verdad.")
+            return
+        super().closeEvent(evento)
 
     def ir_a(self, id_modulo: str) -> None:
         if id_modulo not in ("ajustes", "version", "programar") \

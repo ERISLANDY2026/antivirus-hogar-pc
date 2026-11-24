@@ -221,7 +221,88 @@ def main(argv: list[str] | None = None) -> int:
         _seguridad.autorreparar_al_inicio(servicios.registrar_actividad)
     except Exception:
         pass
+    # Protección anti-falso-positivo (v1.0.7, punto 4): al abrir, la
+    # app comprueba que la exclusión de Defender pedida por el
+    # instalador quedó aplicada y que sus propios archivos siguen
+    # íntegros; todo queda en el registro de actividad y, si la
+    # exclusión no se pudo poner, se avisa con el paso manual.
+    _aviso_defender = None
+    try:
+        from ..winapi import defender as _defender
+
+        _salud = _defender.comprobar_al_arranque(
+            servicios.registrar_actividad)
+        _aviso_defender = _salud.get("aviso")
+    except Exception:
+        pass
     ventana = VentanaPrincipal(servicios)
+    # Bandeja del sistema (v1.0.7, punto 5): la app vive junto al
+    # reloj también con --inicio-automatico; cerrar la ventana la
+    # oculta a la bandeja y salir es «Salir» de su menú.
+    bandeja = None
+    try:
+        from PySide6.QtGui import QIcon
+
+        from .bandeja import Bandeja
+
+        def _abrir_ventana():
+            ventana.showNormal()
+            ventana.raise_()
+            ventana.activateWindow()
+
+        def _escaneo_desde_bandeja():
+            _abrir_ventana()
+            ventana.ir_a("escaner")
+            pagina = ventana._paginas.get("escaner")
+            rapido = getattr(pagina, "escaneo_rapido", None)
+            if callable(rapido):
+                rapido()
+
+        def _salir_de_verdad():
+            if bandeja is not None:
+                bandeja.ocultar()
+            ventana.salir()
+
+        bandeja = Bandeja(QIcon(_ruta_icono), _abrir_ventana,
+                          _escaneo_desde_bandeja, _salir_de_verdad,
+                          padre=ventana)
+        ventana.fijar_bandeja(bandeja)
+
+        def _aviso_escaneo(info):
+            if info.get("hallazgos", 0) > 0:
+                bandeja.avisar(
+                    "Antivirus Hogar PC",
+                    f"Un escaneo terminó con {info['hallazgos']} "
+                    "hallazgo(s). Abre la app y decide qué hacer: "
+                    "la app nunca actúa sola.")
+
+        servicios.al_registrar_escaneo = _aviso_escaneo
+    except Exception:
+        bandeja = None  # sin bandeja la app funciona igual que antes
+    if _aviso_defender:
+        def _mostrar_aviso_defender():
+            from PySide6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(ventana, "Antivirus Hogar PC",
+                                _aviso_defender)
+
+        QTimer.singleShot(1500, _mostrar_aviso_defender)
+    # Auto-actualizador de SoftEther (v1.0.7, punto 7): chequeo en
+    # segundo plano si toca (cada 3 días) y aplicación de lo
+    # pendiente si no hay túnel; nunca bloquea la interfaz.
+    def _chequeo_softether():
+        import threading
+
+        def _trabajo():
+            from ..winapi import softether_update
+
+            softether_update.chequear_y_aplicar(
+                servicios.registrar_actividad,
+                avisar=bandeja.avisar if bandeja is not None else None)
+
+        threading.Thread(target=_trabajo, daemon=True).start()
+
+    QTimer.singleShot(6000, _chequeo_softether)
     if "--inicio-automatico" in argv:
         # Arranque de Windows: minimizada, en segundo plano, y con la
         # rutina automática si su interruptor está activado.
@@ -229,11 +310,18 @@ def main(argv: list[str] | None = None) -> int:
         if servicios.ajustes.rutina_automatica:
             from .rutina_auto import lanzar_rutina_en_fondo
 
+            def _rutina_terminada(_r):
+                ventana.refrescar_rutina()
+                if bandeja is not None:
+                    bandeja.avisar(
+                        "Antivirus Hogar PC",
+                        "La rutina automática de arranque terminó. "
+                        "La app sigue en la bandeja.")
+
             QTimer.singleShot(
                 2500,
                 lambda: lanzar_rutina_en_fondo(
-                    servicios,
-                    al_terminar=lambda _r: ventana.refrescar_rutina()))
+                    servicios, al_terminar=_rutina_terminada))
     else:
         ventana.show()
     return app.exec()

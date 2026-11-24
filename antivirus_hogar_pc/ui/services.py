@@ -122,6 +122,15 @@ class ServiciosApp:
             "escaneo",
             f"Escaneo: {resultado.archivos_revisados} archivos revisados, "
             f"{len(resultado.hallazgos)} hallazgo(s).")
+        # Gancho opcional (v1.0.7): la bandeja avisa por globito si
+        # un escaneo termina CON hallazgos (decidir sigue siendo del
+        # usuario: la app nunca actúa sola ante una amenaza).
+        gancho = getattr(self, "al_registrar_escaneo", None)
+        if callable(gancho):
+            try:
+                gancho(dict(self._ultimo_escaneo))
+            except Exception:
+                pass
 
     def hallazgos_recientes(self) -> int:
         return int(self._ultimo_escaneo.get("hallazgos", 0))

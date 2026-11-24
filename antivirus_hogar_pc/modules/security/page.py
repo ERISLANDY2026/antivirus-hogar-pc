@@ -464,6 +464,9 @@ def crear_pagina_escaner(ctx: ContextoModulo):
     b_cancelar.clicked.connect(cancelar)
     b_defender.clicked.connect(escanear_defender)
     b_archivo.clicked.connect(analizar_un_archivo)
+    # Gancho para la bandeja del sistema (v1.0.7): su «Escaneo
+    # rápido» llama a la MISMA función que el botón de la página.
+    pagina.escaneo_rapido = escaneo_rapido
     return pagina
 
 

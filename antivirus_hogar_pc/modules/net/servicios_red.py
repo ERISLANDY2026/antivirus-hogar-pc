@@ -378,6 +378,23 @@ def desconectar_vpn() -> ResultadoModulo:
                       and isinstance(res_desc.datos, dict) else {})
         if datos_desc.get("ok"):
             _borrar_estado_vpn()
+            # v1.0.7, punto 7: si había una actualización de
+            # SoftEther DIFERIDA por el túnel activo, este es su
+            # momento: se aplica en segundo plano al cerrarlo.
+            def _aplicar_diferida():
+                try:
+                    from ...core.actividad import RegistroActividad
+                    from ...winapi import softether_update
+
+                    registro = RegistroActividad(config.ruta_actividad())
+                    softether_update.aplicar_pendiente(registro.registrar)
+                except Exception:
+                    pass
+
+            import threading
+
+            threading.Thread(target=_aplicar_diferida,
+                             daemon=True).start()
             return ResultadoModulo(
                 ok=True,
                 mensaje=("VPN desconectada: SoftEther bajó el túnel. "
