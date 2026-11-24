@@ -10,9 +10,10 @@ Produce dist/AntivirusHogarPC/AntivirusHogarPC.exe (+ carpeta _internal),
 que es lo que empaqueta packaging/instalador.iss con Inno Setup.
 
 Notas:
-- Los módulos de la app se descubren en tiempo de ejecución
-  (modules/__init__.py usa pkgutil + importlib), así que se fuerza la
-  inclusión de TODOS los submódulos del paquete como hiddenimports.
+- Los módulos de la app se importan por nombre en tiempo de ejecución
+  (modules/__init__.py, registro explícito desde v1.0.1), así que se
+  fuerza la inclusión de TODOS los submódulos del paquete como
+  hiddenimports.
 - Los activos (semillas de dominios y firmas) van a
   «antivirus_hogar_pc/assets» dentro del bundle: es la primera ruta que
   busca config.carpeta_activos() en modo congelado.
@@ -20,12 +21,35 @@ Notas:
   paquete de smartmontools está en packaging/smartctl/ (ver instalador.iss).
 """
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_submodules
 
 RAIZ = os.path.dirname(SPECPATH)  # packaging/ -> raíz del proyecto
 
+# BUG v1.0.0 (corregido en v1.0.1): al ejecutarse el .spec, sys.path NO
+# incluye la raíz del proyecto (ni siquiera con cwd en la raíz), así que
+# collect_submodules no encontraba el paquete y devolvía [] EN SILENCIO:
+# los subpaquetes de módulos no entraban en el ejecutable y la app abría
+# sin Panel, Escáner ni herramientas. Se mete la raíz a mano y se EXIGE
+# que la recolección traiga los registros: si no, la compilación falla
+# en voz alta en vez de entregar un instalador vacío.
+if RAIZ not in sys.path:
+    sys.path.insert(0, RAIZ)
+
 hiddenimports = collect_submodules("antivirus_hogar_pc")
+_REGISTROS_ESPERADOS = [
+    "antivirus_hogar_pc.modules.panel.registro",
+    "antivirus_hogar_pc.modules.security.registro",
+    "antivirus_hogar_pc.modules.system.registro",
+    "antivirus_hogar_pc.modules.net.registro",
+]
+_faltantes = [m for m in _REGISTROS_ESPERADOS if m not in hiddenimports]
+if _faltantes:
+    raise SystemExit(
+        f"collect_submodules incompleto; faltan {_faltantes}. "
+        "La compilación se detiene: el .exe saldría sin módulos."
+    )
 
 a = Analysis(
     [os.path.join(RAIZ, "AntivirusHogarPC.py")],

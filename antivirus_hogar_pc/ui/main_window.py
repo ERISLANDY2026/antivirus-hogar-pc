@@ -1,7 +1,8 @@
 """Ventana principal: barra lateral construida DESDE EL REGISTRO de módulos.
 
 Añadir un módulo nunca exige tocar este archivo: basta con que su paquete
-declare su registro (modules/<paquete>/registro.py). Las páginas se crean
+declare su registro (modules/<paquete>/registro.py) y figure en
+PAQUETES_MODULOS de modules/__init__.py. Las páginas se crean
 perezosamente al navegar por primera vez.
 """
 from PySide6.QtCore import Qt
@@ -9,7 +10,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QPushButton,
                                QStackedWidget, QVBoxLayout, QWidget)
 
 from ..contracts import ContextoModulo
-from ..modules import crear_pagina, descubrir_modulos
+from ..modules import crear_pagina, descubrir_modulos, errores_descubrimiento
 from . import theme
 from .ajustes_page import crear_pagina_ajustes
 from .icons import pixmap_icono
@@ -60,6 +61,18 @@ class VentanaPrincipal(QMainWindow):
             lay_barra.addWidget(boton)
             self._botones[registro.id] = boton
 
+        # Aviso VISIBLE si algún módulo no cargó (v1.0.1): antes el fallo
+        # era silencioso y la ventana abría vacía sin explicación.
+        errores = errores_descubrimiento()
+        if errores or not self._registros:
+            aviso = QLabel(
+                "⚠ Algunos módulos no cargaron. Detalle en "
+                "errores-modulos.log (carpeta de datos de la app)."
+            )
+            aviso.setWordWrap(True)
+            aviso.setStyleSheet("color: #F87171; font-size: 12px;")
+            lay_barra.addWidget(aviso)
+
         lay_barra.addStretch(1)
         boton_ajustes = QPushButton("Ajustes")
         boton_ajustes.setObjectName("menu")
@@ -77,6 +90,15 @@ class VentanaPrincipal(QMainWindow):
         primero = sorted(self._registros.values(), key=lambda r: r.orden)
         if primero:
             self.ir_a(primero[0].id)
+        else:
+            # Sin módulos no se deja el área en blanco: se explica el fallo.
+            vacio = QLabel(
+                "No se cargó ningún módulo de la aplicación.\n"
+                "Revisa errores-modulos.log en la carpeta de datos de la app."
+            )
+            vacio.setWordWrap(True)
+            self.pila.addWidget(vacio)
+            self.pila.setCurrentWidget(vacio)
 
     # -- navegación -----------------------------------------------------------
     def _obtener_pagina(self, id_modulo: str) -> QWidget:

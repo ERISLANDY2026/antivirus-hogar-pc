@@ -42,6 +42,19 @@ jobs:
       - name: Compilar con PyInstaller (--onedir)
         run: pyinstaller packaging/antivirus-hogar-pc.spec --noconfirm
 
+      # Verificación del artefacto CONGELADO (regresión v1.0.0): la suite
+      # corre sobre el código fuente y no ve el .exe; en la v1 el
+      # ejecutable salió sin los subpaquetes de módulos y la app abría
+      # vacía. Aquí se exige que los cuatro registros vayan en el PYZ.
+      - name: Verificar módulos dentro del ejecutable
+        shell: pwsh
+        run: |
+          $contenido = pyi-archive_viewer -r dist/AntivirusHogarPC/AntivirusHogarPC.exe | Out-String
+          foreach ($m in @("modules.panel.registro", "modules.security.registro", "modules.system.registro", "modules.net.registro")) {
+            if ($contenido -notmatch [regex]::Escape($m)) { throw "Falta $m dentro del ejecutable" }
+          }
+          Write-Host "Los 4 registros de módulos están dentro del ejecutable."
+
       - name: Instalar Inno Setup
         run: choco install innosetup -y --no-progress
 

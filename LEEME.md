@@ -45,7 +45,7 @@ Windows, por una de estas dos vías (ambas usan los mismos
    PATH») e Inno Setup 6 desde jrsoftware.org (gratis).
 2. Doble clic en **`Construir-en-Windows.bat`**: instala las dependencias,
    compila con PyInstaller y crea el instalador.
-3. Resultado: `dist-instalador\Instalador-AntivirusHogarPC-1.0.0.exe`.
+3. Resultado: `dist-instalador\Instalador-AntivirusHogarPC-1.0.1.exe`.
 
 ### Vía 2 — En la nube (GitHub Actions)
 

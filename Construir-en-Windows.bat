@@ -66,7 +66,7 @@ echo [4/4] Creando el instalador con Inno Setup...
 if errorlevel 1 goto :error
 echo.
 echo ============================================================
-echo   LISTO: dist-instalador\Instalador-AntivirusHogarPC-1.0.0.exe
+echo   LISTO: dist-instalador\Instalador-AntivirusHogarPC-1.0.1.exe
 echo   Sin firmar: Windows mostrara el aviso de SmartScreen la
 echo   primera vez ("Mas informacion" -^> "Ejecutar de todas formas").
 echo ============================================================
