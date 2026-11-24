@@ -56,17 +56,30 @@ def escanear_drivers_paso1() -> ResultadoModulo:
         datos={"instalados": instalados, "fabricante_pc": fabricante_pc})
 
 
-def escanear_drivers_paso2(instalados, fabricante_pc: str = "") -> ResultadoModulo:
-    """Paso 2 del escaneo: contrastar los instalados con Windows Update.
-    Devuelve el resultado completo de siempre (estados, fabricante_pc,
-    wu_consultado, ofrecidas_wu)."""
+def escanear_drivers_paso2_buscar(instalados) -> ResultadoModulo:
+    """Paso 2 (v1.0.2, bug 5): consultar las fuentes (Windows Update).
+    datos = {"ofrecidas": [...], "wu_consultado": bool}. Si WU falla, NO
+    es un error fatal del escaneo: se anota y el paso 3 compara marcando
+    todo «sin confirmar», que es la verdad."""
     try:
         ofrecidas = drivers_win.buscar_drivers_windows_update()
-        wu_consultado = True
-    except Exception:
-        ofrecidas = []
-        wu_consultado = False
+        return ResultadoModulo(
+            ok=True,
+            mensaje=f"Windows Update ofrece {len(ofrecidas)} driver(s).",
+            datos={"ofrecidas": ofrecidas, "wu_consultado": True})
+    except Exception as exc:
+        return ResultadoModulo(
+            ok=True,
+            mensaje="Windows Update no respondió en este intento.",
+            datos={"ofrecidas": [], "wu_consultado": False},
+            detalle_tecnico=str(exc))
 
+
+def escanear_drivers_paso3_comparar(instalados, ofrecidas,
+                                    wu_consultado: bool = True,
+                                    fabricante_pc: str = "") -> ResultadoModulo:
+    """Paso 3: comparar instalados contra lo ofrecido y armar el resultado
+    completo (estados, fabricante_pc, wu_consultado, ofrecidas_wu)."""
     if wu_consultado:
         estados = drivers_logic.contrastar_con_windows_update(instalados, ofrecidas)
     else:
@@ -95,8 +108,18 @@ def escanear_drivers_paso2(instalados, fabricante_pc: str = "") -> ResultadoModu
     })
 
 
+def escanear_drivers_paso2(instalados, fabricante_pc: str = "") -> ResultadoModulo:
+    """Compatibilidad: paso 2 (buscar) + paso 3 (comparar) de una vez.
+    Devuelve el resultado completo de siempre."""
+    buscar = escanear_drivers_paso2_buscar(instalados)
+    datos = buscar.datos or {}
+    return escanear_drivers_paso3_comparar(
+        instalados, datos.get("ofrecidas", []),
+        bool(datos.get("wu_consultado")), fabricante_pc)
+
+
 def escanear_drivers() -> ResultadoModulo:
-    """Envoltorio compatible: paso 1 (enumerar) + paso 2 (Windows Update)."""
+    """Envoltorio compatible: paso 1 (enumerar) + pasos 2-3 (WU + comparar)."""
     paso1 = escanear_drivers_paso1()
     if not paso1.ok or not isinstance(paso1.datos, dict):
         return paso1

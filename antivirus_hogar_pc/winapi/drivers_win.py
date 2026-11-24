@@ -19,6 +19,14 @@ def enumerar_drivers() -> list[DriverInstalado]:
         "InfName, DeviceID, IsSigned | ConvertTo-Json"
     )
     datos = como_lista(ejecutar_powershell_json(script, timeout=300))
+    if not datos:
+        # En un Windows real esta consulta SIEMPRE devuelve decenas de
+        # drivers: vacío = la consulta CIM falló en silencio, y eso debe
+        # verse como error con causa, no como «0 drivers» (bug 5).
+        raise RuntimeError(
+            "La consulta de drivers de Windows (Win32_PnPSignedDriver) no "
+            "devolvió ningún dato: PowerShell no pudo leer la lista de "
+            "drivers de esta PC.")
     drivers: list[DriverInstalado] = []
     for d in datos:
         nombre = (d.get("DeviceName") or "").strip()

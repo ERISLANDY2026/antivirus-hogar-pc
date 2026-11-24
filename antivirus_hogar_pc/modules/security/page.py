@@ -509,26 +509,59 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
     tarjeta_base, lay_b = tarjeta("Base de amenazas")
     lbl_base = etiqueta(f"Huellas conocidas en la base local: {servicios.base_firmas.total}.")
     lay_b.addWidget(lbl_base)
-    b_actualizar_base = QPushButton("Actualizar firmas (abuse.ch)")
+    lay_b.addWidget(etiqueta(
+        "La actualización consulta VARIAS fuentes gratuitas independientes "
+        "y fusiona lo que trae cada una: abuse.ch (con la Auth-Key de "
+        "Ajustes), URLhaus, Phishing.Database, OpenPhish y CERT.PL. Si una "
+        "falla, las demás siguen; la base local incluida queda siempre "
+        "como respaldo sin conexión.", suave=True))
+    lbl_fuentes = etiqueta("", suave=True)
+    lay_b.addWidget(lbl_fuentes)
+    b_actualizar_base = QPushButton("Actualizar firmas (varias fuentes)")
     lay_b.addWidget(b_actualizar_base)
 
     def actualizar_base():
+        b_actualizar_base.setEnabled(False)
+        lbl_fuentes.setText("Consultando las fuentes… puede tardar un poco.")
+
         def trabajo():
-            entradas = descargar_firmas_recientes(servicios.ajustes.auth_key_abusech)
-            if not entradas:
+            from antivirus_hogar_pc.core.threats_update import (
+                actualizar_firmas_multifuente, escribir_archivo_dominios)
+            resultado = actualizar_firmas_multifuente(
+                servicios.ajustes.auth_key_abusech)
+            resumen = resultado.resumen()
+            if not resultado.ok:
                 return ResultadoModulo(
-                    False, "No se pudieron descargar firmas nuevas. Revisa la "
-                           "conexión; la API de abuse.ch puede exigir una clave "
-                           "gratuita (se guarda en Ajustes).")
-            ruta_extra = os.path.join(config.carpeta_datos(), "firmas_extra.txt")
-            n = escribir_archivo_firmas(ruta_extra, entradas)
-            servicios.base_firmas.cargar_archivo(ruta_extra)
-            return ResultadoModulo(True, f"Base actualizada: {n} huellas descargadas.")
+                    False,
+                    "Ninguna fuente pudo aportar firmas nuevas. " + resumen +
+                    ". La base local incluida en la app sigue protegiendo "
+                    "como respaldo sin conexión.",
+                    datos={"resumen": resumen})
+            n_hashes = 0
+            if resultado.hashes:
+                ruta_extra = os.path.join(config.carpeta_datos(), "firmas_extra.txt")
+                n_hashes = escribir_archivo_firmas(ruta_extra, resultado.hashes)
+                servicios.base_firmas.cargar_archivo(ruta_extra)
+            n_dominios = 0
+            if resultado.dominios:
+                ruta_dom = os.path.join(config.carpeta_datos(), "dominios_extra.txt")
+                n_dominios = escribir_archivo_dominios(ruta_dom, resultado.dominios)
+            return ResultadoModulo(
+                True,
+                f"Base actualizada: {n_hashes} huellas y {n_dominios} "
+                f"dominios nuevos fusionados. {resumen}.",
+                datos={"resumen": resumen})
+
+        def _al_terminar_base(res: ResultadoModulo):
+            b_actualizar_base.setEnabled(True)
+            datos = res.datos if isinstance(res.datos, dict) else {}
+            lbl_fuentes.setText(datos.get("resumen", res.mensaje))
+            lbl_base.setText(
+                f"Huellas conocidas en la base local: {servicios.base_firmas.total}.")
+            QMessageBox.information(pagina, "Base de amenazas", res.mensaje)
+
         trabajador = _Trabajador(trabajo, pagina)
-        trabajador.terminado.connect(
-            lambda res: (QMessageBox.information(pagina, "Base de amenazas", res.mensaje),
-                         lbl_base.setText(
-                             f"Huellas conocidas en la base local: {servicios.base_firmas.total}.")))
+        trabajador.terminado.connect(_al_terminar_base)
         _guardar_ref(pagina, trabajador)
         trabajador.start()
 

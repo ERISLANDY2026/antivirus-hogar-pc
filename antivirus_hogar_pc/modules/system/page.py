@@ -22,7 +22,7 @@ Windows Update) se enseña la etapa, nunca un porcentaje inventado.
 Todo el trabajo pesado corre en un hilo (QThread) tras la barra de
 progreso: la ventana nunca se congela y los procesos quedan ocultos.
 """
-from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                                QPushButton, QTableWidget, QTableWidgetItem,
@@ -299,35 +299,91 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             fila.addStretch(1)
             tabla.setCellWidget(i, 4, celda)
 
-    def _al_terminar_escaneo(resultado: ResultadoModulo):
+    escaneo = {"activo": False, "vigia": None}
+
+    def _mostrar_fallo_escaneo(resultado: ResultadoModulo):
+        """Bug 5: un fallo del escaneo se ve SIEMPRE, en rojo y con la
+        causa; nunca tabla vacía en silencio ni «escaneando» eterno."""
+        escaneo["activo"] = False
+        if escaneo["vigia"] is not None:
+            escaneo["vigia"].stop()
         barra.terminar()
         btn_escanear.setEnabled(True)
+        texto = f"⚠ No se pudo escanear: {resultado.mensaje}"
+        if resultado.detalle_tecnico:
+            texto += f" ({resultado.detalle_tecnico})"
+        lbl_estado.setStyleSheet(f"color: {theme.ROJO}; font-weight: 700;")
+        lbl_estado.setText(texto)
+        _registrar(ctx, "drivers", f"Escaneo de drivers fallido: {resultado.mensaje}")
+
+    def _al_terminar_escaneo(resultado: ResultadoModulo):
+        escaneo["activo"] = False
+        if escaneo["vigia"] is not None:
+            escaneo["vigia"].stop()
+        barra.terminar()
+        btn_escanear.setEnabled(True)
+        if not resultado.ok or not isinstance(resultado.datos, dict):
+            _mostrar_fallo_escaneo(resultado)
+            return
+        lbl_estado.setStyleSheet("")
         lbl_estado.setText(resultado.mensaje)
-        if resultado.ok and isinstance(resultado.datos, dict):
-            estado_actual.update(resultado.datos)
-            _pintar_tabla(resultado.datos["estados"])
+        estado_actual.update(resultado.datos)
+        _pintar_tabla(resultado.datos["estados"])
+
+    def _al_terminar_paso2(resultado: ResultadoModulo):
+        datos1 = estado_actual.get("_paso1") or {}
+        instalados = datos1.get("instalados", [])
+        fabricante = datos1.get("fabricante_pc", "")
+        if not resultado.ok or not isinstance(resultado.datos, dict):
+            _mostrar_fallo_escaneo(resultado)
+            return
+        barra.fijar_etapas(3, 3, "Comparando versiones")
+        lbl_estado.setText("Fuentes consultadas. Comparando versiones…")
+        try:
+            final = svc.escanear_drivers_paso3_comparar(
+                instalados, resultado.datos.get("ofrecidas", []),
+                bool(resultado.datos.get("wu_consultado")), fabricante)
+        except Exception as exc:  # defensa: jamás colgar el escaneo
+            final = ResultadoModulo(
+                False, f"No se pudo completar la comparación: {exc}")
+        _al_terminar_escaneo(final)
 
     def _al_terminar_paso1(resultado: ResultadoModulo):
         if not resultado.ok or not isinstance(resultado.datos, dict):
-            barra.terminar()
-            btn_escanear.setEnabled(True)
-            lbl_estado.setText(resultado.mensaje)
+            _mostrar_fallo_escaneo(resultado)
             return
+        estado_actual["_paso1"] = resultado.datos
         estado_actual.update(resultado.datos)
-        barra.fijar_etapas(2, 2, "Contrastando con Windows Update")
+        barra.fijar_etapas(2, 3, "Consultando fuentes oficiales (Windows Update)")
         lbl_estado.setText("Drivers leídos. Consultando Windows Update… "
                            "puede tardar unos minutos.")
-        gestor.lanzar(svc.escanear_drivers_paso2, _al_terminar_escaneo,
-                      resultado.datos["instalados"],
-                      resultado.datos.get("fabricante_pc", ""))
+        gestor.lanzar(svc.escanear_drivers_paso2_buscar, _al_terminar_paso2,
+                      resultado.datos["instalados"])
+
+    def _aviso_lento():
+        # Vigía anti-cuelgue (bug 5): si un paso tarda más de 2 minutos,
+        # la pantalla lo DICE en vez de quedarse «escaneando» en silencio.
+        if escaneo["activo"]:
+            lbl_estado.setText(
+                "Windows está tardando más de lo normal en responder; el "
+                "escaneo sigue en curso. Si el servicio de Windows Update "
+                "está ocupado puede tardar varios minutos.")
 
     def _escanear():
         if gestor.ocupado:
             return
+        lbl_estado.setStyleSheet("")
         barra.setVisible(True)
-        barra.fijar_etapas(1, 2, "Enumerando los drivers instalados")
+        barra.fijar_etapas(1, 3, "Leyendo los drivers instalados")
         btn_escanear.setEnabled(False)
         lbl_estado.setText("Leyendo los drivers instalados…")
+        escaneo["activo"] = True
+        if escaneo["vigia"] is None:
+            vigia = QTimer(pagina)
+            vigia.setSingleShot(True)
+            vigia.timeout.connect(_aviso_lento)
+            escaneo["vigia"] = vigia
+        escaneo["vigia"].start(120000)
         gestor.lanzar(svc.escanear_drivers_paso1, _al_terminar_paso1)
 
     btn_escanear.clicked.connect(_escanear)

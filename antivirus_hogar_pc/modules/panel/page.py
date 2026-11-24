@@ -15,10 +15,11 @@ from antivirus_hogar_pc.contracts import ContextoModulo, InformeSalud, Resultado
 from antivirus_hogar_pc.ui import theme
 from antivirus_hogar_pc.ui.health_ring import AnilloSalud
 from antivirus_hogar_pc.ui.paginas_base import etiqueta, fila_estado, pagina_base, tarjeta
+from antivirus_hogar_pc.ui.fondo_radar import FondoRadar
 from antivirus_hogar_pc.ui.widgets_v102 import Medidor
 from antivirus_hogar_pc.winapi import es_windows
 
-from .datos import leer_datos_panel, recoger_informe
+from .datos import animaciones_windows_permitidas, leer_datos_panel, recoger_informe
 
 
 class _TrabajadorInforme(QThread):
@@ -140,10 +141,23 @@ def crear_pagina(ctx: ContextoModulo):
         layout.addWidget(tarjeta_aviso)
 
     # --- Fila superior: anillo + estado de la protección ----------------------
-    fila_superior = QHBoxLayout()
+    # Fondo futurista (v1.0.2): banda de radar con el anillo ENCIMA.
+    # Se anima solo si el usuario no lo apagó en Ajustes Y Windows no
+    # pide reducir animaciones; si no, queda como fondo fijo.
+    _quiere_animacion = True
+    if servicios is not None:
+        _quiere_animacion = bool(getattr(servicios.ajustes, "fondo_animado", True))
+    banda_radar = FondoRadar(
+        animado=_quiere_animacion and animaciones_windows_permitidas())
     anillo = AnilloSalud()
     anillo.fijar_girando(True)
-    fila_superior.addWidget(anillo)
+    lay_banda = QHBoxLayout(banda_radar)
+    lay_banda.addStretch(1)
+    lay_banda.addWidget(anillo)
+    lay_banda.addStretch(1)
+    layout.addWidget(banda_radar)
+
+    fila_superior = QHBoxLayout()
     tarjeta_estado, lay_tarjeta_estado = tarjeta("Estado de la protección")
     lay_estado = QVBoxLayout()
     lay_tarjeta_estado.addLayout(lay_estado)
@@ -344,6 +358,14 @@ def crear_pagina(ctx: ContextoModulo):
         trabajador.listo.connect(aplicar)
         estado["trabajador"] = trabajador
         trabajador.start()
+
+    # Tarjetas con efecto cristal translúcido sobre el fondo (v1.0.2)
+    for _nombre in ("tarjeta_aviso", "tarjeta_estado", "tarjeta_soporte",
+                    "tarjeta_motivos", "tarjeta_sistema", "tarjeta_escaneo",
+                    "tarjeta_actividad"):
+        _t = locals().get(_nombre)
+        if _t is not None:
+            _t.setProperty("cristal", "true")
 
     boton_actualizar.clicked.connect(lanzar_lectura)
     lanzar_lectura()

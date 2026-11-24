@@ -39,6 +39,7 @@ class Ajustes:
     url_actualizacion: str = config.UPDATE_VERSION_URL
     auth_key_abusech: str = ""
     letra_grande: bool = False
+    fondo_animado: bool = True   # radar animado del Panel (v1.0.2)
     escaneo_semanal: bool = False
     ultimo_chequeo_actualizacion: float = 0.0
 

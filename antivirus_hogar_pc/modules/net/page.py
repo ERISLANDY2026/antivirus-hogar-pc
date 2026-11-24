@@ -353,6 +353,11 @@ class _PaginaRed(QWidget):
         self._btn_wifi = QPushButton("Actualizar datos de Wi-Fi")
         self._btn_wifi.clicked.connect(self._cargar_wifi)
         lay.addWidget(self._btn_wifi)
+        self._barra_wifi = BarraProgreso()
+        self._barra_wifi.setVisible(False)
+        lay.addWidget(self._barra_wifi)
+        self._lbl_wifi_sello = etiqueta("", suave=True)
+        lay.addWidget(self._lbl_wifi_sello)
         layout.addWidget(tarjeta_wifi)
 
         # --- Velocidad de internet y estado VPN -------------------------------------
@@ -445,21 +450,38 @@ class _PaginaRed(QWidget):
 
     # -- Wi-Fi ----------------------------------------------------------------------
     def _cargar_wifi(self) -> None:
+        # Feedback INMEDIATO (bug 4): antes el botón no hacía nada visible.
+        self._btn_wifi.setEnabled(False)
+        self._btn_wifi.setText("Leyendo…")
+        self._barra_wifi.setVisible(True)
+        self._barra_wifi.fijar_texto("Leyendo la red Wi-Fi…")
         self._lbl_wifi_detalle.setText("Leyendo la red Wi-Fi…")
         _lanzar(self, srv.informe_wifi, self._wifi_cargado)
 
     def _wifi_cargado(self, resultado: ResultadoModulo) -> None:
+        import time as _time
+
+        self._btn_wifi.setEnabled(True)
+        self._btn_wifi.setText("Actualizar datos de Wi-Fi")
+        self._barra_wifi.terminar()
         # Vaciar la fila anterior
         while self._lay_wifi.count():
             item = self._lay_wifi.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         if not resultado.ok:
+            causa = resultado.mensaje
+            if resultado.detalle_tecnico:
+                causa += f" ({resultado.detalle_tecnico})"
             self._lay_wifi.addWidget(fila_estado(
-                "wifi", "estatico", "Wi-Fi no disponible", resultado.mensaje, theme.AMBAR))
+                "wifi", "estatico", "Wi-Fi no disponible", causa, theme.ROJO))
             self._lbl_wifi_detalle.setText("")
             self._lbl_perfiles.setText("")
+            self._lbl_wifi_sello.setText(
+                f"No se pudo actualizar ({_time.strftime('%H:%M:%S')}).")
             return
+        self._lbl_wifi_sello.setText(
+            f"Actualizado a las {_time.strftime('%H:%M:%S')}")
         datos = resultado.datos or {}
         info = datos.get("info")
         nivel = datos.get("nivel", "sin_datos")

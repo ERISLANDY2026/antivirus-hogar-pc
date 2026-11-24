@@ -65,10 +65,16 @@ def rutas_base_dominios(base: str) -> list[str]:
     activos = config.carpeta_activos()
     if base == "fusionada":
         return [os.path.join(activos, "dominios_fusionados.txt")]
-    return [
+    rutas = [
         os.path.join(activos, "malware_seed.txt"),
         os.path.join(activos, "adblock_seed.txt"),
     ]
+    # Dominios descargados por la actualización multi-fuente (v1.0.2):
+    # si el usuario actualizó las bases, el bloqueador los suma a la semilla.
+    extra = os.path.join(config.carpeta_datos(), "dominios_extra.txt")
+    if os.path.isfile(extra):
+        rutas.append(extra)
+    return rutas
 
 
 def estado_hosts() -> HostsEstado:

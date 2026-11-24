@@ -116,3 +116,145 @@ Panel/Red/Seguridad; el integrador unió, probó y compiló UNA sola vez.
   decide si lo instala. Nota: como el canal ya ofrece la 1.0.2, su app
   v1.0.1 también puede actualizarse sola desde «Actualizaciones →
   Buscar actualizaciones de la app».
+
+---
+
+# Segunda ronda (2026-11-24): bug 4, bug 5, fondo de radar y bug 6
+
+Tras la primera entrega entraron cuatro trabajos más del usuario y el
+instalador se reconstruyó con todo (misma versión 1.0.2; el zip y el
+.exe de Drive se actualizaron en sitio, mismos ID y enlaces, y el
+version-pc.json recibió el SHA-256 nuevo).
+
+## Bug 4 — «Actualizar datos de Wi-Fi» sin feedback ✅ corregido
+
+- **Feedback inmediato al pulsar:** el botón pasa a «Leyendo…»
+  deshabilitado y aparece la barra de progreso con «Leyendo la red
+  Wi-Fi…» (`modules/net/page.py::_cargar_wifi`).
+- **Sello de hora:** al completar, «Actualizado a las HH:MM:SS»; si
+  netsh falla, «No se pudo actualizar (HH:MM:SS)» y la causa real
+  (mensaje + detalle técnico) en rojo en la tarjeta — nunca más la
+  pantalla idéntica en silencio.
+- **Test:** `test_wifi_flujo_leyendo_y_sello_de_hora` — pulsar →
+  estado «leyendo» → datos repintados con sello de hora; y camino de
+  error con causa. Verificado en local con Qt offscreen real (y en la
+  suite de Actions, que es la misma que corre contra el código del
+  ejecutable congelado; el flujo no usa nada específico de plataforma
+  fuera de `netsh`, cuya salida ya trata `seguro()`).
+
+## Bug 5 — El escaneo de drivers no funcionaba en su PC ✅ endurecido
+
+Qué se encontró revisando el flujo completo (`escanear_drivers` paso a
+paso → `winapi/drivers_win.py` → `winapi/powershell.py`) pensando en el
+ejecutable congelado en un Windows 10 real:
+
+1. **Decodificación frágil:** `subprocess.run(..., text=True)` sin
+   `errors=` decodifica la salida de PowerShell/netsh con la página de
+   códigos local en modo *strict*: un nombre de dispositivo con
+   caracteres fuera de esa página podía **reventar la lectura**
+   (UnicodeDecodeError) y matar el escaneo. → `errors="replace"` en
+   `ejecutar_powershell` y `ejecutar_comando`.
+2. **Vacío silencioso posible:** si la consulta CIM
+   `Win32_PnPSignedDriver` no devolvía datos, el flujo podía acabar
+   sin nada visible. → `enumerar_drivers()` ahora **lanza error con
+   causa** si la consulta no devuelve ningún dato (en un Windows real
+   siempre hay decenas de drivers; vacío = la consulta falló).
+3. **Progreso por pasos determinados (3):** «Leyendo los drivers
+   instalados (1/3) → Consultando fuentes oficiales / Windows Update
+   (2/3) → Comparando versiones (3/3)». El servicio se partió en
+   `escanear_drivers_paso2_buscar()` + `escanear_drivers_paso3_comparar()`
+   (el envoltorio `escanear_drivers_paso2` se mantiene compatible).
+4. **Error SIEMPRE visible con causa:** cualquier excepción en
+   cualquier paso termina en la página con «⚠ No se pudo escanear:
+   <causa>» en rojo y negrita, botón reactivado y apunte en el registro
+   de actividad; nunca tabla vacía en silencio ni «escaneando» eterno.
+5. **Vigía anti-cuelgue:** si un paso tarda más de 2 minutos (Windows
+   Update ocupado es el caso típico en Windows 10), la pantalla lo
+   dice: «Windows está tardando más de lo normal… el escaneo sigue en
+   curso».
+6. Que Windows Update no responda sigue **sin** ser fallo del escaneo:
+   el paso 3 marca «sin confirmar», que es la verdad.
+
+**Tests:** `test_drivers_paso1_excepcion_es_error_con_causa` (el fake
+lanza y el servicio devuelve el error con la causa),
+`test_drivers_pagina_muestra_el_fallo` (página real offscreen: se
+pulsa «Escanear drivers» con el backend lanzando excepción y la página
+pinta el fallo y reactiva el botón) y
+`test_drivers_pasos_2_y_3_separados`.
+
+## Fondo de inicio aprobado — barrido de radar ✅ implementado
+
+- `ui/fondo_radar.py`: banda de fondo del Panel con **barrido de radar
+  digital girando suave** detrás del anillo de salud (el anillo va
+  ENCIMA, centrado), rejilla oscura en movimiento lento, **26
+  partículas cian subiendo** y **resplandor cian/azul/morado que
+  respira**.
+- **Ligero a propósito:** QTimer de paso grueso (120 ms), una sola
+  pasada de QPainter, y la animación se para sola cuando la banda no
+  está visible — pensado para no cargar la CPU de su Toughbook.
+- **Tarjetas cristal:** las tarjetas del Panel llevan la propiedad
+  `cristal` → fondo translúcido `rgba(20, 27, 41, 205)` (regla en
+  `theme.py`), con la legibilidad intacta.
+- **Interruptor:** Ajustes → Vista → «Fondo animado del Panel (radar)»
+  (campo `fondo_animado`, activado por defecto). Además se respeta
+  «reducir animaciones» de Windows vía SPI_GETANIMATION
+  (`panel/datos.animaciones_windows_permitidas()`): si Windows lo
+  pide, el radar queda fijo aunque el interruptor esté encendido.
+- **Tests:** `test_radar_se_crea_y_se_apaga`,
+  `test_animaciones_windows_fuera_de_windows_no_rompe`.
+
+## Bug 6 — Firmas abuse.ch: varios respaldos, no solo uno ✅ corregido
+
+La actualización de inteligencia de amenazas ahora es una **cadena
+multi-fuente que las intenta TODAS y fusiona resultados**
+(`core/threats_update.py::actualizar_firmas_multifuente`), cada fuente
+con su propio timeout (45 s) y su resultado contado por separado; la
+UI muestra «Fuente X: N firmas · Fuente Y: falló (causa)» en la
+tarjeta de la base y en el diálogo:
+
+1. **abuse.ch (MalwareBazaar, huellas)** con la Auth-Key de Ajustes si
+   existe; sin clave se intenta/registra con su causa exacta.
+2. **URLhaus (dominios)** vía malware-filter.
+3. **Phishing.Database** (GitHub, dominios de phishing).
+4. **OpenPhish** (feed comunitario; URLs → dominios).
+5. **CERT.PL** (lista oficial de dominios maliciosos).
+
+La actualización se considera lograda si **al menos una** fuente
+aporta; error total solo si caen todas, con las causas reales (nunca
+«revisa tu conexión» como único texto). Las huellas van a
+`firmas_extra.txt` (escáner) y los dominios a `dominios_extra.txt`,
+que el bloqueador **suma a su base semilla** al activarse
+(`seguridad.rutas_base_dominios`). La base local incluida queda como
+respaldo final sin conexión, y la UI lo dice.
+
+**Verificación de fuentes desde el entorno de construcción
+(2026-11-24) y sustituciones, como se ordenó documentar:**
+
+- Los **exports públicos de abuse.ch devuelven 410 Gone** (bazaar y
+  urlhaus, comprobado con peticiones reales): abuse.ch los retiró en
+  2025 y todo pasa por la API con Auth-Key gratuita. Sin clave, la
+  fuente 1 reporta esa causa y la cadena sigue con las demás — ya no
+  depende de una sola fuente.
+- El **hostfile de URLhaus también murió (410)**: lo sustituye el
+  proyecto **malware-filter** (curben), que republica los datos de
+  URLhaus como lista de dominios — verificado 200 (287 KB).
+- **Phishing.Database**: 200 (11 MB). **OpenPhish**: 200 tras
+  redirección. **CERT.PL**: 200 (2,6 MB).
+- **ET Open y Spamhaus DROP responden (200) pero son listas de
+  IP/CIDR**: no sirven a un bloqueador por dominios ni como huellas de
+  archivo; quedan fuera y su hueco lo cubre CERT.PL. **DigitalSide**
+  no respondió desde el entorno (timeout): descartado.
+
+**Tests:** `test_multifuente_fusiona_y_reporta_por_fuente` (fuentes
+fake: una ok, una caída HTTP 500, una vacía; IPs descartadas;
+abuse.ch sin clave con su causa),
+`test_multifuente_todo_caido_es_error_total_con_causas` y
+`test_parsear_dominios_de_urls`.
+
+## Suite y reconstrucción (segunda ronda)
+
+- Suite local completa con Qt offscreen real: **98 passed, 0 skipped**
+  (primera ronda: 87 passed, 2 skipped sin Qt en local).
+- Reconstrucción: commit y run de Actions y datos del instalador
+  nuevo, en la nota de entrega de esta ronda (el zip de Drive y el
+  version-pc.json se actualizaron en sitio con el SHA-256 nuevo).

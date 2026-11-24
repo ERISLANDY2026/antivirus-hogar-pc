@@ -39,6 +39,7 @@ QFrame#tarjeta, QGroupBox#tarjeta {{
     border: 1px solid {BORDE};
     border-radius: 15px;
 }}
+QFrame#tarjeta[cristal="true"] {{ background: rgba(20, 27, 41, 205); }}
 QGroupBox#tarjeta {{ margin-top: 14px; padding-top: 8px; }}
 QGroupBox#tarjeta::title {{ subcontrol-origin: margin; left: 14px; padding: 0 6px;
     color: {TEXTO}; font-weight: 600; }}

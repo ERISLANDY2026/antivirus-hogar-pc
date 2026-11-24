@@ -33,6 +33,30 @@ def _intentar(funcion, errores: list[str], nombre: str):
         return None
 
 
+def animaciones_windows_permitidas() -> bool:
+    """¿Windows pide reducir animaciones? (SPI_GETANIMATION vía ctypes.)
+
+    Si la lectura no es posible (no Windows, sin ctypes, error), se
+    devuelve True: el interruptor de Ajustes manda entonces."""
+    if not es_windows():
+        return True
+    try:
+        import ctypes
+
+        class _ANIMATIONINFO(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_uint), ("iMinAnimate", ctypes.c_int)]
+
+        info = _ANIMATIONINFO()
+        info.cbSize = ctypes.sizeof(_ANIMATIONINFO)
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            0x0048, info.cbSize, ctypes.byref(info), 0)  # SPI_GETANIMATION
+        if ok:
+            return info.iMinAnimate != 0
+    except Exception:
+        pass
+    return True
+
+
 def _raiz_sistema() -> str:
     if os.name == "nt":
         return os.environ.get("SystemDrive", "C:") + "\\"

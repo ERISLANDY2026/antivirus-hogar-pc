@@ -20,7 +20,7 @@ def ejecutar_powershell(script: str, timeout: int = 180) -> str:
     proc = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
          "Bypass", "-Command", script],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True, text=True, errors="replace", timeout=timeout,
         creationflags=_flags(),
     )
     if proc.returncode != 0 and proc.stderr.strip():
@@ -73,6 +73,7 @@ def ejecutar_comando(args: list[str], timeout: int = 180) -> tuple[int, str, str
     if not es_windows():
         raise WindowsNoDisponible(f"{args[0]} solo está disponible en Windows.")
     proc = subprocess.run(
-        args, capture_output=True, text=True, timeout=timeout, creationflags=_flags(),
+        args, capture_output=True, text=True, errors="replace",
+        timeout=timeout, creationflags=_flags(),
     )
     return proc.returncode, proc.stdout, proc.stderr

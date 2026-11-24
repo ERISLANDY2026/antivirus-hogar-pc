@@ -52,6 +52,21 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
 
         check_letra.toggled.connect(_letra)
     lay_v.addWidget(check_letra)
+    check_radar = QCheckBox("Fondo animado del Panel (radar)")
+    if ajustes is not None:
+        check_radar.setChecked(bool(getattr(ajustes, "fondo_animado", True)))
+
+        def _radar(marcado: bool) -> None:
+            ajustes.fondo_animado = bool(marcado)
+            ajustes.guardar()
+
+        check_radar.toggled.connect(_radar)
+    lay_v.addWidget(check_radar)
+    lay_v.addWidget(etiqueta(
+        "El radar de la pestaña Inicio se mueve suave y gasta muy poco. "
+        "Si Windows tiene activado «reducir animaciones», la app lo "
+        "respeta aunque esto esté marcado. El cambio se ve al volver a "
+        "abrir la aplicación.", suave=True))
     layout.addWidget(tarjeta_vista)
     layout.addStretch(1)
     return pagina
