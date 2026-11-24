@@ -347,6 +347,23 @@ def test_pagina_boton_se_pone_verde_conectado(monkeypatch):
     assert "Conectado" in pagina._lbl_vpn.text()
     assert pagina._servidor_conectado == hostname
 
+    # Cierre ORDENADO (lección de la corrida CI 45493532868: la suite
+    # pasaba 225/225 pero el proceso salía con código 1 — un _Trabajo
+    # o temporizador de la página seguía vivo al caer el intérprete y
+    # la caída al cierre es una lotería de tiempos). Se espera a que
+    # los hilos terminen, se destruye el widget (su señal destroyed
+    # suelta los trabajos) y se vacía la cola de eventos.
+    import gc as _gc
+
+    _esperar(600)
+    widget.close()
+    widget.deleteLater()
+    _esperar(300)
+    app.processEvents()
+    del widget, pagina
+    _gc.collect()
+    app.processEvents()
+
 
 # === 3. La carpeta de descargas se crea sola ===================================
 
