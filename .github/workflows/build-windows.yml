@@ -82,28 +82,30 @@ jobs:
           if ($f.Length -ne 56249368) { throw "El instalador de SoftEther no pesa lo que dice el listado oficial (56249368): $($f.Length)" }
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
           Write-Host "SoftEther 4.44-9807 SHA-256: $hash"
+          $ErrorActionPreference = "Stop"
           $7z = "C:\Program Files\7-Zip\7z.exe"
           if (-not (Test-Path $7z)) { throw "7-Zip no está en el runner" }
           New-Item -ItemType Directory -Force -Path se-extract | Out-Null
           & $7z x $exe -ose-extract -y | Out-Null
           Get-ChildItem -Recurse se-extract -Filter *.cab | ForEach-Object { & $7z x $_.FullName "-ose-extract" -y | Out-Null }
-          $cliente = Get-ChildItem -Recurse se-extract -Filter "vpnclient_x64.exe" | Select-Object -First 1
-          if (-not $cliente) { $cliente = Get-ChildItem -Recurse se-extract -Filter "vpnclient.exe" | Select-Object -First 1 }
-          if (-not $cliente) { throw "No apareció vpnclient*.exe al extraer SoftEther" }
+          # Diagnóstico (la primera corrida, 45495019301, juntó el
+          # cliente pero el control de completitud falló sin decir qué
+          # faltaba): se imprime el árbol extraído ENTERO.
+          Write-Host "Contenido extraido del instalador oficial:"
+          Get-ChildItem -Recurse se-extract -File | ForEach-Object { Write-Host "  $($_.FullName) ($($_.Length))" }
+          # Se fusiona en el destino la carpeta de CADA pieza clave
+          # (cliente, vpncmd, gestor y el núcleo hamcore.se2 estén
+          # donde estén de la extracción).
           $destino = "packaging\softether\client"
           New-Item -ItemType Directory -Force -Path $destino | Out-Null
-          Copy-Item (Join-Path $cliente.Directory.FullName "*") $destino -Recurse -Force
-          # vpncmd/hamcore pueden quedar en otra carpeta de la extracción:
-          # se fusionan si faltan en el destino.
-          foreach ($necesario in @("vpncmd_x64.exe", "vpncmd.exe", "hamcore.se2")) {
-            if (-not (Get-ChildItem -Recurse $destino -Filter $necesario)) {
-              $extra = Get-ChildItem -Recurse se-extract -Filter $necesario | Select-Object -First 1
-              if ($extra) { Copy-Item (Join-Path $extra.Directory.FullName "*") $destino -Recurse -Force }
-            }
+          foreach ($patron in @("vpnclient_x64.exe", "vpnclient.exe", "vpncmd_x64.exe", "vpncmd.exe", "vpncmgr_x64.exe", "vpncmgr.exe", "hamcore.se2")) {
+            $hallado = Get-ChildItem -Recurse se-extract -Filter $patron | Select-Object -First 1
+            if ($hallado) { Copy-Item (Join-Path $hallado.Directory.FullName "*") $destino -Recurse -Force }
           }
+          $cliente = Get-ChildItem -Recurse $destino -Include "vpnclient_x64.exe", "vpnclient.exe"
           $vpncmd = Get-ChildItem -Recurse $destino -Include "vpncmd_x64.exe", "vpncmd.exe"
           $ham = Get-ChildItem -Recurse $destino -Filter "hamcore.se2"
-          if (-not $vpncmd -or -not $ham) { throw "El paquete SoftEther quedó incompleto (falta vpncmd o hamcore.se2)" }
+          if (-not $cliente -or -not $vpncmd -or -not $ham) { throw "El paquete SoftEther quedó incompleto (cliente=$([bool]$cliente) vpncmd=$([bool]$vpncmd) hamcore=$([bool]$ham))" }
           "SoftEther VPN Client 4.44 Build 9807 RTM (2025-04-16)`r`nInstalador oficial: $url`r`nTamano: 56249368 bytes`r`nSHA-256: $hash" | Out-File -FilePath (Join-Path $destino "SOFTETHER-CLIENT.txt") -Encoding ascii
           Write-Host "Archivos del cliente incorporado:"
           Get-ChildItem -Recurse $destino | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path $destino).Path.Length)) ($($_.Length))" }
