@@ -54,11 +54,34 @@ class _Trabajo(QThread):
         self.terminado.emit(resultado)
 
 
+def _olvidar(pagina: QWidget, trabajo) -> None:
+    try:
+        if trabajo in pagina._trabajos:
+            pagina._trabajos.remove(trabajo)
+    except RuntimeError:
+        pass  # la página ya se destruyó: nada que olvidar
+
+
+def _soltar_trabajos(pagina: QWidget) -> None:
+    """Al destruirse la página, los hilos en curso se DESPADREAN
+    (v1.0.6): un QThread destruido mientras corre ABORTA el proceso
+    (visto en la suite: la descarga real de VPN Gate de una ventana
+    ya cerrada tumbaba el intérprete al recoger la página). Sin
+    padre, el hilo termina su trabajo y se autoborra con la señal
+    finished→deleteLater que _lanzar/_lanzar_vivo ya conectan; las
+    señales hacia la página muerta se desconectan solas."""
+    for trabajo in list(getattr(pagina, "_trabajos", []) or []):
+        try:
+            trabajo.setParent(None)
+        except RuntimeError:
+            pass
+
+
 def _lanzar(pagina: QWidget, funcion, al_terminar) -> _Trabajo:
     trabajo = _Trabajo(funcion, pagina)
     trabajo.terminado.connect(al_terminar)
-    trabajo.terminado.connect(lambda _r: pagina._trabajos.remove(trabajo)
-                              if trabajo in pagina._trabajos else None)
+    trabajo.terminado.connect(lambda _r: _olvidar(pagina, trabajo))
+    trabajo.finished.connect(trabajo.deleteLater)
     pagina._trabajos.append(trabajo)
     trabajo.start()
     return trabajo
@@ -93,8 +116,8 @@ def _lanzar_vivo(pagina: QWidget, funcion, al_progreso,
     trabajo = _TrabajoVivo(funcion, pagina)
     trabajo.progreso.connect(lambda valores: al_progreso(*valores))
     trabajo.terminado.connect(al_terminar)
-    trabajo.terminado.connect(lambda _r: pagina._trabajos.remove(trabajo)
-                              if trabajo in pagina._trabajos else None)
+    trabajo.terminado.connect(lambda _r: _olvidar(pagina, trabajo))
+    trabajo.finished.connect(trabajo.deleteLater)
     pagina._trabajos.append(trabajo)
     trabajo.start()
     return trabajo
@@ -141,6 +164,7 @@ class _PaginaActualizaciones(QWidget):
         super().__init__()
         self._ctx = ctx
         self._trabajos: list[_Trabajo] = []
+        self.destroyed.connect(lambda _=None: _soltar_trabajos(self))
         self._programas: list = []
         self._ocupado = False
         self._todo_restantes: list = []
@@ -396,6 +420,7 @@ class _PaginaRed(QWidget):
         super().__init__()
         self._ctx = ctx
         self._trabajos: list[_Trabajo] = []
+        self.destroyed.connect(lambda _=None: _soltar_trabajos(self))
         self._servidores: list = []       # lista completa descargada
         self._visibles: list = []         # lista filtrada/ordenada en pantalla
 

@@ -91,13 +91,14 @@ def test_pagina_red_viva_tras_gc_y_botones_responden(monkeypatch):
     vivas = [o for o in gc.get_objects()
              if isinstance(o, netpage._PaginaRed)]
     assert vivas, "la página murió: sus botones quedarían mudos"
+    # La página de ESTE widget (otras pruebas pueden tener la suya):
+    pagina = widget._pagina_controladora
 
     widget.show()
     _esperar(app, 1600)  # autocargas a 300/500/800 ms
     # La autocarga llamó a los servicios y la SEMILLA pobló el
     # desplegable sin red (la descarga «en vivo» falla a propósito).
     assert "wifi" in llamadas and "servidores" in llamadas
-    pagina = vivas[0]
     assert pagina._combo_pais.count() > 5  # semilla: 9 países + «Todos»
     assert pagina._tabla_vpn.rowCount() >= 30
 
@@ -133,9 +134,9 @@ def test_pagina_actualizaciones_viva_tras_gc():
     widget = netpage.crear_pagina_actualizaciones(
         ContextoModulo(servicios=None))
     gc.collect()
-    vivas = [o for o in gc.get_objects()
-             if isinstance(o, netpage._PaginaActualizaciones)]
-    assert vivas, "la página de Actualizaciones también moría al GC"
+    assert isinstance(widget._pagina_controladora,
+                      netpage._PaginaActualizaciones), \
+        "la página de Actualizaciones también moría al GC"
     widget.deleteLater()
     app.processEvents()
 
