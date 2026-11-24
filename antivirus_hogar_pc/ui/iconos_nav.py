@@ -236,12 +236,28 @@ def _silueta(nombre: str, p: QPainter, claro: QColor, oscuro: QColor) -> None:
     _DIBUJOS[nombre](p, oscuro)
 
 
+def _mezcla(a: QColor, b: QColor, t: float) -> QColor:
+    return QColor(int(a.red() + (b.red() - a.red()) * t),
+                  int(a.green() + (b.green() - a.green()) * t),
+                  int(a.blue() + (b.blue() - a.blue()) * t))
+
+
 def pixmap_nav(nombre: str, escala: float = 1.0, brillo: float = 0.0,
-               rotacion: float = 0.0) -> QPixmap:
+               rotacion: float = 0.0, dy: float = 0.0,
+               barrido: float = -1.0) -> QPixmap:
     """El icono de una pestaña como QPixmap de LADO×LADO lógicos.
 
     escala: pulso/hover (1.0 = reposo). brillo: 0..1 de luz extra.
     rotacion: grados (la vuelta de «Actualizaciones» al comprobar).
+    dy: flotación vertical en px lógicos (animación continua).
+    barrido: 0..1 = posición de la banda de brillo que cruza el
+    icono (animación continua); fuera de ese rango no se dibuja.
+
+    3D reforzado (v1.0.6, nota del usuario: «no están en 3D»):
+    EXTRUSIÓN oscura bajo el cuerpo (borde de profundidad abajo),
+    sombra más profunda, gradiente de TRES paradas (luz arriba,
+    color pleno en el centro, sombra abajo) y gloss de cristal más
+    marcado en la mitad superior.
     """
     claro_hex, oscuro_hex = PALETA_NAV[nombre]
     claro, oscuro = QColor(claro_hex), QColor(oscuro_hex)
@@ -250,34 +266,72 @@ def pixmap_nav(nombre: str, escala: float = 1.0, brillo: float = 0.0,
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     factor = (LADO * _SS) / _CAJA
-    p.translate(LADO * _SS / 2, LADO * _SS / 2)
+    p.translate(LADO * _SS / 2, LADO * _SS / 2 + dy * _SS)
     p.scale(factor * escala, factor * escala)
     if rotacion:
         p.rotate(rotacion)
     p.translate(-_CAJA / 2, -_CAJA / 2)
-    # Sombra suave del cuerpo 3D
+    # Sombra suave y profunda del cuerpo 3D
     p.save()
-    p.translate(0, 2.4)
-    p.setBrush(QColor(0, 0, 0, 95))
+    p.translate(0, 3.4)
+    p.setBrush(QColor(0, 0, 0, 120))
     p.setPen(Qt.PenStyle.NoPen)
-    _DIBUJOS[nombre](p, QColor(0, 0, 0, 95))
+    _DIBUJOS[nombre](p, QColor(0, 0, 0, 120))
     p.restore()
-    # Cuerpo en gradiente
-    _silueta(nombre, p, claro, oscuro)
-    # Gloss de cristal: luz en la mitad superior
+    # EXTRUSIÓN: la silueta en el tono oscuro, desplazada hacia
+    # abajo — el «canto» que da volumen al mirar el icono.
     p.save()
+    p.translate(0, 2.2)
+    p.setBrush(oscuro.darker(145))
+    p.setPen(Qt.PenStyle.NoPen)
+    _DIBUJOS[nombre](p, oscuro.darker(145))
+    p.restore()
+    # Cuerpo en gradiente de tres paradas
+    grad = QLinearGradient(0, 0, _CAJA * 0.35, _CAJA)
+    grad.setColorAt(0.0, _mezcla(claro, QColor(255, 255, 255), 0.22))
+    grad.setColorAt(0.45, claro)
+    grad.setColorAt(1.0, oscuro)
+    p.setBrush(QBrush(grad))
+    p.setPen(Qt.PenStyle.NoPen)
+    _DIBUJOS[nombre](p, oscuro)
+    # Gloss de cristal: luz fuerte en la mitad superior (SourceAtop:
+    # solo sobre el cuerpo ya dibujado, nunca sobre el fondo).
+    p.save()
+    p.setCompositionMode(
+        QPainter.CompositionMode.CompositionMode_SourceAtop)
     p.setClipRect(QRectF(0, 0, _CAJA, _CAJA * 0.52))
     gloss = QLinearGradient(0, 0, 0, _CAJA * 0.52)
-    gloss.setColorAt(0.0, QColor(255, 255, 255, 105))
+    gloss.setColorAt(0.0, QColor(255, 255, 255, 140))
     gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
     p.setBrush(gloss)
     p.setPen(Qt.PenStyle.NoPen)
     p.drawEllipse(QRectF(2, -12, _CAJA - 4, 30))
     p.restore()
     if brillo > 0.01:  # luz extra de hover/selección
+        p.save()
+        p.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_SourceAtop)
         p.setBrush(QColor(255, 255, 255, int(70 * min(brillo, 1.0))))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QRectF(0, 0, _CAJA, _CAJA))
+        p.restore()
+    if 0.0 <= barrido <= 1.0:
+        # Banda de brillo que CRUZA el icono (SourceAtop: solo
+        # pinta donde ya hay icono, no sobre el fondo transparente).
+        p.save()
+        p.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_SourceAtop)
+        p.translate(_CAJA / 2, _CAJA / 2)
+        p.rotate(24)
+        x = -_CAJA * 1.1 + barrido * _CAJA * 2.2
+        banda = QLinearGradient(x - 7, 0, x + 7, 0)
+        banda.setColorAt(0.0, QColor(255, 255, 255, 0))
+        banda.setColorAt(0.5, QColor(255, 255, 255, 95))
+        banda.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setBrush(banda)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRect(QRectF(x - 7, -_CAJA, 14, _CAJA * 2))
+        p.restore()
     p.end()
     pm.setDevicePixelRatio(_SS)
     return pm
@@ -290,83 +344,109 @@ def icono_nav(nombre: str) -> QIcon:
 class AnimadorIconoNav(QObject):
     """Anima el icono de UN botón de navegación (ver docstring del módulo).
 
-    Con animado=False (interruptor de Ajustes apagado) no hay
-    temporizador: el icono queda estático en reposo.
+    v1.0.6 (nota del usuario: «no tienen animación»): en la 1.0.5
+    SOLO se movía la pestaña activa o la que tenía el ratón encima,
+    y con una amplitud mínima (±5 %): el panel se veía congelado.
+    Ahora, con la animación encendida, TODOS los iconos se mueven
+    de continuo y de forma VISIBLE: flotan suave (suben y bajan
+    ±1,6 px, desfasados entre sí) y una banda de brillo cruza cada
+    icono cada pocos segundos; la activa además pulsa más grande
+    y «Actualizaciones» gira mientras es la activa. Todo cuelga
+    del RELOJ compartido (ui.animacion): un solo temporizador
+    para la app, y la puerta global de Ajustes lo apaga todo.
+
+    Con animado=False o la puerta global apagada no hay suscripción
+    al reloj: el icono queda estático en reposo.
     """
 
     def __init__(self, boton: QPushButton, nombre: str,
                  animado: bool = True, girar: bool = False,
-                 parent: QObject | None = None):
+                 parent: QObject | None = None, desfase: float = 0.0):
         super().__init__(parent or boton)
         self._boton = boton
         self._nombre = nombre
         self._girar = bool(girar)
         self._animado = bool(animado)
+        self._desfase = float(desfase)
         self._hover = False
         self._activo = False
         self._escala = 1.0
         self._brillo = 0.0
         self._rotacion = 0.0
-        self._fase = 0.0
-        self._temporizador = QTimer(self)
-        self._temporizador.setInterval(50)
-        self._temporizador.timeout.connect(self._tic)
+        self._dy = 0.0
+        self._barrido = -1.0
+        self._suscrito = False
+        self._ultima_clave: tuple | None = None
         boton.installEventFilter(self)
-        self._pintar()
+        self._sincronizar_suscripcion()
+        self._pintar(forzar=True)
 
     # -- API ----------------------------------------------------------------------
     def fijar_activo(self, activo: bool) -> None:
         self._activo = bool(activo)
         if not self._activo:
             self._rotacion = 0.0
-        self._asegurar_temporizador()
-        self._pintar()
+        self._pintar(forzar=True)
 
     def fijar_animado(self, animado: bool) -> None:
         self._animado = bool(animado)
+        self._sincronizar_suscripcion()
         if not self._animado:
-            self._temporizador.stop()
             self._escala, self._brillo, self._rotacion = 1.0, 0.0, 0.0
-        self._pintar()
+            self._dy, self._barrido = 0.0, -1.0
+        self._pintar(forzar=True)
 
     def animando(self) -> bool:
-        return self._temporizador.isActive()
+        return self._suscrito
 
     # -- internos -------------------------------------------------------------------
     def eventFilter(self, objeto, evento):  # noqa: N802 - nombre de Qt
         if objeto is self._boton:
             if evento.type() == QEvent.Type.Enter:
                 self._hover = True
-                self._asegurar_temporizador()
             elif evento.type() == QEvent.Type.Leave:
                 self._hover = False
-                self._asegurar_temporizador()
         return super().eventFilter(objeto, evento)
 
-    def _asegurar_temporizador(self) -> None:
-        if self._animado and (self._hover or self._activo):
-            if not self._temporizador.isActive():
-                self._temporizador.start()
-        elif not self._hover and not self._activo:
-            self._temporizador.stop()
-            self._escala, self._brillo = 1.0, 0.0
-            self._pintar()
+    def _sincronizar_suscripcion(self) -> None:
+        from .animacion import RELOJ, animaciones_activas
 
-    def _tic(self) -> None:
-        self._fase += 0.18
+        quiere = self._animado and animaciones_activas()
+        if quiere and not self._suscrito:
+            RELOJ.tic.connect(self._tic)
+            RELOJ.suscribir()
+            self._suscrito = True
+        elif not quiere and self._suscrito:
+            RELOJ.tic.disconnect(self._tic)
+            RELOJ.desuscribir()
+            self._suscrito = False
+
+    def _tic(self, t: float) -> None:
+        # Flotación continua de TODOS los iconos (desfasada).
+        self._dy = 1.6 * math.sin(t * 1.85 + self._desfase * 2.1)
+        # Banda de brillo: cruza cada ~4,6 s, desfasada por icono.
+        ciclo = (t + self._desfase * 1.37) % 4.6
+        self._barrido = ciclo / 0.9 if ciclo < 0.9 else -1.0
         if self._activo:
-            objetivo_escala = 1.0 + 0.05 * (0.5 + 0.5 * math.sin(self._fase))
-            objetivo_brillo = 0.45 + 0.3 * math.sin(self._fase)
+            self._escala = 1.07 + 0.045 * math.sin(t * 3.6)
+            self._brillo = 0.5 + 0.28 * math.sin(t * 3.6)
+            if self._girar:
+                self._rotacion = (self._rotacion + 7.0) % 360.0
         elif self._hover:
-            objetivo_escala, objetivo_brillo = 1.09, 0.55
+            self._escala, self._brillo = 1.13, 0.6
         else:
-            objetivo_escala, objetivo_brillo = 1.0, 0.0
-        self._escala += (objetivo_escala - self._escala) * 0.35
-        self._brillo += (objetivo_brillo - self._brillo) * 0.35
-        if self._girar and self._activo:
-            self._rotacion = (self._rotacion + 9.0) % 360.0
+            self._escala, self._brillo = 1.0, 0.12
         self._pintar()
 
-    def _pintar(self) -> None:
+    def _pintar(self, forzar: bool = False) -> None:
+        # Cuantizar: solo se repinta si el cuadro cambia de verdad
+        # (rendimiento: 12 iconos × 20 fps sin trabajo inútil).
+        clave = (round(self._escala, 3), round(self._brillo, 2),
+                 round(self._rotacion), round(self._dy * 2),
+                 round(self._barrido, 2) if self._barrido >= 0 else -1)
+        if not forzar and clave == self._ultima_clave:
+            return
+        self._ultima_clave = clave
         self._boton.setIcon(QIcon(pixmap_nav(
-            self._nombre, self._escala, self._brillo, self._rotacion)))
+            self._nombre, self._escala, self._brillo, self._rotacion,
+            dy=self._dy, barrido=self._barrido)))

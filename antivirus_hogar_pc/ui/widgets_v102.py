@@ -146,8 +146,12 @@ class BarraProgreso(QProgressBar):
         self.update()
 
     def _actualizar_animacion(self) -> None:
-        """El RGB solo corre visible y en modo determinado/etapas."""
-        if self.isVisible() and self._modo in ("determinado", "etapas"):
+        """El RGB solo corre visible, en modo determinado/etapas y
+        con la puerta global de animaciones encendida (v1.0.6)."""
+        from .animacion import animaciones_activas
+
+        if self.isVisible() and animaciones_activas() \
+                and self._modo in ("determinado", "etapas"):
             if not self._temporizador.isActive():
                 self._temporizador.start()
         else:
@@ -227,7 +231,9 @@ class BotonPulso(QPushButton):
 
     def activar_pulso(self, activo: bool) -> None:
         """Enciende/apaga el palpitar del brillo (acción principal)."""
-        self._pulso_activo = bool(activo)
+        from .animacion import animaciones_activas
+
+        self._pulso_activo = bool(activo) and animaciones_activas()
         if self._pulso_activo and self.isVisible():
             self._temporizador.start()
         else:
@@ -304,12 +310,20 @@ class Medidor(QWidget):
 
 
 class TarjetaAnimada(QFrame):
-    """La tarjeta del tema (objectName «tarjeta») con borde RGB opcional.
+    """La tarjeta del tema (objectName «tarjeta»): VIDRIO + borde con
+    movimiento (v1.0.6, nota 7 del usuario: acabado moderno en TODAS
+    las secciones).
 
-    Sin activar se ve exactamente como la tarjeta del QSS: fondo
-    TARJETA, borde theme.BORDE, radio 15. Con fijar_activa(True), un
-    QTimer rota los colores de un gradiente que paintEvent dibuja
-    sobre el borde — la tarjeta «en curso» se distingue de un vistazo.
+    - Efecto de vidrio siempre: sobre el fondo del QSS se pinta un
+      brillo vertical suave (luz arriba, transparente abajo),
+      recortado a la esquina redondeada.
+    - Borde con vida: con las animaciones encendidas (puerta global
+      de ui.animacion) y la tarjeta visible, un gradiente de color
+      tenue RECORRE el borde despacio, colgando del RELOJ compartido
+      (un solo temporizador para toda la app; al ocultarse la
+      tarjeta se desuscribe y no gasta nada).
+    - fijar_activa(True) mantiene el borde RGB fuerte de «tarjeta
+      en curso» de la v1.0.2, con el mismo recorrido.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -317,46 +331,80 @@ class TarjetaAnimada(QFrame):
         self.setObjectName("tarjeta")
         self._activa = False
         self._desplazamiento = 0.0
-        self._temporizador = QTimer(self)
-        self._temporizador.setInterval(60)
-        self._temporizador.timeout.connect(self._avanzar_rgb)
+        self._suscrita = False
+        self._ultimo_tic = -1
 
     def fijar_activa(self, activa: bool) -> None:
-        """Activa/apaga el borde RGB animado de la tarjeta."""
+        """Activa/apaga el borde RGB fuerte de la tarjeta."""
         self._activa = bool(activa)
-        if self._activa and self.isVisible():
-            self._temporizador.start()
-        else:
-            self._temporizador.stop()
         self.update()
 
     def showEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
         super().showEvent(evento)
-        if self._activa:
-            self._temporizador.start()
+        self._sincronizar_suscripcion()
 
     def hideEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
-        self._temporizador.stop()
+        self._desuscribir()
         super().hideEvent(evento)
 
-    def _avanzar_rgb(self) -> None:
-        self._desplazamiento = (self._desplazamiento + 0.015) % 1.0
+    def _sincronizar_suscripcion(self) -> None:
+        from .animacion import RELOJ, animaciones_activas
+
+        if animaciones_activas() and not self._suscrita:
+            RELOJ.tic.connect(self._al_tic)
+            RELOJ.suscribir()
+            self._suscrita = True
+
+    def _desuscribir(self) -> None:
+        if self._suscrita:
+            from .animacion import RELOJ
+
+            RELOJ.tic.disconnect(self._al_tic)
+            RELOJ.desuscribir()
+            self._suscrita = False
+
+    def _al_tic(self, t: float) -> None:
+        # Cuantizado a 0,1 s: el borde se mueve sin repintar de más.
+        paso = int(t * 10)
+        if paso == self._ultimo_tic:
+            return
+        self._ultimo_tic = paso
+        self._desplazamiento = (t * 0.045) % 1.0
         self.update()
 
     def paintEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
         # Primero la tarjeta normal del QSS (fondo TARJETA + borde BORDE).
         super().paintEvent(evento)
-        if not self._activa:
-            return
+        from .animacion import animaciones_activas
+
         pintor = QPainter(self)
         pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
         recto = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        camino = QPainterPath()
+        camino.addRoundedRect(QRectF(self.rect()), 15, 15)
+        # Vidrio: luz suave en la mitad superior.
+        pintor.save()
+        pintor.setClipPath(camino)
+        vidrio = QLinearGradient(0, 0, 0, self.height())
+        vidrio.setColorAt(0.0, QColor(190, 225, 255, 26))
+        vidrio.setColorAt(0.45, QColor(190, 225, 255, 7))
+        vidrio.setColorAt(1.0, QColor(190, 225, 255, 0))
+        pintor.fillRect(self.rect(), vidrio)
+        pintor.restore()
+        # Borde con movimiento (tenue en reposo, RGB fuerte si activa).
+        if not (self._activa or animaciones_activas()):
+            pintor.end()
+            return
         grad = QLinearGradient(recto.topLeft(), recto.bottomRight())
         n = len(_MATICES)
         for i in range(n + 1):
             matiz = (_MATICES[i % n] + self._desplazamiento) % 1.0
-            grad.setColorAt(i / n, QColor.fromHsvF(matiz, 0.72, 0.96))
-        pintor.setPen(QPen(grad, 2))
+            color = QColor.fromHsvF(matiz, 0.72, 0.96)
+            if not self._activa:
+                color.setAlpha(110)  # recorrido tenue en reposo
+            grad.setColorAt(i / n, color)
+        pintor.setPen(QPen(grad, 2 if self._activa else 1.5))
         pintor.setBrush(Qt.BrushStyle.NoBrush)
         pintor.drawRoundedRect(recto, 15, 15)
+        pintor.end()
         pintor.end()

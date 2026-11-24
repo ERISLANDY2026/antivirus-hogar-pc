@@ -169,18 +169,43 @@ def crear_pagina_programar(ctx) -> QWidget:
             ajustes.programaciones = a_dicts(programaciones)
             ajustes.guardar()
         if prog.activa:
-            res = seguro(tareas_win.crear_tarea_programada,
+            res = seguro(tareas_win.crear_tarea_programada_detalle,
                          prog.id, prog.frecuencia, prog.dia, prog.hora)
-            if res.ok and res.datos:
+            if res.ok and res.datos and res.datos[0]:
                 return "Guardada: tarea de Windows creada."
-            return ("Guardada en la app, pero Windows no aceptó la "
-                    "tarea (¿sin Windows o sin permiso?).")
+            causa = ""
+            detalle = ""
+            if res.ok and res.datos:
+                _ok, causa, detalle = res.datos
+            elif not res.ok:
+                causa = res.mensaje or ""
+            if detalle and servicios is not None:
+                # El crudo de schtasks va SOLO al registro (v1.0.6).
+                try:
+                    servicios.registrar_actividad(
+                        "sistema",
+                        f"schtasks no creó la tarea {prog.id}: {detalle}")
+                except Exception:
+                    pass
+            return ("Guardada en la app, pero la tarea de Windows NO "
+                    "se creó. " + (causa or
+                                   "Windows no aceptó la tarea."))
         res = seguro(tareas_win.eliminar_tarea_programada, prog.id)
         return "Guardada: programación desactivada y tarea retirada."
 
+    # ANCLA DE VIDA (v1.0.6, causa raíz de «Próxima ejecución:
+    # Desactivado» en las SEIS tarjetas): las _TarjetaProgramacion
+    # son objetos Python sin padre; si no se guardan aquí, mueren al
+    # terminar la factoría y el botón «Guardar y aplicar» queda
+    # conectado a un objeto destruido: pulsar no hacía NADA y la
+    # etiqueta nunca se actualizaba. La lista queda en la página,
+    # que es lo que la ventana conserva.
+    tarjetas_vivas: list[_TarjetaProgramacion] = []
     for prog in programaciones:
         tarjeta_p = _TarjetaProgramacion(pagina, prog, _al_guardar)
+        tarjetas_vivas.append(tarjeta_p)
         layout.addWidget(tarjeta_p.widget())
+    pagina._tarjetas_programacion = tarjetas_vivas  # noqa: SLF001
 
     layout.addStretch(1)
     return pagina

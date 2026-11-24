@@ -84,11 +84,49 @@ def comando_crear_tarea_programada(ruta_ejecutable: str, id_: str,
 
 def crear_tarea_programada(id_: str, frecuencia: str, dia: str,
                            hora: str) -> bool:
-    codigo, _s, _e = ejecutar_comando(
+    ok, _causa, _detalle = crear_tarea_programada_detalle(
+        id_, frecuencia, dia, hora)
+    return ok
+
+
+def crear_tarea_programada_detalle(id_: str, frecuencia: str, dia: str,
+                                   hora: str) -> tuple[bool, str, str]:
+    """Crear la tarea devolviendo también la CAUSA si Windows la
+    rechaza (v1.0.6): (ok, causa_breve_en_español, detalle_crudo).
+
+    Antes solo volvía True/False y la salida de schtasks se tiraba:
+    si la creación fallaba, la página solo podía decir «Windows no
+    aceptó la tarea» sin saber por qué. La causa breve traduce los
+    rechazos conocidos (acceso denegado, hora/día no válidos, el
+    servicio del Programador detenido); el detalle crudo es para el
+    registro de actividad, nunca para la pantalla.
+    """
+    codigo, salida, error = ejecutar_comando(
         comando_crear_tarea_programada(
             ruta_ejecutable_app(), id_, frecuencia, dia, hora),
         timeout=120)
-    return codigo == 0
+    if codigo == 0:
+        return True, "", ""
+    crudo = (error or salida or "").strip()
+    bajo = crudo.lower()
+    if "access is denied" in bajo or "acceso denegado" in bajo \
+            or "denied" in bajo:
+        causa = ("Windows denegó el permiso para crear la tarea "
+                 "(se necesita una cuenta con permisos de administrador).")
+    elif "invalid" in bajo or "no válido" in bajo or "no valida" in bajo \
+            or "válido" in bajo:
+        causa = ("Windows rechazó los datos de la programación "
+                 "(día u hora no válidos para él).")
+    elif "cannot find" in bajo or "no se puede encontrar" in bajo \
+            or "no encuentra" in bajo:
+        causa = ("El Programador de tareas de Windows no respondió "
+                 "(¿su servicio está detenido?).")
+    elif codigo is None or not crudo:
+        causa = ("El Programador de tareas de Windows no respondió "
+                 "(¿su servicio está detenido?).")
+    else:
+        causa = "Windows no aceptó la tarea."
+    return False, causa, crudo
 
 
 def eliminar_tarea_programada(id_: str) -> bool:

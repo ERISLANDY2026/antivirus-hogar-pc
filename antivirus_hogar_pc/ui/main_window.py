@@ -65,12 +65,18 @@ class VentanaPrincipal(QMainWindow):
         lay_barra.addWidget(subtitulo)
         lay_barra.addSpacing(10)
 
-        # Iconos 3D animados (v1.0.5): uno por pestaña, en colores,
-        # más grandes (36 px). La animación respeta el interruptor
-        # «Fondo animado» de Ajustes: apagado = iconos estáticos.
+        # Iconos 3D animados: uno por pestaña, en colores, más
+        # grandes (36 px). v1.0.6: la puerta GLOBAL de animación se
+        # fija desde el interruptor de Ajustes (gobierna iconos,
+        # bordes de tarjetas y fondo) y cada icono lleva un DESFASE
+        # propio para que no se muevan todos a la vez.
+        from .animacion import fijar_animaciones_activas
+
         self._animadores_nav: dict[str, AnimadorIconoNav] = {}
         _animado = bool(getattr(self.servicios.ajustes, "fondo_animado", True))
-        for registro in sorted(self._registros.values(), key=lambda r: r.orden):
+        fijar_animaciones_activas(_animado)
+        for _i, registro in enumerate(
+                sorted(self._registros.values(), key=lambda r: r.orden)):
             boton = QPushButton(registro.titulo)
             boton.setObjectName("menu")
             nombre_nav = _ICONO_NAV_POR_REGISTRO.get(registro.icono, "inicio")
@@ -81,7 +87,8 @@ class VentanaPrincipal(QMainWindow):
             self._botones[registro.id] = boton
             self._animadores_nav[registro.id] = AnimadorIconoNav(
                 boton, nombre_nav, animado=_animado,
-                girar=(registro.id == "actualizaciones"), parent=self)
+                girar=(registro.id == "actualizaciones"), parent=self,
+                desfase=_i * 0.55)
 
         # Aviso VISIBLE si algún módulo no cargó (v1.0.1): antes el fallo
         # era silencioso y la ventana abría vacía sin explicación.
@@ -105,7 +112,8 @@ class VentanaPrincipal(QMainWindow):
         lay_barra.addWidget(boton_version)
         self._botones["version"] = boton_version
         self._animadores_nav["version"] = AnimadorIconoNav(
-            boton_version, "version", animado=_animado, parent=self)
+            boton_version, "version", animado=_animado, parent=self,
+            desfase=5.5)
 
         # «Programador de tareas» (v1.0.5): bajo «Versión de la app»,
         # con el icono de calendario 3D animado.
@@ -117,7 +125,8 @@ class VentanaPrincipal(QMainWindow):
         lay_barra.addWidget(boton_programar)
         self._botones["programar"] = boton_programar
         self._animadores_nav["programar"] = AnimadorIconoNav(
-            boton_programar, "calendario", animado=_animado, parent=self)
+            boton_programar, "calendario", animado=_animado, parent=self,
+            desfase=6.05)
 
         lay_barra.addStretch(1)
         boton_ajustes = QPushButton("Ajustes")
@@ -128,7 +137,8 @@ class VentanaPrincipal(QMainWindow):
         lay_barra.addWidget(boton_ajustes)
         self._botones["ajustes"] = boton_ajustes
         self._animadores_nav["ajustes"] = AnimadorIconoNav(
-            boton_ajustes, "ajustes", animado=_animado, parent=self)
+            boton_ajustes, "ajustes", animado=_animado, parent=self,
+            desfase=6.6)
 
         # --- Área de páginas -------------------------------------------------
         self.pila = QStackedWidget()

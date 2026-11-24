@@ -87,21 +87,30 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
 
         check_letra.toggled.connect(_letra)
     lay_v.addWidget(check_letra)
-    check_radar = QCheckBox("Fondo animado del Panel (radar)")
+    check_radar = QCheckBox(
+        "Animaciones de la interfaz (iconos, bordes con movimiento "
+        "y fondo del Panel)")
     if ajustes is not None:
         check_radar.setChecked(bool(getattr(ajustes, "fondo_animado", True)))
 
         def _radar(marcado: bool) -> None:
             ajustes.fondo_animado = bool(marcado)
             ajustes.guardar()
+            # v1.0.6: la puerta global se actualiza AL MOMENTO (el
+            # reloj compartido se para o se reanuda sin reiniciar).
+            from .animacion import fijar_animaciones_activas
+
+            fijar_animaciones_activas(bool(marcado))
 
         check_radar.toggled.connect(_radar)
     lay_v.addWidget(check_radar)
     lay_v.addWidget(etiqueta(
-        "El radar de la pestaña Inicio se mueve suave y gasta muy poco. "
-        "Si Windows tiene activado «reducir animaciones», la app lo "
-        "respeta aunque esto esté marcado. El cambio se ve al volver a "
-        "abrir la aplicación.", suave=True))
+        "Los iconos del panel se mueven suave, los bordes de las "
+        "tarjetas tienen un recorrido de color y el radar de Inicio "
+        "se anima; todo cuelga de un solo temporizador compartido y "
+        "gasta muy poco. Si Windows tiene activado «reducir "
+        "animaciones», la app lo respeta aunque esto esté marcado. "
+        "Apagarlo deja toda la interfaz quieta al momento.", suave=True))
     layout.addWidget(tarjeta_vista)
     layout.addStretch(1)
     return pagina

@@ -80,7 +80,10 @@ class IconoAnimado(QWidget):
         self.setFixedSize(tamano, tamano)
         self._temporizador = QTimer(self)
         self._temporizador.timeout.connect(self._avanzar)
-        if modo != "estatico":
+        # v1.0.6: la puerta global de Ajustes manda también aquí.
+        from .animacion import animaciones_activas
+
+        if modo != "estatico" and animaciones_activas():
             self._temporizador.start(50)
 
     def _avanzar(self) -> None:

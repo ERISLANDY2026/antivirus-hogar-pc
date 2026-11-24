@@ -554,11 +554,26 @@ def crear_pagina_discos(ctx: ContextoModulo):
             letra, es_ssd,
             al_progreso=lambda fase, pct: emisor(fase, pct))
 
-    def _al_terminar_optimizacion(resultado: ResultadoModulo):
+    def _al_terminar_optimizacion(resultado: ResultadoModulo,
+                                  letra: str = ""):
         barra_opt.terminar()
         for boton in botones_opt:
             boton.setEnabled(True)
         lbl_opt.setText(resultado.mensaje)
+        if not resultado.ok and resultado.detalle_tecnico:
+            # v1.0.6: la salida completa de Windows (resultado + cola
+            # del verbose) queda en el REGISTRO DE ACTIVIDAD; en
+            # pantalla solo va la causa breve.
+            try:
+                servicios_app = getattr(ctx, "servicios", None)
+                if servicios_app is not None:
+                    servicios_app.registrar_actividad(
+                        "sistema",
+                        f"Optimización de la unidad {letra} no "
+                        f"completada. Detalle de Windows: "
+                        f"{resultado.detalle_tecnico}")
+            except Exception:
+                pass
 
     def _optimizar(volumen: dict, tipo: str):
         letra = volumen.get("letra", "")
@@ -576,7 +591,8 @@ def crear_pagina_discos(ctx: ContextoModulo):
             boton.setEnabled(False)
         lbl_opt.setText(f"Optimizando la unidad {letra}: con Windows, "
                         "en segundo plano…")
-        gestor.lanzar(_trabajo_opt, _al_terminar_optimizacion,
+        gestor.lanzar(_trabajo_opt,
+                      lambda r: _al_terminar_optimizacion(r, letra),
                       letra, es_ssd, al_progreso=_al_progreso_opt)
 
     def _pintar(resultado: ResultadoModulo):

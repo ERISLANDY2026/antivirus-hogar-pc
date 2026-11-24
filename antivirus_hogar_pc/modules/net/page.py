@@ -365,8 +365,27 @@ class _PaginaActualizaciones(QWidget):
             self._lista_wu.addItem(texto)
 
 
+def _conservar(pagina: QWidget) -> QWidget:
+    """Devuelve el widget visible de la página ANCLANDO el objeto
+    página a él.
+
+    Causa raíz (v1.0.6, notas del usuario en su PC real): la ventana
+    principal guarda SOLO el widget devuelto por la factoría. Las
+    páginas de este módulo son objetos QObject sin padre y sin otra
+    referencia: al terminar la factoría, Python los destruía y con
+    ellos morían TODAS sus conexiones (botones que no hacían nada,
+    ni siquiera el «cargando») y sus temporizadores de autocarga
+    (Wi-Fi «todavía sin leer», desplegable de VPN vacío para
+    siempre). El atributo mantiene el objeto vivo mientras viva el
+    widget que la ventana sí conserva.
+    """
+    widget = pagina.widget()
+    widget._pagina_controladora = pagina  # noqa: SLF001 - ancla de vida
+    return widget
+
+
 def crear_pagina_actualizaciones(ctx: ContextoModulo):
-    return _PaginaActualizaciones(ctx).widget()
+    return _conservar(_PaginaActualizaciones(ctx))
 
 
 # =====================================================================================
@@ -905,7 +924,7 @@ class _PaginaRed(QWidget):
 
 
 def crear_pagina_red(ctx: ContextoModulo):
-    return _PaginaRed(ctx).widget()
+    return _conservar(_PaginaRed(ctx))
 
 
 # Compatibilidad: valorar_wifi se usa en el esqueleto anterior; se mantiene

@@ -180,6 +180,22 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(argv)
     app.setApplicationName("Antivirus Hogar PC")
     app.setStyleSheet(theme.QSS)
+    # Icono de la VENTANA y de la barra de tareas (v1.0.6, nota del
+    # usuario): se fija en tiempo de ejecución desde el .ico del
+    # espartano incluido en la app. Sin esto, Windows enseña el
+    # icono que tenga en su caché para la ruta del ejecutable o el
+    # del acceso directo viejo — en su PC seguía saliendo el icono
+    # anterior aunque el .exe ya llevaba el espartano incrustado.
+    try:
+        from PySide6.QtGui import QIcon
+
+        from .. import config as _config
+
+        _ruta_icono = os.path.join(_config.carpeta_activos(), "icono_app.ico")
+        if os.path.isfile(_ruta_icono):
+            app.setWindowIcon(QIcon(_ruta_icono))
+    except Exception:
+        pass  # el icono nunca debe impedir abrir la app
     servicios = ServiciosApp()
     if servicios.ajustes.letra_grande:
         fuente = app.font()
