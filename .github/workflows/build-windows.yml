@@ -110,14 +110,30 @@ jobs:
             if (-not (Test-Path $src)) { throw "Falta $k en los recursos del instalador oficial" }
             Copy-Item $src (Join-Path $destino $mapa[$k]) -Force
           }
-          # Diagnóstico de formato (corridas 45495019301/45496371062/
-          # 45498267165): cabecera de cada pieza al registro. El
-          # hamcore ya demostró su firma real («HamCore»); falta ver
-          # la de los .exe: un PE x64 válido empieza por «MZ» y su
-          # campo Machine vale 0x8664. En la corrida anterior el
-          # runner rechazó vpncmd con ERROR_EXE_MACHINE_TYPE_MISMATCH
-          # al lanzarlo con Start-Process: hay que ver si el recurso
-          # extraído es el PE íntegro o viene transformado.
+          # Los recursos .exe NO son el PE: van COMPRIMIDOS con el
+          # formato del fabricante (prefijo de 4 bytes con el tamaño
+          # real + flujo zlib «78 9C»; comprobado en la corrida
+          # 45500037110, por eso Windows los rechazaba). El hamcore
+          # sí va crudo (de ahí su nombre RAW_). Se descomprimen aquí
+          # y se verifica que el tamaño cuadra con el prefijo.
+          @'
+          import struct, zlib, os, sys
+          for nombre in ("vpnclient_x64.exe", "vpncmd_x64.exe", "vpncmgr_x64.exe"):
+              ruta = os.path.join("packaging", "softether", "client", nombre)
+              datos = open(ruta, "rb").read()
+              esperado = struct.unpack("<I", datos[:4])[0]
+              assert datos[4:6] == b"\x78\x9c", f"{nombre}: sin cabecera zlib"
+              real = zlib.decompress(datos[4:])
+              assert len(real) == esperado, f"{nombre}: {len(real)} != {esperado}"
+              assert real[:2] == b"MZ", f"{nombre}: no es un PE"
+              open(ruta, "wb").write(real)
+              print(f"{nombre}: descomprimido a {len(real)} bytes (PE OK)")
+          '@ | Set-Content -Path "se-descomprimir.py" -Encoding ascii
+          python se-descomprimir.py
+          if ($LASTEXITCODE -ne 0) { throw "La descompresión de los .exe de SoftEther falló" }
+          # Diagnóstico de formato: cabecera de cada pieza al registro
+          # (un PE x64 válido empieza por «MZ», Machine 0x8664; el
+          # hamcore lleva su firma «HamCore»).
           foreach ($pieza in @("vpnclient_x64.exe", "vpncmd_x64.exe", "vpncmgr_x64.exe", "hamcore.se2")) {
             $rutaP = Join-Path $destino $pieza
             $b = [System.IO.File]::ReadAllBytes($rutaP)
@@ -148,16 +164,18 @@ jobs:
       - name: Crear el instalador con Inno Setup
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\instalador.iss'
 
-      # El instalador FINAL debe llevar SoftEther dentro (v1.0.7): se
-      # comprueba por tamaño (el de la 1.0.6 pesaba 40,6 MB; con el
-      # cliente incorporado debe superar los 80 MB) y el artefacto no
-      # se sube si no lo cumple.
+      # El instalador FINAL debe llevar SoftEther dentro (v1.0.7): la
+      # prueba estructural es el registro de ISCC («Compressing: …
+      # softether\client\hamcore.se2» y las demás piezas, ya visto en
+      # la corrida 45500037110, que pesó 68.850.364 con la carga aún
+      # comprimida); como respaldo, el tamaño: la 1.0.6 pesaba
+      # 40.619.617 y con el cliente incorporado debe pasar de 55 MB.
       - name: Verificar que el instalador lleva SoftEther
         shell: pwsh
         run: |
           $inst = Get-Item "dist-instalador\*.exe" | Select-Object -First 1
           Write-Host "Instalador final: $($inst.Name) = $($inst.Length) bytes"
-          if ($inst.Length -lt 80000000) { throw "El instalador pesa $($inst.Length): SoftEther no quedó incorporado" }
+          if ($inst.Length -lt 55000000) { throw "El instalador pesa $($inst.Length): SoftEther no quedó incorporado" }
 
       - name: Subir el instalador como artefacto
         uses: actions/upload-artifact@v4

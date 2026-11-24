@@ -41,11 +41,22 @@ decenas de MB de binario). La compilación en la nube
 
 1. Descarga el instalador de la URL oficial de arriba.
 2. Verifica que pesa exactamente 56.249.368 bytes y anota su
-   SHA-256 en el registro de la corrida.
-3. Lo extrae (7-Zip; segundo pase sobre el .cab interior) y copia
-   la carpeta que contiene `vpnclient_x64.exe`, `vpncmd_x64.exe` y
-   `hamcore.se2` a `packaging\softether\client\`, dejando dentro
-   `SOFTETHER-CLIENT.txt` con la versión y la huella.
+   SHA-256 en el registro de la corrida (la del 2026-11-24:
+   `AB006331F1F646BC319585088239D55BC54ECDE5C269009268E9598307DA7A44`).
+3. Lo abre con 7-Zip: el instalador es un PE y su carga va como
+   **recursos** en `.rsrc\0\DATAFILE\` con los nombres internos del
+   fabricante. Copia a `packaging\softether\client\` las cuatro
+   piezas x64 con el nombre que llevan en una instalación real:
+   `VPNCLIENT_X64.EXE` → `vpnclient_x64.exe`,
+   `VPNCMD_X64.EXE` → `vpncmd_x64.exe`,
+   `VPNCMGR_X64.EXE` → `vpncmgr_x64.exe`,
+   `RAW_HAMCORE.SE2` → `hamcore.se2`. OJO: los recursos `.exe` van
+   **comprimidos** con el formato del fabricante (prefijo de 4 bytes
+   con el tamaño real + flujo zlib); la compilación los descomprime
+   y verifica tamaño y firma «MZ» antes de seguir (el `hamcore` sí
+   va crudo — de ahí el `RAW_` — y lleva su firma real «HamCore»).
+   Deja dentro `SOFTETHER-CLIENT.txt` con la versión y la huella, y
+   hace una prueba de humo con `vpncmd` ya descomprimido.
 4. Si algo falta, la compilación **falla**: la 1.0.7 no sale sin
    SoftEther.
 
