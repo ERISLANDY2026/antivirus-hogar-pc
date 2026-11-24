@@ -104,12 +104,37 @@ class _TrabajadorEscaneo(QThread):
         self.terminado.emit(resultado)
 
 
+def _soltar_trabajadores(pagina: QWidget) -> None:
+    """Despadrea los hilos registrados de la página (v1.0.6)."""
+    for t in list(getattr(pagina, "_trabajadores", []) or []):
+        try:
+            t.setParent(None)
+        except RuntimeError:
+            pass
+
+
 def _guardar_ref(pagina: QWidget, trabajador: QThread) -> None:
-    """Evita que el recolector se lleve el hilo mientras trabaja."""
-    previos = getattr(pagina, "_trabajadores", [])
-    previos = [t for t in previos if t.isRunning()]
+    """Evita que el recolector se lleve el hilo mientras trabaja.
+
+    v1.0.6: además, si la página se destruye con hilos en curso,
+    los hilos se DESPADREAN y se autoborran al terminar — un
+    QThread destruido mientras corre aborta el proceso entero
+    (pasó en la suite al cerrarse una ventana con trabajo vivo).
+    """
+    previos = []
+    for t in getattr(pagina, "_trabajadores", []):
+        try:
+            if t.isRunning():
+                previos.append(t)
+        except RuntimeError:
+            pass  # hilo ya destruido: fuera de la lista
     previos.append(trabajador)
     pagina._trabajadores = previos  # type: ignore[attr-defined]
+    trabajador.finished.connect(trabajador.deleteLater)
+    if not getattr(pagina, "_soltar_al_destruir", False):
+        pagina._soltar_al_destruir = True  # type: ignore[attr-defined]
+        pagina.destroyed.connect(
+            lambda _=None, p=pagina: _soltar_trabajadores(p))
 
 
 def _confirmar(padre: QWidget, titulo: str, texto: str) -> bool:

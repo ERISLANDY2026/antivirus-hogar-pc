@@ -127,6 +127,19 @@ def crear_pagina(ctx: ContextoModulo):
     servicios = ctx.servicios if ctx is not None else None
     estado: dict = {"trabajador": None}
 
+    def _soltar_lectura(_=None) -> None:
+        # v1.0.6: si la página muere con la lectura del informe en
+        # curso (en Windows tarda: PowerShell), el hilo se despadrea
+        # y termina solo — destruirlo en curso aborta el proceso.
+        t = estado.get("trabajador")
+        if t is not None:
+            try:
+                t.setParent(None)
+            except RuntimeError:
+                pass
+
+    pagina.destroyed.connect(_soltar_lectura)
+
     lbl_estado = etiqueta("Leyendo el estado del equipo…", suave=True)
     layout.addWidget(lbl_estado)
 
@@ -384,13 +397,17 @@ def crear_pagina(ctx: ContextoModulo):
 
     def lanzar_lectura() -> None:
         trabajador = estado["trabajador"]
-        if trabajador is not None and trabajador.isRunning():
-            return
+        try:
+            if trabajador is not None and trabajador.isRunning():
+                return
+        except RuntimeError:
+            estado["trabajador"] = None  # hilo ya destruido
         boton_actualizar.setEnabled(False)
         anillo.fijar_girando(True)
         lbl_estado.setText("Leyendo el estado del equipo…")
         trabajador = _TrabajadorInforme(servicios, parent=pagina)
         trabajador.listo.connect(aplicar)
+        trabajador.finished.connect(trabajador.deleteLater)
         estado["trabajador"] = trabajador
         trabajador.start()
 
