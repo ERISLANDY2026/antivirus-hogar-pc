@@ -323,6 +323,44 @@ def test_clasificador_rutas_antes_que_tarjeta():
     assert analisis["familia"] == "rutas"
 
 
+def test_clasificador_registro_real_1131_tap_ocupada():
+    """El registro REAL del intento de las 11:31:14 de la 1.0.11
+    (servidor vpn312735118, foto del usuario): el TLS fue fino y
+    la TAP estaba OCUPADA por el huérfano del intento de las
+    11:30. La 1.0.11 lo clasificó MAL como TLS («cortó la
+    conexión al comprobar los certificados… servidor caído o
+    saturado»). El clasificador de la 1.0.12 debe dar la familia
+    del ADAPTADOR, jamás TLS/servidor. (El caso «en uso» lo
+    ataja además la capa de ciclo de vida antes de lanzar: el
+    barrido cierra el huérfano propio y un openvpn ajeno con la
+    tarjeta produce el aviso «Otro OpenVPN está usando la
+    tarjeta virtual…» sin lanzar nada.)
+    """
+    registro = [
+        "OPTIONS IMPORT: reading options from vpngate-activo.ovpn",
+        "NOTE: --cipher is not set, using AES-128-CBC",
+        "interactive service msg_channel=0",
+        "ROUTE_GATEWAY 172.20.10.1 I=21",
+        "open_tun",
+        "CreateFile failed on tap-windows6 device: "
+        "\\\\.\\Global\\{79BE79B2-4E8C-45A9-AFEF-C5B900A4A048}.tap: "
+        "General failure (ERROR_GEN_FAILURE) (errno=31)",
+        "create_adapter: could not talk to service: The handle is "
+        "invalid. [6]",
+        "All tap-windows6 adapters on this system are currently "
+        "in use or disabled.",
+        "Exiting due to fatal error",
+    ]
+    analisis = vpn_win._analizar_registro(registro)
+    assert analisis["familia"] == "tarjeta"
+    assert "CreateFile failed" in analisis["causa"]
+    mensaje, _ = vpn_win._mensaje_familia(
+        analisis["familia"], analisis["causa"],
+        "vpn312735118.opengw.net")
+    assert "TLS" not in mensaje
+    assert "saturado" not in mensaje
+
+
 # === 3. Ciclo de vida: cero huérfanos ==========================================
 
 class _ProcVivo:

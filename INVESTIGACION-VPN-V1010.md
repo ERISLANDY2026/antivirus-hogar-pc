@@ -566,3 +566,369 @@ hay que corregirlo, es parte de por qué el bug pasó la suite).
    la línea 221) en la medida reproducible fuera de su Windows, y
    la prueba del túnel real en su Toughbook con la causa a la
    vista en pantalla si algo más fallara.
+
+---
+
+# PRUEBA v1.0.11 — 2026-11-25: el túnel SÍ abrió; fallaron las RUTAS (y un huérfano sujetó la TAP)
+
+El usuario instaló la 1.0.11, le dio «Conectar» y fotografió la
+pantalla. Lo primero que hay que decir: **las mejoras de la 1.0.11
+funcionaron** — el rótulo dice «VPN: Desconectada» (nada de
+«CONECTADA» falsa) y el detalle técnico real se ve en la propia
+pantalla. Pero el titular pintado («OpenVPN no pudo abrir su
+tarjeta virtual (TAP-Windows/DCO). Reinstala la app…») es FALSO
+otra vez, por otra vía. Y una prueba manual elevada posterior
+(11:33, hora de su PC) destapó un segundo problema: un proceso
+huérfano sujetando el adaptador.
+
+## 1. Qué pasó de verdad, línea por línea (foto 11:30:11, hora de su PC)
+
+El detalle de la foto son las últimas 12 líneas del registro:
+
+- `route.exe ADD 0.0.0.0 MASK 128.0.0.0 10.211.1.46` y
+  `ADD 128.0.0.0 MASK 128.0.0.0 10.211.1.46`: son las DOS medias
+  rutas /1 del `redirect-gateway def1` que empuja el servidor de
+  VPN Gate (la forma de capturar todo el tráfico sin tocar la
+  ruta por defecto original). La puerta del túnel es
+  **10.211.1.46**: para intentar crear esas rutas, openvpn YA
+  había completado el handshake TLS, recibido el PUSH_REPLY,
+  abierto el adaptador y configurado su IP (las rutas se crean
+  DESPUÉS de todo eso, en la fase final de la inicialización).
+- `route addition failed using CreateIpForwardEntry: Access is
+  denied. [status=5 if_index=60]`: **status=5 es el error 5 de
+  Win32, acceso denegado** — crear rutas exige privilegios.
+  `if_index=60` es el índice del adaptador virtual YA ABIERTO:
+  la tarjeta existía y estaba operativa. El método IPAPI falló
+  y el respaldo `route.exe` devolvió código 1 por lo mismo.
+- Última línea: **`Initialization Sequence Completed`**. La
+  inicialización terminó. En OpenVPN el fallo de rutas NO es
+  fatal (hay registros públicos idénticos, línea por línea, en
+  los que el proceso sigue conectado tras estos mismos errores):
+  el proceso quedó, con toda probabilidad, VIVO con el túnel
+  abierto.
+
+Conclusión del §1: **el adaptador SÍ abrió, hubo handshake y el
+túnel se inicializó. El único fallo es la creación de rutas por
+falta de privilegios.** Y sin las dos rutas /1, el
+`redirect-gateway` no se aplica: el tráfico del usuario NO sale
+por la VPN (solo existiría la ruta a la subred del túnel). Túnel
+«arriba» pero inútil para navegar con otra IP — por eso el
+estado honesto no puede ser «conectada» a secas (ver §4).
+
+¿Por qué sin privilegios? Porque la app lanza openvpn.exe con
+`Popen` desde su proceso SIN elevar y SIN el Interactive
+Service. El servicio solo delega privilegios en los procesos
+que ÉL lanza (les pasa su tubo de servicio al nacer); un
+openvpn lanzado por Popen no tiene tubo y hace las operaciones
+privilegiadas en su propio proceso: abrir el dispositivo
+TAP/DCO le salió (los ACL del dispositivo lo permiten), pero
+CreateIpForwardEntry exige administrador → status=5.
+
+## 2. Por qué la app lo dio por fallido y con ESE titular
+
+Dos defectos encadenados, ambos en `vpn_win.py`:
+
+**(a) El proceso terminó (o la app lo dio por terminado) durante
+la espera, y la rama de «proceso muerto» es la única que
+clasifica.** `conectar_openvpn()` solo produce ese titular
+desde la rama `poll() is not None` (la de timeout devuelve otro
+texto). La secuencia temporal aprieta: las rutas se crean ANTES
+de «Initialization Sequence Completed» y el estado
+CONNECTED,SUCCESS de la interfaz de gestión solo existe DESDE
+ese instante; el bucle comprueba `poll()` ANTES que el estado
+en cada vuelta de ~2 s. Si el proceso salió en esa ventana (o
+la lectura de gestión llegó siempre un paso por detrás de un
+proceso que ya se iba), la app nunca vio el CONNECTED y trató
+la inicialización completa como una muerte más. Lo que el
+detalle NO trae —porque la foto muestra las últimas líneas del
+LOG, no el código de salida— es la línea posterior a
+«Initialization…» que lo cerraría; el código de salida viajaba
+en `datos` pero la página no lo pinta. Pendiente de confirmar
+con el `openvpn-conexion.log` completo de su PC; no cambia el
+arreglo (§5), porque las rutas denegadas ya condenan el intento.
+
+**(b) El titular salió de la SELECCIÓN de causa, no del
+detalle.** `_causa_del_registro()` → `_elegir_causa()` recorre
+`_PRIORIDADES_CAUSA` con el bucle de marcas por FUERA: gana la
+primera MARCA de la lista que aparezca en CUALQUIER línea del
+registro completo, antes de mirar las demás líneas. Las marcas
+`tun/tap`, `tap-windows`, `ovpn-dco`, `data channel` van MUY
+por encima de `error` — y las líneas de rutas solo casan con
+`error`, la última prioridad. En un registro de inicialización
+normal hay líneas informativas del adaptador (apertura del
+dispositivo TAP-Windows/DCO) que contienen «tap»/«dco»: esa
+línea INFORMATIVA se convirtió en «la causa», y
+`_clasificar_fallo_openvpn()` mapea cualquier causa con «tap»
+al titular de tarjeta virtual + «reinstala la app». El detalle
+visible (las últimas 12 líneas, mejora de la 1.0.11) decía la
+verdad; el titular, calculado sobre otra línea, la contradecía
+en la misma pantalla.
+
+## 3. DATO NUEVO (11:33): la prueba manual ELEVADA no pudo ni abrir el túnel
+
+El usuario corrió a mano, como administrador, el mismo
+`vpngate-activo.ovpn`. Handshake TLS OK (VERIFY OK, PUSH_REPLY
+con ifconfig 10.211.1.17/10.211.1.18 y redirect-gateway def1;
+su puerta local 172.20.10.1, el hotspot). Pero:
+
+```
+open_tun
+CreateFile failed on tap-windows6 device: \\.\Global\{79BE79B2-…}.tap: General failure (ERROR_GEN_FAILURE) (errno=31)
+create_adapter: could not talk to service: The handle is invalid. [6]
+All tap-windows6 adapters on this system are currently in use or disabled.
+Exiting due to fatal error
+```
+
+Interpretación:
+
+- A las 11:33 el ÚNICO adaptador tap-windows6 **no se podía
+  abrir**: el propio mensaje de OpenVPN da las dos opciones,
+  «en uso o deshabilitado». Tres minutos antes, a las 11:30,
+  ese mismo adaptador SÍ abrió (if_index=60, rutas intentadas
+  sobre él) y el usuario lo había visto presente en ncpa.cpl
+  en la ronda anterior → **«deshabilitado/dañado» queda
+  descartado como explicación principal**; un adaptador
+  deshabilitado no abre a las 11:30. Queda **«en uso»**: algo
+  lo tenía abierto a las 11:33.
+- `create_adapter: could not talk to service: The handle is
+  invalid [6]` + `interactive service msg_channel=0`: ni
+  siquiera el lanzamiento ELEVADO a mano usa el Interactive
+  Service — sin tubo de servicio no pudo pedirle que creara/
+  buscara otro adaptador y cayó al dispositivo existente, que
+  estaba ocupado. (La elevación y el iservice son mecanismos
+  DISTINTOS; a mano no se obtiene el segundo.)
+- **Explicación más probable del ocupante: un openvpn.exe
+  huérfano del intento de la app de las 11:30.** El proceso de
+  las 11:30 abrió el adaptador y, como el fallo de rutas no es
+  fatal (§1), lo esperable es que siguiera vivo sujetándolo.
+  Que la app lo diera por fallido sin dejarlo cerrado es
+  posible por las rutas de salida SIN limpieza de
+  `conectar_openvpn()` (auditadas en el código de la 1.0.11):
+  1. **Sin try/finally:** la limpieza existe solo en la rama
+     de proceso-muerto (ya está muerto: nada que limpiar) y en
+     la de timeout (terminate→wait→kill). Cualquier otra
+     salida —una excepción dentro del bucle de espera la
+     captura `seguro()` en servicios_red y la convierte en
+     «fallo»— deja el proceso VIVO y sin dueño.
+  2. **Sin guarda de un solo intento:** la página lanza cada
+     «Conectar» en un QThread nuevo (`_lanzar` no comprueba si
+     ya hay un trabajo en curso) y `conectar_openvpn()` usa el
+     global `_PROCESO` y el MISMO archivo de sesión/perfil/
+     registro para todos: un segundo clic sobrescribe el
+     mango y el primer proceso queda inalcanzable para siempre
+     (ni la desconexión puede encontrarlo: la sesión ya es del
+     segundo).
+  3. **Éxito o cierre de la app:** si el intento «conecta», el
+     proceso queda vivo a propósito; si el usuario cierra la
+     app (o la página) con un intento en curso, el hilo se
+     despawnea (`_soltar_trabajos`) pero el openvpn hijo es un
+     proceso independiente que SOBREVIVE sin que nadie lo
+     cierre, sujetando la TAP.
+  La desconexión actual solo lo rescataría por el respaldo
+  bruto `terminar_procesos_openvpn()` (mata TODOS los
+  openvpn.exe, también los ajenos) y solo si se pulsa
+  «Desconectar» con la sesión detectable.
+- Alternativa que no se puede excluir al 100 % sin su PC: que
+  el adaptador quedara «clavado» tras una terminación dura
+  (TerminateProcess del timeout) — el driver TAP-Windows puede
+  quedar en un estado en el que CreateFile devuelve
+  ERROR_GEN_FAILURE hasta deshabilitar/habilitar el adaptador
+  o reiniciar. Ambas explicaciones exigen el mismo arreglo:
+  control de ciclo de vida + verificación de adaptador libre
+  (§5), y una acción de reparación del adaptador si está
+  clavado sin proceso que lo sujete.
+
+## 4. Arreglo del clasificador (reglas nuevas)
+
+1. **Las líneas de ERROR mandan sobre las informativas:** al
+   elegir causa se ignoran las líneas sin marca de error/
+   fatal/warning (una línea de apertura de adaptador nunca
+   puede ser «la causa» de un fallo). O, equivalente, la
+   familia rutas/privilegios se evalúa ANTES que la de
+   adaptador y con marcas propias.
+2. **Familia nueva «rutas/privilegios»:** `route addition
+   failed`, `route add command failed`, `CreateIpForwardEntry`
+   + `Access is denied`/`status=5`/`requires elevation` →
+   mensaje: «OpenVPN abrió el túnel pero Windows le negó
+   crear las rutas (falta de privilegios): el tráfico no
+   saldría por la VPN. No es la tarjeta ni el servidor: es
+   cómo la app lanza OpenVPN; queda corregido lanzándolo a
+   través de su servicio (o elevado).» NUNCA «tarjeta virtual»
+   y nunca «reinstala la app» para esta familia.
+3. **«Initialization Sequence Completed» + rutas fallidas:**
+   estado honesto intermedio — «túnel abierto pero sin rutas:
+   tu tráfico NO está saliendo por la VPN» — y la app debe
+   bajar ese túnel limpiamente (SIGTERM por la interfaz de
+   gestión y verificación de salida), no dejarlo vivo ni
+   pintarlo como éxito ni como fallo de tarjeta.
+4. La familia tarjeta queda SOLO para `Cannot open TUN/TAP`,
+   `CreateFile failed on tap`, `All tap-windows6 adapters…`,
+   errores DCO de apertura — cuando de verdad no se abrió.
+5. Pintar también el **código de salida** del proceso en el
+   detalle de la pantalla (ya viaja en `datos` y nadie lo ve).
+
+## 5. VÍA ELEGIDA para la v1.0.12: lanzar a través del OpenVPN Interactive Service
+
+**Qué hace el GUI oficial (documentación oficial del
+Interactive Service, community.openvpn.net):** el GUI corre
+como usuario normal; se conecta al tubo con nombre
+`\\.\pipe\openvpn\service` del servicio
+OpenVPNServiceInteractive (que corre con privilegios de
+sistema) y le envía UN mensaje de arranque: tres cadenas
+UTF-16 separadas por nulos —directorio de trabajo, opciones
+de openvpn SIN argv[0], y el contenido de stdin—. El servicio
+valida al usuario y las opciones, **lanza openvpn.exe COMO EL
+USUARIO** conservando un tubo de servicio con él, y cuando
+openvpn necesita una operación privilegiada (rutas, IP, DNS)
+la pide por ese tubo y la ejecuta el servicio (que además
+limpia si openvpn muere). La propia documentación recomienda
+vigilar el proceso con la **Management Interface**: nuestro
+`--management 127.0.0.1 <puerto>` viaja como una opción más,
+así que **confirmar CONNECTED,SUCCESS y desconectar por
+SIGTERM funcionan igual que hoy**. Detalles a respetar: el
+stdout del proceso lanzado por el servicio va a NUL → hay que
+pasar `--log-append` (ya lo hacemos); el servicio devuelve un
+mensaje con el PID (o un mensaje de error con código Win32)
+que hay que leer de la respuesta del tubo.
+
+**Requisito de autorización (el punto que hay que resolver en
+el instalador):** el servicio solo acepta configuraciones
+fuera de su `config_dir` (registro HKLM\SOFTWARE\OpenVPN,
+por defecto `C:\Program Files\OpenVPN\config`) si el usuario
+pertenece a **Administradores** o al grupo de
+`ovpn_admin_group` (**«OpenVPN Administrators»** por
+defecto). Nuestro perfil vive en
+`%LOCALAPPDATA%\AntivirusHogarPC\vpn` → fuera del config_dir.
+Arreglo de UNA vez, en el instalador (que ya corre elevado):
+crear el grupo si falta y **añadir al usuario actual a
+«OpenVPN Administrators»**, anotándolo en
+`openvpn-instalacion.txt`, y verificar que el servicio
+interactivo está registrado y corriendo (sc query; si está
+parado, arrancarlo en la instalación). Desde ahí, conectar no
+necesita elevación ni muestra UAC nunca.
+
+**Implementación:** cliente del tubo en Python con ctypes
+(CreateFileW sobre `\\.\pipe\openvpn\service`,
+SetNamedPipeHandleState a modo mensaje, WriteFile con el
+mensaje completo en UNA llamada, ReadFile para el PID/error)
+— sin dependencias nuevas. Sustituye a `_lanzar_openvpn()`
+como vía principal; la sesión guarda el PID que devuelve el
+servicio.
+
+**Vía de RESERVA: lanzar openvpn.exe ELEVADO** (ShellExecuteEx
+con verbo `runas`) si el tubo/servicio no responde o el
+usuario no está autorizado. En la Toughbook del usuario la
+elevación no muestra aviso (su cuenta eleva en silencio,
+probado en la era SoftEther), así que la reserva es viable
+allí; en otra PC mostraría un UAC por conexión — aceptable
+como reserva, no como vía principal. La interfaz de gestión
+sigue funcionando igual (es TCP local); la desconexión por
+SIGTERM no necesita elevación. Descartada como principal
+porque el proceso correría como administrador completo (el
+iservice mantiene openvpn como usuario y solo delega las
+operaciones concretas: mejor postura) y porque con otra
+cuenta administradora distinta cambiarían perfil/entorno.
+
+**Descartado: que la app entera exija administrador.**
+Convertiría TODO el antivirus (escaneos, limpieza, bandeja,
+actualizador) en un proceso elevado permanente por una sola
+función: peor seguridad, fricción en cada arranque y no
+arregla el ciclo de vida. Solo serviría como diagnóstico
+puntual, no como diseño.
+
+## 6. Plan concreto v1.0.12 (ciclo de vida incluido)
+
+1. **Lanzamiento por iservice** (§5) con su cliente de tubo;
+   reserva elevada si el servicio no está disponible; puerta
+   previa con `diagnostico_openvpn()` ampliado: servicio
+   interactivo corriendo, usuario en «OpenVPN
+   Administrators», adaptador presente.
+2. **Un solo intento a la vez:** guarda en la página (botones
+   «Conectar» deshabilitados durante un intento) y en el motor
+   (si ya hay sesión «conectando/conectada», el nuevo intento
+   primero cierra la anterior limpiamente).
+3. **Limpieza garantizada:** `conectar_openvpn()` con
+   try/finally — TODA salida que no sea éxito confirmado cierra
+   el proceso (SIGTERM por gestión → espera → terminate →
+   kill, en ese orden) y verifica `poll()` antes de devolver;
+   la sesión solo sobrevive en estado «conectada».
+4. **Barrido previo de huérfanos PROPIOS:** antes de conectar,
+   si hay openvpn.exe cuya línea de comandos contiene NUESTRO
+   perfil (`vpngate-activo.ovpn`) o cuyo PID consta en una
+   sesión anterior de la app, se cierra (gestión si responde;
+   proceso si no) y se anota en actividad. Un openvpn AJENO
+   (del GUI del usuario, con otro perfil) NO se mata: si la
+   TAP está ocupada por un proceso ajeno, se dice en pantalla
+   («otro OpenVPN está usando la tarjeta virtual: ciérralo o
+   desconéctalo y vuelve a intentarlo»).
+5. **Verificación post-cierre:** tras desconectar o fallar,
+   comprobar y anotar: proceso muerto + adaptador libre. Si
+   el adaptador sigue sin poder abrirse y NO hay proceso que
+   lo sujete (adaptador clavado), ofrecer la reparación
+   guiada: deshabilitar/habilitar el adaptador TAP-Windows
+   (elevado, una vez) o reiniciar el equipo — nunca en
+   silencio.
+6. **Clasificador nuevo** (§4) + código de salida visible en
+   pantalla + estado «túnel abierto sin rutas» tratado como
+   en §4.3 (se baja limpio y se reporta como fallo de rutas,
+   no como éxito ni como tarjeta).
+7. **Instalador:** grupo «OpenVPN Administrators» + usuario
+   añadido + servicio interactivo verificado/corriendo, todo
+   anotado en `openvpn-instalacion.txt`; si el usuario se
+   añade al grupo, avisar de que el primer uso puede requerir
+   cerrar sesión una vez (la pertenencia a grupo se evalúa
+   al iniciar sesión; el servicio la comprueba contra el
+   token del llamante).
+
+## 7. Qué se puede verificar en CI y qué no
+
+**SÍ en CI (sin su Windows):**
+- El protocolo del tubo contra un servicio FALSO: mensaje de
+  arranque byte a byte (UTF-16, tres campos, una sola
+  escritura), lectura del mensaje de PID y de los mensajes
+  de error del servicio (códigos 0x20000000+ y Win32).
+- El clasificador con ESTE registro real de la foto: rutas
+  denegadas + Initialization Completed → familia
+  rutas/privilegios, jamás tarjeta; y la selección de causa
+  ignorando líneas informativas del adaptador.
+- El ciclo de vida con procesos falsos: excepción en el
+  bucle, segundo intento concurrente, timeout y cierre de
+  app dejan CERO procesos y la sesión borrada; el barrido
+  solo mata procesos con nuestro perfil/PID, nunca ajenos.
+- La guarda de parseo de la 1.0.11 se mantiene (el perfil
+  sigue pasando el openvpn.exe real), y el instalador: los
+  comandos de grupo/servicio quedan fijados por test de
+  contenido del script.
+
+**NO en CI (solo en su Toughbook):**
+- La delegación real del iservice (que las rutas se creen
+  sin admin con su usuario en el grupo), el primer arranque
+  tras añadirlo al grupo (puede pedir re-login), la reserva
+  elevada en su política de UAC, la contienda real por la
+  TAP con un huérfano y el desbloqueo del adaptador si está
+  clavado. Como en las versiones anteriores: la prueba del
+  túnel completo —esta vez con rutas y con la IP pública
+  cambiando de verdad— se cierra en su PC.
+
+---
+
+## CIERRE v1.0.12 (2026-11-25, entregada)
+
+La v1.0.12 se construyó con el plan de la §5–§6 de esta
+investigación y quedó ENTREGADA el mismo día (INFORME-V1012.md):
+lanzamiento por el Interactive Service con reserva elevada,
+puerta previa con grupo «OpenVPN Administrators» y detección de
+sesión sin refrescar, instalador que crea el grupo y verifica el
+servicio (grupo_openvpn.ps1), un solo intento con limpieza
+try/finally, barrido de huérfanos propios, verificación
+post-cierre y clasificador nuevo (rutas antes que tarjeta; las
+informativas nunca son causa). Suite CI 307/307 (run
+45650309495 SUCCESS, a la segunda: la primera, 45649876905,
+falló con 12 pruebas por UNA causa — la puerta previa bloqueaba
+en duro al no detectar el adaptador TAP en el runner, donde
+OpenVPN aún no está instalado al correr las pruebas; la
+detección por nombre pasó a ser aviso, no bloqueo). Canal Drive
+en sitio a 1.0.12 y puerta final anónima superada. Pendiente
+honesto de siempre: la delegación real del servicio, el posible
+re-login único y el túnel con rutas solo se prueban en su
+Toughbook al instalar desde el botón de su 1.0.11.
