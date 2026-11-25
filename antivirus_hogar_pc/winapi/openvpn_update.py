@@ -283,16 +283,58 @@ def _script_firma(ruta: str) -> str:
         "[string]$s.SignerCertificate.Subject } | ConvertTo-Json -Compress")
 
 
+def _script_firma_respaldo(ruta: str) -> str:
+    """Segundo método, compatible con Windows PowerShell 5.1.
+
+    En la CI (corrida 45624972822) Get-AuthenticodeSignature
+    devolvió $null bajo powershell.exe 5.1 para este MSI, aunque
+    pwsh 7 lee la misma firma como «Valid». Este método lee el
+    certificado firmante con la API clásica de .NET Framework
+    (CreateFromSignedFile, válida para MSI firmados) y exige
+    que la cadena de confianza construya hasta una raíz fiable
+    (sin chequeo de revocación en línea, para no castigar PCs
+    sin red en ese instante). Devuelve el mismo JSON.
+    """
+    return (
+        "$cert = [System.Security.Cryptography.X509Certificates."
+        "X509Certificate]::CreateFromSignedFile('" + ruta + "'); "
+        "$cert2 = New-Object System.Security.Cryptography."
+        "X509Certificates.X509Certificate2($cert.GetRawCertData()); "
+        "$cadena = New-Object System.Security.Cryptography."
+        "X509Certificates.X509Chain; "
+        "$cadena.ChainPolicy.RevocationMode = "
+        "[System.Security.Cryptography.X509Certificates."
+        "X509RevocationMode]::NoCheck; "
+        "$ok = $cadena.Build($cert2); "
+        "[PSCustomObject]@{ estado = $(if ($ok) { 'Valid' } else "
+        "{ 'Invalid' }); firmante = $cert.Subject } | "
+        "ConvertTo-Json -Compress")
+
+
 def firma_authenticode(ruta: str) -> dict:
-    """Firma Authenticode real del archivo (PowerShell, en Windows)."""
+    """Firma Authenticode real del archivo (PowerShell, en Windows).
+
+    Método principal: Get-AuthenticodeSignature. Si devuelve el
+    objeto vacío (el fallo de powershell.exe 5.1 probado en CI
+    con este MSI), se usa el método de respaldo de .NET
+    Framework antes de dar la firma por inválida.
+    """
     from .powershell import ejecutar_powershell
 
+    absoluta = os.path.abspath(ruta)
     try:
-        salida = ejecutar_powershell(
-            _script_firma(os.path.abspath(ruta)), timeout=60)
+        salida = ejecutar_powershell(_script_firma(absoluta), timeout=60)
+        resultado = interpretar_firma(salida)
+        if resultado["firmante"]:
+            return resultado
     except Exception:
-        return {"valida": False, "firmante": ""}
-    return interpretar_firma(salida)
+        resultado = {"valida": False, "firmante": ""}
+    try:
+        salida2 = ejecutar_powershell(
+            _script_firma_respaldo(absoluta), timeout=60)
+        return interpretar_firma(salida2)
+    except Exception:
+        return resultado
 
 
 # --- Salud de la integración (verificación tras aplicar) ------------------------
