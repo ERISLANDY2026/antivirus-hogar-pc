@@ -25,12 +25,17 @@ def test_notas_y_version_107():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core import notas_version
 
-    assert config.VERSION == "1.0.7"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.7"
-    notas = notas_version.notas_de("1.0.7")
+    # v1.0.8 (vía rápida): la versión vigente sube; las notas de la
+    # 1.0.7 quedan en el historial.
+    assert config.VERSION == "1.0.8"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.8"
+    notas = notas_version.notas_de("1.0.8")
     assert notas is not None and len(notas["novedades"]) >= 3
     texto = " ".join(notas["novedades"])
-    assert "SoftEther" in texto and "Optimización finalizada" in texto
+    assert "SoftEther" in texto and "tarjeta virtual" in texto
+    notas107 = notas_version.notas_de("1.0.7")
+    assert notas107 is not None
+    assert "Optimización finalizada" in " ".join(notas107["novedades"])
 
 
 def test_instalador_lleva_softether_incorporado():
@@ -40,7 +45,7 @@ def test_instalador_lleva_softether_incorporado():
     with open(os.path.join(raiz, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
         iss = f.read()
-    assert '#define AppVersion "1.0.7"' in iss
+    assert '#define AppVersion "1.0.8"' in iss
     assert "softether\\client\\*" in iss          # el payload, a {app}\softether
     assert "SEVPNCLIENT" in iss                  # registra el servicio
     assert "SoftEtherServicioPropio" in iss      # marca: solo retira el suyo
@@ -153,7 +158,9 @@ class _VpncmdFalso:
     """Simula el cliente SoftEther local: NIC, cuenta y sesión."""
 
     def __init__(self, fallar_conexion=False):
-        self.nic = False
+        # v1.0.8: la tarjeta virtual la crea el INSTALADOR; al
+        # conectar, la app la encuentra ya presente en NicList.
+        self.nic = True
         self.cuenta = False
         self.conectado = False
         self.fallar_conexion = fallar_conexion
@@ -231,7 +238,7 @@ def test_conectar_softether_flujo_completo(monkeypatch):
     assert res["ok"] is True
     assert res["datos"]["via"] == "softether"
     falso = vpn_win._ejecutar_vpncmd
-    assert "NicCreate" in falso.comandos      # creó la tarjeta virtual
+    assert "NicList" in falso.comandos        # la tarjeta ya venía del instalador (v1.0.8)
     assert "AccountCreate" in falso.comandos  # creó la conexión VPNGATE
     assert "AccountConnect" in falso.comandos
     estado = vpn_win.estado_softether()
