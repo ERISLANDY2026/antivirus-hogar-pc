@@ -216,6 +216,35 @@ jobs:
           $env:AHOGAR_OPENVPN_REAL_EXE = $exe.FullName
           @'
           import os, subprocess, sys, time
+          # DIAGNOSTICO NO BLOQUEANTE (para el INFORME-V1013): la
+          # variante --management-hold/--dev null de la primera
+          # corrida (45664526031) salio al instante con su salida
+          # a DEVNULL. Aqui se repite ESA linea exacta capturando
+          # la salida, para que consten las palabras del binario.
+          # Nada de esto decide el paso.
+          exe = os.environ["AHOGAR_OPENVPN_REAL_EXE"]
+          base_diag = os.path.join(os.environ["RUNNER_TEMP"], "humo-diag")
+          os.makedirs(base_diag, exist_ok=True)
+          ruta_diag = os.path.join(base_diag, "salida.txt")
+          with open(ruta_diag, "wb") as salida_diag:
+              diag = subprocess.Popen(
+                  [exe, "--management", "127.0.0.1", "48131",
+                   "--management-hold", "--dev", "null",
+                   "--remote", "127.0.0.1", "65535", "udp"],
+                  stdout=salida_diag, stderr=subprocess.STDOUT)
+              time.sleep(3)
+              codigo_diag = diag.poll()
+              if codigo_diag is None:
+                  diag.kill()
+                  diag.wait(timeout=10)
+          print("=== Diagnostico variante hold/dev-null: codigo de salida:",
+                codigo_diag)
+          print(open(ruta_diag, encoding="utf-8", errors="replace").read())
+          print("=== Fin del diagnostico (el humo de verdad sigue)")
+          '@ | Set-Content -Path "ovpn-humo-diag.py" -Encoding ascii
+          python ovpn-humo-diag.py
+          @'
+          import os, subprocess, sys, time
           sys.path.insert(0, ".")
           from antivirus_hogar_pc import config
           from antivirus_hogar_pc.core import vpngate
@@ -254,8 +283,15 @@ jobs:
               assert vpn_win._estado_pid(proc.pid) == "vivo", vpn_win._estado_pid(proc.pid)
               assert mango.poll() is None, "poll() declaro muerto a un openvpn real VIVO (el fallo de la 1.0.12)"
               estado = vpn_win._mgmt_enviar(puerto, "state", timeout=5)
-              assert ("CONNECTING" in estado.upper() or "RECONNECTING" in estado.upper()), estado
-              print("En vida: _estado_pid=vivo, poll()=None, gestion responde. OK")
+              # Estados transitorios de un openvpn VIVO intentando
+              # conectar: WAIT (espera la respuesta inicial del
+              # servidor; la corrida 45667415631 respondio WAIT y
+              # el assert original, que solo aceptaba CONNECTING/
+              # RECONNECTING, lo marco mal), CONNECTING,
+              # RECONNECTING, RESOLVE y TCP_CONNECT.
+              vivos = ("WAIT", "CONNECTING", "RECONNECTING", "RESOLVE", "TCP_CONNECT")
+              assert any(v in estado.upper() for v in vivos), estado
+              print("En vida: _estado_pid=vivo, poll()=None, gestion responde:", estado.replace(chr(10), " | ")[:160])
           finally:
               proc.kill()
               proc.wait(timeout=10)
