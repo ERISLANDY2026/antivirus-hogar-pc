@@ -48,12 +48,12 @@ def test_version_vigente_1011():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core import notas_version
 
-    assert config.VERSION == "1.0.11"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.11"
-    notas = notas_version.notas_de("1.0.11")
+    assert config.VERSION == "1.0.12"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.12"
+    notas = notas_version.notas_de("1.0.12")
     assert notas is not None and len(notas["novedades"]) >= 3
     iss = _leer(os.path.join("packaging", "instalador.iss"))
-    assert '#define AppVersion "1.0.11"' in iss
+    assert '#define AppVersion "1.0.12"' in iss
 
 
 # === 1. LA CAUSA: la ruta escapada ==============================================

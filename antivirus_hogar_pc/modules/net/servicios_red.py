@@ -188,12 +188,17 @@ def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:
             _registrar_intento_vpn(
                 f"VPN Gate: conectado a {servidor.hostname} "
                 f"({servidor.pais}) con OpenVPN.")
+            # v1.0.12: si la puerta previa dejó un aviso (p. ej.
+            # cierre de sesión pendiente o reserva elevada), el
+            # usuario lo lee junto al «Conectado».
+            aviso = str(datos_ov.get("detalle") or "").strip()
             return ResultadoModulo(
                 ok=True,
                 mensaje=(f"Conectado a {servidor.hostname} "
                          f"({servidor.pais}) con OpenVPN: el túnel "
                          "está arriba y trabaja en segundo plano, sin "
-                         "que tengas que abrir ningún otro programa."),
+                         "que tengas que abrir ningún otro programa."
+                         + (f" Aviso: {aviso}" if aviso else "")),
                 datos={"via": "openvpn", "conectado": True,
                        "hostname": servidor.hostname},
             )
@@ -398,6 +403,20 @@ def estado_vpn() -> ResultadoModulo:
         "openvpn": bool(estado_ov.get("instalado")),
         "conectada_openvpn": conectada_ov,
     })
+
+
+def cancelar_intento_vpn() -> None:
+    """Baja un intento de conexión OpenVPN AÚN en curso (v1.0.12).
+
+    Lo llama la página de Red al destruirse (y el motor al salir
+    la app): un intento «conectando» jamás se queda vivo sin
+    dueño sujetando la tarjeta, como pasó en la 1.0.11. Un túnel
+    confirmado no se toca: bajarlo es la orden de desconectar.
+    """
+    try:
+        vpn_win.cerrar_intento_en_curso()
+    except Exception:
+        pass
 
 
 def desconectar_vpn() -> ResultadoModulo:

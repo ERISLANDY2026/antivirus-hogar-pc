@@ -2,7 +2,7 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.11.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.12.exe
 ;
 ; v1.0.10: el instalador lleva INCORPORADO el instalador oficial
 ; de OpenVPN Community (MSI en packaging\openvpn\, ver su
@@ -22,7 +22,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.11"
+#define AppVersion "1.0.12"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 
@@ -103,6 +103,11 @@ Source: "openvpn\OPENVPN-INSTALADOR.txt"; DestDir: "{app}\openvpn"; Flags: ignor
 ; el propio instalador al terminar (ver [Code]) y deja su resultado
 ; verificado en {app}\defender-exclusion.json.
 Source: "exclusion_defender.ps1"; DestDir: "{app}"; Flags: ignoreversion
+; Script del grupo «OpenVPN Administrators» (v1.0.12): lo ejecuta
+; el propio instalador tras instalar OpenVPN (ver [Code]) para
+; que el Interactive Service acepte los perfiles de la app, que
+; viven fuera de su carpeta de configuración.
+Source: "grupo_openvpn.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppNombre}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\icono.ico"
@@ -253,12 +258,46 @@ begin
       'msiexec de arriba dice la causa.' + #13#10);
 end;
 
+{ v1.0.12: el Interactive Service solo acepta perfiles fuera de
+  su carpeta de configuración si el usuario es administrador o
+  está en el grupo local «OpenVPN Administrators» — y los
+  perfiles de la app viven en %LOCALAPPDATA%. El script
+  versionado junto a la app crea el grupo si falta, añade al
+  usuario de la sesión interactiva, verifica que el servicio
+  interactivo queda corriendo y deja su resultado en un archivo
+  que aquí se vuelca a openvpn-instalacion.txt. La pertenencia
+  al grupo se aplica al iniciar sesión: la app detecta si la
+  sesión aún no la refleja y avisa del cierre de sesión único. }
+procedure PrepararGrupoOpenVPN();
+var
+  ResultCode: Integer;
+  Ps: String;
+  Args: String;
+  Resultado: String;
+  Contenido: AnsiString;
+begin
+  Resultado := ExpandConstant('{app}\grupo-openvpn-resultado.txt');
+  Ps := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Args := '-NoProfile -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{app}\grupo_openvpn.ps1') +
+    '" -Resultado "' + Resultado + '"';
+  Exec(Ps, Args, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if LoadStringFromFile(Resultado, Contenido) then
+    AgregarLogOpenVPN('Grupo OpenVPN Administrators y servicio ' +
+      'interactivo:' + #13#10 + Contenido + #13#10)
+  else
+    AgregarLogOpenVPN('Grupo OpenVPN Administrators: el script ' +
+      'no dejo resultado (codigo ' + IntToStr(ResultCode) +
+      ').' + #13#10);
+end;
+
 procedure PrepararMotorOpenVPN();
 begin
-  LogOpenVPN := 'Antivirus Hogar PC v1.0.11 - motor VPN OpenVPN ' +
+  LogOpenVPN := 'Antivirus Hogar PC v1.0.12 - motor VPN OpenVPN ' +
     'durante la instalacion.' + #13#10 + #13#10;
   RetirarRestosSoftEther();
   InstalarOpenVPN();
+  PrepararGrupoOpenVPN();
   SaveStringToFile(ExpandConstant('{app}\openvpn-instalacion.txt'),
     LogOpenVPN, False);
 end;
@@ -317,7 +356,7 @@ procedure EscribirManifiestoComponentes();
 var
   Lineas: String;
 begin
-  Lineas := '["AntivirusHogarPC.exe", "icono.ico", "exclusion_defender.ps1"';
+  Lineas := '["AntivirusHogarPC.exe", "icono.ico", "exclusion_defender.ps1", "grupo_openvpn.ps1"';
   { v1.0.10: el instalador interno de OpenVPN conservado. }
   if OpenVPNMsiPath() <> '' then
     Lineas := Lineas + ', "openvpn\OpenVPN-2.7.9-I002-amd64.msi"';

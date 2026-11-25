@@ -29,6 +29,16 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.12",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "VPN Gate REPARADA DEL TODO: en la 1.0.11 el túnel llegaba a abrir, pero Windows negaba las rutas del tráfico porque la app lanzaba OpenVPN sin los privilegios de su servicio — el túnel quedaba abierto pero inútil, y encima quedaba un OpenVPN «huérfano» vivo sujetando la tarjeta. Ahora la app conecta a través del OpenVPN Interactive Service (el servicio oficial que hace las rutas con privilegios del sistema, igual que el programa oficial de OpenVPN), con arranque elevado de reserva si el servicio no puede.",
+            "El instalador deja tu usuario en el grupo «OpenVPN Administrators» y el servicio interactivo corriendo: sin ese grupo, el servicio de OpenVPN rechaza los perfiles de la app. Si Windows aún no lo aplica a tu sesión, la app te avisa de que cierres sesión una vez y, mientras tanto, conecta elevada.",
+            "Ningún OpenVPN huérfano más: un solo intento de conexión a la vez, y todo intento que no termina en «conectado» se cierra y se verifica cerrado antes de decir que falló. Al abrir, la app barre los huérfanos que sean suyos (los OpenVPN de otros programas no se tocan: si uno sujeta la tarjeta, la app lo dice).",
+            "Diagnóstico honesto de la VPN: si Windows niega las rutas, la pantalla lo dice tal cual («Windows negó crear las rutas del tráfico: no es la tarjeta ni el servidor») y si el túnel abre pero sin rutas, lo dice también («túnel abierto pero sin rutas: tu tráfico no sale por la VPN») y lo baja limpio. Las líneas informativas del registro ya no pueden convertirse en una causa falsa, y el detalle enseña el código de salida de OpenVPN.",
+        ],
+    },
+    {
         "version": "1.0.11",
         "fecha": "25/11/2026",
         "novedades": [

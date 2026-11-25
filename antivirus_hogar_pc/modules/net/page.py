@@ -582,9 +582,15 @@ class _PaginaRed(QWidget):
         self._ctx = ctx
         self._trabajos: list[_Trabajo] = []
         self.destroyed.connect(lambda _=None: _soltar_trabajos(self))
+        # v1.0.12: al cerrarse la página/app con un intento de
+        # conexión AÚN en curso, el intento se baja: jamás queda
+        # un openvpn huérfano sujetando la tarjeta.
+        self.destroyed.connect(
+            lambda _=None: srv.cancelar_intento_vpn())
         self._servidores: list = []       # lista completa descargada
         self._visibles: list = []         # lista filtrada/ordenada en pantalla
         self._servidor_conectado: str = ""  # hostname con el túnel arriba (v1.0.7)
+        self._vpn_conectando: bool = False  # un solo intento a la vez (v1.0.12)
 
         pagina, layout = pagina_base(
             "Red y VPN",
@@ -1064,11 +1070,22 @@ class _PaginaRed(QWidget):
             tabla.setColumnWidth(5, max(tabla.columnWidth(5), 250))
 
     def _conectar(self, servidor) -> None:
+        # v1.0.12: UN solo intento a la vez — un segundo clic
+        # mientras uno conecta no lanza otro openvpn encima del
+        # primero (la 1.0.11 los dejaba pelearse por la tarjeta y
+        # el primero quedaba huérfano).
+        if self._vpn_conectando:
+            self._lbl_vpn.setText(
+                "Ya hay una conexión en curso: espera a que "
+                "termine antes de conectar con otro servidor.")
+            return
+        self._vpn_conectando = True
         self._lbl_vpn.setStyleSheet("")
         self._lbl_vpn.setText(f"Conectando con {servidor.hostname}…")
         self._lbl_vpn_detalle.setText("")
 
         def _al_conectar(r: ResultadoModulo) -> None:
+            self._vpn_conectando = False
             if r.ok and (r.datos or {}).get("conectado"):
                 # v1.0.7: túnel confirmado por el motor → el botón de
                 # ESE servidor se pone verde y dice «Conectado».
