@@ -7,7 +7,7 @@ import os
 import sys
 
 APP_ID = "AntivirusHogarPC"
-VERSION = "1.0.13"
+VERSION = "1.0.14"
 
 # ---------------------------------------------------------------------------
 # Canal de actualización propio (mismo esquema que en Android: un
@@ -27,10 +27,15 @@ VPNGATE_API = "https://www.vpngate.net/api/iphone/"
 # Cadena de rutas del API de VPN Gate (v1.0.3): la principal HTTPS, la
 # HTTPS sin «www» y la HTTP del mismo servicio oficial. Verificado en
 # construcción: cuando la HTTPS principal corta, la HTTP responde.
+# v1.0.14: cuarta ruta, el ESPEJO público en GitHub (la misma lista
+# oficial republicada dos veces por hora, con las configs completas):
+# misma data y mismas credenciales, un camino más si el sitio
+# oficial cae entero (INVESTIGACION-FUENTES-VPN-EXTRA.md).
 VPNGATE_APIS = (
     "https://www.vpngate.net/api/iphone/",
     "https://vpngate.net/api/iphone/",
     "http://www.vpngate.net/api/iphone/",
+    "https://cdn.jsdelivr.net/gh/GeorgeXie2333/vpngate-list-mirror@latest/data/vpngate.csv",
 )
 
 # DNS filtrantes ofrecidos en el modo reforzado del bloqueador.
@@ -86,3 +91,14 @@ def ruta_respaldos() -> str:
 
 def ruta_actividad() -> str:
     return os.path.join(carpeta_datos(), "actividad.jsonl")
+
+
+def ruta_cache_fuentes_vpn() -> str:
+    """v1.0.14: la caché en disco de la lista VPN fusionada buena
+    (fuentes verificadas + veredictos de la sonda)."""
+    return os.path.join(carpeta_datos(), "vpn_fuentes_cache.json")
+
+
+def ruta_estado_fuentes_vpn() -> str:
+    """v1.0.14: el estado/cadencia del refresco de fuentes VPN."""
+    return os.path.join(carpeta_datos(), "vpn_fuentes_estado.json")

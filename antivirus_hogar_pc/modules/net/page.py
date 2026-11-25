@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
+from antivirus_hogar_pc.core import fuentes_vpn
 from antivirus_hogar_pc.core.v102 import valorar_velocidad
 from antivirus_hogar_pc.core.vpngate import ordenar_servidores, paises_disponibles
 from antivirus_hogar_pc.core.wifi_parse import frecuencia_mhz, valorar_wifi
@@ -591,6 +592,11 @@ class _PaginaRed(QWidget):
         self._visibles: list = []         # lista filtrada/ordenada en pantalla
         self._servidor_conectado: str = ""  # hostname con el túnel arriba (v1.0.7)
         self._vpn_conectando: bool = False  # un solo intento a la vez (v1.0.12)
+        # v1.0.14: veredictos del autoanálisis y de los intentos
+        # (clave «fuente:hostname» → {"estado", "cuando"}): el
+        # sello de verificación de cada fila y el orden
+        # «Recomendado» se pintan con esto.
+        self._veredictos: dict = {}
 
         pagina, layout = pagina_base(
             "Red y VPN",
@@ -678,7 +684,8 @@ class _PaginaRed(QWidget):
         layout.addWidget(tarjeta_vel)
 
         # --- VPN Gate ----------------------------------------------------------------
-        tarjeta_vpn, lay_v = tarjeta("VPN Gate (servidores de voluntarios)")
+        tarjeta_vpn, lay_v = tarjeta(
+            "VPN gratuita (VPN Gate y VPNBook, servidores de voluntarios)")
         self._tarjeta_vpn = tarjeta_vpn
         aviso = etiqueta(
             "AVISO: estos servidores los ofrecen VOLUNTARIOS y el operador puede "
@@ -706,6 +713,12 @@ class _PaginaRed(QWidget):
         fila_ctrl.addWidget(self._combo_pais)
         fila_ctrl.addWidget(QLabel("Ordenar por:"))
         self._combo_orden = QComboBox()
+        # v1.0.14: el orden por defecto es «Recomendado»
+        # (verificados primero; luego pocas sesiones y más
+        # tiempo en línea): la velocidad bruta deja de mandar,
+        # porque los nodos más rápidos de la lista pública son
+        # justo los que suelen estar llenos.
+        self._combo_orden.addItem("Recomendado", "recomendado")
         self._combo_orden.addItem("Velocidad", "velocidad")
         self._combo_orden.addItem("Ping (respuesta)", "ping")
         self._combo_orden.addItem("Sesiones actuales", "sesiones")
@@ -733,9 +746,14 @@ class _PaginaRed(QWidget):
         self._barra_vpn = BarraProgreso()
         self._barra_vpn.setVisible(False)
         lay_v.addWidget(self._barra_vpn)
-        self._tabla_vpn = QTableWidget(0, 6)
+        # v1.0.14: 8 columnas — la lista UNIFICADA enseña la
+        # FUENTE de cada servidor y su sello de VERIFICACIÓN con
+        # la hora del autoanálisis: [País, Servidor, Fuente,
+        # Velocidad, Ping, Sesiones, Verificación, Acción].
+        self._tabla_vpn = QTableWidget(0, 8)
         self._tabla_vpn.setHorizontalHeaderLabels(
-            ["País", "Servidor", "Velocidad", "Ping", "Sesiones", "Acción"])
+            ["País", "Servidor", "Fuente", "Velocidad", "Ping",
+             "Sesiones", "Verificación", "Acción"])
         # v1.0.10: altura de fila suficiente para el botón «Conectar»
         # completo. El tema da al botón ≈37 px (texto 13 px + padding
         # 8 px arriba/abajo + bordes) y el contenedor de la celda
@@ -915,15 +933,24 @@ class _PaginaRed(QWidget):
         # lista, el desplegable y la tabla se pueblan AL INSTANTE con
         # la lista de respaldo local — nunca quedan vacíos esperando a
         # la red; la lista en vivo reemplaza cuando llega.
+        # v1.0.14: el poblado previo es la CACHÉ buena en disco (la
+        # última lista fusionada real, con sus sellos) y solo sin
+        # caché se cae a las semillas fusionadas.
         if not self._servidores:
-            semilla = srv.servidores_semilla()
-            if semilla.ok:
-                self._aplicar_lista(semilla)
-                self._lbl_vpn.setStyleSheet(
-                    f"color: {theme.AMBAR}; font-weight: 600;")
-                self._lbl_vpn.setText(
-                    "⚠ " + (semilla.mensaje or "") +
-                    " Buscando la lista en vivo…")
+            previa = srv.servidores_cache_o_semilla()
+            if previa.ok:
+                self._aplicar_lista(previa)
+                datos_previa = (previa.datos
+                                if isinstance(previa.datos, dict) else {})
+                if datos_previa.get("es_cache"):
+                    self._lbl_vpn.setStyleSheet("")
+                    self._lbl_vpn.setText(previa.mensaje or "")
+                else:
+                    self._lbl_vpn.setStyleSheet(
+                        f"color: {theme.AMBAR}; font-weight: 600;")
+                    self._lbl_vpn.setText(
+                        "⚠ " + (previa.mensaje or "") +
+                        " Buscando la lista en vivo…")
             else:
                 self._lbl_vpn.setStyleSheet("")
                 self._lbl_vpn.setText("Descargando la lista de VPN Gate…")
@@ -967,6 +994,10 @@ class _PaginaRed(QWidget):
         else:  # compatibilidad: la lista pelada de la v1.0.2
             datos = {}
             self._servidores = list(resultado.datos or [])
+        # v1.0.14: los veredictos viajan con la lista (caché,
+        # refresco e intentos los actualizan en el servicio).
+        if isinstance(datos.get("veredictos"), dict):
+            self._veredictos = dict(datos["veredictos"])
         self._es_semilla_activa = bool(datos.get("es_semilla"))
         self._fecha_semilla = str(datos.get("fecha_semilla") or "")
         if datos.get("es_semilla"):
@@ -1000,13 +1031,59 @@ class _PaginaRed(QWidget):
         self._combo_pais.setCurrentIndex(indice if indice >= 0 else 0)
         self._combo_pais.blockSignals(False)
 
+    @staticmethod
+    def _texto_fuente(servidor) -> str:
+        """La marca de fuente de la fila (v1.0.14)."""
+        return {"vpngate": "VPN Gate",
+                "vpnbook": "VPNBook"}.get(
+                    getattr(servidor, "fuente", "vpngate") or "vpngate",
+                    "VPN Gate")
+
+    def _texto_verificacion(self, servidor) -> str:
+        """El sello de verificación de la fila, con su hora.
+
+        Solo los veredictos VIGENTES se enseñan como tales
+        («✓ Verificado 14:32», «Lleno/sin acceso 14:32», «No
+        responde 14:32»); un veredicto caducado vuelve a «Sin
+        verificar» con la hora del último intento, y sin sonda
+        ni intento previos, «Sin verificar» a secas.
+        """
+        estado, cuando = fuentes_vpn.veredicto_de(
+            self._veredictos, servidor)
+        if estado == "verificado":
+            return "✓ Verificado " + time.strftime(
+                "%H:%M", time.localtime(cuando))
+        if estado == "auth_failed":
+            return "Lleno/sin acceso " + time.strftime(
+                "%H:%M", time.localtime(cuando))
+        if estado == "inaccesible":
+            return "No responde " + time.strftime(
+                "%H:%M", time.localtime(cuando))
+        if cuando:
+            return "Sin verificar · " + time.strftime(
+                "%H:%M", time.localtime(cuando))
+        return "Sin verificar"
+
     def _repintar_servidores(self) -> None:
         if not self._servidores:
             return
         pais = self._combo_pais.currentData() or ""
-        criterio = self._combo_orden.currentData() or "velocidad"
+        criterio = self._combo_orden.currentData() or "recomendado"
         visibles = [s for s in self._servidores if not pais or s.pais == pais]
-        self._visibles = ordenar_servidores(visibles, criterio)
+        if criterio == "recomendado":
+            # v1.0.14: verificados primero; luego pocas sesiones
+            # y más tiempo en línea (core.fuentes_vpn).
+            self._visibles = fuentes_vpn.ordenar_candidatos(
+                visibles, self._veredictos)
+        else:
+            ordenados = ordenar_servidores(visibles, criterio)
+            # Dentro de cada grupo de veredicto manda el criterio
+            # elegido; entre grupos, el veredicto (orden estable).
+            ahora = time.time()
+            ordenados.sort(
+                key=lambda s: fuentes_vpn.rango_veredicto(
+                    self._veredictos, s, ahora))
+            self._visibles = ordenados
         texto = f"{len(self._visibles)} servidores en la lista."
         if getattr(self, "_es_semilla_activa", False):
             # El aviso de respaldo NO se pierde al repintar/filtrar.
@@ -1021,9 +1098,17 @@ class _PaginaRed(QWidget):
         for i, s in enumerate(self._visibles):
             tabla.setItem(i, 0, QTableWidgetItem(s.pais))
             tabla.setItem(i, 1, QTableWidgetItem(s.hostname))
-            tabla.setItem(i, 2, QTableWidgetItem(f"{s.velocidad_mbps:.0f} Mbps"))
-            tabla.setItem(i, 3, QTableWidgetItem(f"{s.ping_ms} ms"))
-            tabla.setItem(i, 4, QTableWidgetItem(str(s.sesiones)))
+            # v1.0.14: la FUENTE de la fila y su sello de
+            # verificación con la hora.
+            tabla.setItem(i, 2, QTableWidgetItem(self._texto_fuente(s)))
+            tabla.setItem(i, 3, QTableWidgetItem(
+                f"{s.velocidad_mbps:.0f} Mbps"
+                if s.velocidad_mbps else "—"))
+            tabla.setItem(i, 4, QTableWidgetItem(
+                f"{s.ping_ms} ms" if s.ping_ms < 9000 else "—"))
+            tabla.setItem(i, 5, QTableWidgetItem(str(s.sesiones)))
+            tabla.setItem(i, 6, QTableWidgetItem(
+                self._texto_verificacion(s)))
             # Celda de acción (v1.0.9, cambio pedido por el usuario):
             # un contenedor por fila. Sin conexión: solo «Conectar».
             # Con el túnel arriba en ESE servidor: su botón se pone
@@ -1054,7 +1139,7 @@ class _PaginaRed(QWidget):
                 boton.clicked.connect(
                     lambda _=False, serv=s: self._conectar(serv))
                 fila_botones.addWidget(boton)
-            tabla.setCellWidget(i, 5, celda)
+            tabla.setCellWidget(i, 7, celda)
         tabla.resizeColumnsToContents()
         # v1.0.10: red de seguridad de la altura de fila — tras
         # poblar, cada fila se ajusta a su contenido (el botón
@@ -1067,7 +1152,7 @@ class _PaginaRed(QWidget):
         if self._servidor_conectado:
             # v1.0.9: con dos botones en la fila conectada, la columna
             # de acción no debe quedarse estrecha y apretarlos.
-            tabla.setColumnWidth(5, max(tabla.columnWidth(5), 250))
+            tabla.setColumnWidth(7, max(tabla.columnWidth(7), 250))
 
     def _conectar(self, servidor) -> None:
         # v1.0.12: UN solo intento a la vez — un segundo clic
@@ -1086,16 +1171,28 @@ class _PaginaRed(QWidget):
 
         def _al_conectar(r: ResultadoModulo) -> None:
             self._vpn_conectando = False
+            # v1.0.14: el intento (y el failover) actualizan los
+            # veredictos: los sellos se repintan con lo aprendido.
+            if isinstance((r.datos or {}).get("veredictos"), dict):
+                self._veredictos = dict(r.datos["veredictos"])
             if r.ok and (r.datos or {}).get("conectado"):
                 # v1.0.7: túnel confirmado por el motor → el botón de
                 # ESE servidor se pone verde y dice «Conectado».
-                self._servidor_conectado = servidor.hostname
+                # v1.0.14: con failover, el servidor conectado puede
+                # ser OTRO (el que aceptó): manda el del resultado.
+                self._servidor_conectado = (
+                    (r.datos or {}).get("hostname") or servidor.hostname)
                 self._repintar_servidores()
                 self._lbl_vpn.setStyleSheet(
                     f"color: {theme.VERDE}; font-weight: 700;")
                 self._lbl_vpn.setText("Conectado: " + r.mensaje)
                 self._lbl_vpn_detalle.setText("")
             else:
+                # v1.0.14: los sellos se repintan con los
+                # veredictos del intento ANTES de fijar el mensaje
+                # (el repintado reescribe la etiqueta de estado).
+                if (r.datos or {}).get("veredictos"):
+                    self._repintar_servidores()
                 self._lbl_vpn.setStyleSheet("")
                 self._lbl_vpn.setText(r.mensaje)
                 # v1.0.11: la causa REAL, visible bajo el mensaje
@@ -1109,7 +1206,11 @@ class _PaginaRed(QWidget):
             # rótulo falso de «CONECTADA» se quedaba puesto).
             self._ver_estado_vpn()
 
-        _lanzar(self, lambda: srv.conectar_vpn(servidor), _al_conectar)
+        # v1.0.14: la lista completa viaja como candidatos del
+        # failover (el servicio salta solo al siguiente si el
+        # servidor elegido rechaza la conexión).
+        _lanzar(self, lambda: srv.conectar_vpn(
+            servidor, list(self._servidores)), _al_conectar)
 
     def _desconectar_vpn(self) -> None:
         self._btn_desconectar.setEnabled(False)

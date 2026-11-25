@@ -48,12 +48,12 @@ def test_version_vigente_1011():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core import notas_version
 
-    assert config.VERSION == "1.0.13"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.13"
-    notas = notas_version.notas_de("1.0.13")
+    assert config.VERSION == "1.0.14"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.14"
+    notas = notas_version.notas_de("1.0.14")
     assert notas is not None and len(notas["novedades"]) >= 3
     iss = _leer(os.path.join("packaging", "instalador.iss"))
-    assert '#define AppVersion "1.0.13"' in iss
+    assert '#define AppVersion "1.0.14"' in iss
 
 
 # === 1. LA CAUSA: la ruta escapada ==============================================
@@ -388,7 +388,7 @@ def test_ultimas_lineas_completas_al_registro_de_actividad(
                "Use --help for more information.")
     monkeypatch.setattr(
         srv.vpn_win, "conectar_openvpn",
-        lambda contenido, hostname: {
+        lambda contenido, hostname, **kw: {
             "ok": False, "mensaje": "fallo de opciones",
             "detalle": "Options warning: Bad backslash usage",
             "datos": {"ultimas_lineas": ultimas,
@@ -428,7 +428,7 @@ def test_pagina_muestra_el_detalle_tecnico_del_fallo(monkeypatch):
                         lambda: ResultadoModulo(ok=True, datos={}))
     monkeypatch.setattr(
         srv, "conectar_vpn",
-        lambda servidor: ResultadoModulo(
+        lambda servidor, candidatos=None: ResultadoModulo(
             ok=False, mensaje="fallo de opciones",
             detalle_tecnico="Options warning: Bad backslash usage"))
     widget = netpage.crear_pagina_red(ContextoModulo(servicios=None))

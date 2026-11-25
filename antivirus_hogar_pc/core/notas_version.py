@@ -23,11 +23,21 @@ QUE_HACE = [
     "Proteger: vigilancia de instalaciones, bloqueo de dominios peligrosos e informes de privacidad por app.",
     "Drivers: confirmación contra el Catálogo de Microsoft, Windows Update y el almacén local; instalación solo oficial, con punto de restauración antes.",
     "Discos y limpieza: salud SMART, optimización de volúmenes en segundo plano y limpieza de temporales y papelera.",
-    "Red y VPN: datos de tu Wi-Fi con detalle, velocidad real de internet en vivo y VPN gratuita de VPN Gate.",
+    "Red y VPN: datos de tu Wi-Fi con detalle, velocidad real de internet en vivo y VPN gratuita (VPN Gate y VPNBook) con autoanálisis de servidores.",
     "Actualizarse sola: el botón de actualización baja las versiones nuevas por un canal verificado (SHA-256).",
 ]
 
 NOTAS_VERSION: list[dict] = [
+    {
+        "version": "1.0.14",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "SI UN SERVIDOR ESTÁ LLENO, LA APP SALTA SOLA AL SIGUIENTE: algunos servidores de la lista pública rechazan la conexión aunque el programa se conecte bien (están llenos o fuera de servicio, y su saludo y su certificado son perfectos: solo se descubre al intentar entrar). Ahora, cuando un servidor dice que no, la app lo marca y prueba con el siguiente candidato hasta conectar o agotar los intentos, y si ninguno acepta lo dice tal cual: «los servidores probados están llenos o fuera de servicio». Nunca es tu credencial: es la correcta de cada fuente.",
+            "DOS FUENTES DE SERVIDORES, UNA SOLA LISTA: además de VPN Gate, la app trae ahora los servidores de VPNBook (Estados Unidos, Canadá, Reino Unido, Alemania y Francia), cada uno marcado con su fuente en la tabla. La contraseña de VPNBook cambia cada una o dos semanas y la app la lee de su página oficial en cada actualización de la lista: nunca va escrita dentro del programa.",
+            "AUTOANÁLISIS CON PRUEBA REAL: al abrir la app, en segundo plano y sin estorbar, la lista se actualiza sola (cada media hora) y la app comprueba DE VERDAD unos pocos servidores cada vez —conecta con ellos un instante y se desconecta— para saber cuáles funcionan. Cada fila enseña su sello («✓ Verificado» con la hora, «Lleno/sin acceso», «No responde» o «Sin verificar») y el orden nuevo «Recomendado» pone primero los verificados y luego los de pocas sesiones: los más rápidos de la lista solían ser justo los llenos.",
+            "LA LISTA NUNCA QUEDA VACÍA NI DESACTUALIZADA EN SILENCIO: la última lista buena queda guardada en el equipo y es la que ves al abrir, con sus sellos, mientras la nueva se busca en segundo plano. Si una actualización de la lista falla, la guardada no se toca.",
+        ],
+    },
     {
         "version": "1.0.13",
         "fecha": "25/11/2026",

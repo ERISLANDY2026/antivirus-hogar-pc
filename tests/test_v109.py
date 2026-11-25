@@ -63,7 +63,7 @@ def test_fila_conectada_lleva_conectado_verde_y_desconectar_rojo():
     pagina._servidor_conectado = conectado
     pagina._repintar_servidores()
 
-    celda0 = pagina._tabla_vpn.cellWidget(0, 5)
+    celda0 = pagina._tabla_vpn.cellWidget(0, 7)
     botones0 = {b.text(): b for b in celda0.findChildren(QPushButton)}
     assert set(botones0) == {"Conectado", "Desconectar"}
     assert theme.VERDE_BOTON in botones0["Conectado"].styleSheet()
@@ -71,10 +71,10 @@ def test_fila_conectada_lleva_conectado_verde_y_desconectar_rojo():
     assert theme.ROJO_BOTON in botones0["Desconectar"].styleSheet()
     assert botones0["Desconectar"].isEnabled() is True
 
-    celda1 = pagina._tabla_vpn.cellWidget(1, 5)
+    celda1 = pagina._tabla_vpn.cellWidget(1, 7)
     botones1 = {b.text(): b for b in celda1.findChildren(QPushButton)}
     assert set(botones1) == {"Conectar"}
-    assert config.VERSION == "1.0.13"
+    assert config.VERSION == "1.0.14"
     pagina.deleteLater()
     app.processEvents()
 

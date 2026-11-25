@@ -30,6 +30,12 @@ class ServidorVPN:
     operador: str
     mensaje: str
     ovpn_base64: str
+    # v1.0.14: la FUENTE de la que viene el servidor ("vpngate" |
+    # "vpnbook"). Las credenciales se resuelven POR FUENTE al
+    # conectar (core.fuentes_vpn.credenciales_de): las de VPN Gate
+    # son «vpn»/«vpn» y las de VPNBook, «vpnbook» + la contraseña
+    # vigente leída de su página oficial.
+    fuente: str = "vpngate"
 
     @property
     def velocidad_mbps(self) -> float:
@@ -38,6 +44,67 @@ class ServidorVPN:
     def generar_ovpn(self) -> str:
         datos = base64.b64decode(self.ovpn_base64)
         return datos.decode("utf-8", errors="replace")
+
+
+def extraer_remoto(contenido_ovpn: str) -> dict | None:
+    """El destino real de un perfil .ovpn: {"host", "puerto", "proto"}.
+
+    Sale de la PRIMERA línea `remote <host> <puerto> [proto]`; el
+    protocolo, si la línea remote no lo trae, sale de la línea
+    `proto …`. None si no hay remote utilizable. Es la base de la
+    validación estructural de la v1.0.14 (ninguna entrada entra
+    en la lista sin un destino real) y de la clave de
+    deduplicación entre fuentes.
+    """
+    import re
+
+    host = ""
+    puerto = 0
+    proto = ""
+    for linea in (contenido_ovpn or "").splitlines():
+        limpia = linea.strip()
+        baja = limpia.lower()
+        if baja.startswith("remote "):
+            partes = limpia.split()
+            if len(partes) >= 3:
+                host = partes[1].strip()
+                try:
+                    puerto = int(partes[2].strip())
+                except ValueError:
+                    puerto = 0
+                if len(partes) >= 4:
+                    proto = partes[3].strip().lower()
+            break
+    if not proto:
+        for linea in (contenido_ovpn or "").splitlines():
+            baja = linea.strip().lower()
+            if baja.startswith("proto "):
+                partes = linea.strip().split()
+                if len(partes) >= 2:
+                    proto = partes[1].lower()
+                break
+    if not host or not (1 <= puerto <= 65535):
+        return None
+    if proto not in ("udp", "tcp"):
+        proto = "udp" if "udp" in proto else "tcp" if "tcp" in proto else ""
+    if not proto:
+        return None
+    return {"host": host, "puerto": puerto, "proto": proto}
+
+
+def config_estructuralmente_valida(contenido_ovpn: str) -> bool:
+    """¿El perfil parsea como un cliente OpenVPN con destino real?
+
+    Exige la directiva `client` y un `remote` con puerto válido y
+    protocolo udp/tcp. Es la etapa 0 del autoanálisis de la
+    v1.0.14: barata, sin red, para TODAS las entradas de todas
+    las fuentes antes de aceptarlas en la lista fusionada.
+    """
+    texto = contenido_ovpn or ""
+    tiene_client = any(
+        linea.strip().lower() == "client"
+        for linea in texto.splitlines())
+    return tiene_client and extraer_remoto(texto) is not None
 
 
 def _entero(texto: str, defecto: int = 0) -> int:

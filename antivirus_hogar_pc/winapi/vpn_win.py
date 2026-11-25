@@ -110,6 +110,23 @@ puerta previa manda de verdad: conectar honra la vía que la
 puerta decidió (servicio o elevado) y cada intento anota en el
 registro de actividad la vía, el aviso de la puerta y el primer
 sondeo, para que el próximo fallo se diagnostique sin fotos.
+
+v1.0.14 — LISTA UNIFICADA Y SONDA (investigaciones del
+2026-11-25): (1) las credenciales ya NO son fijas de VPN Gate:
+conectar recibe las de la FUENTE del servidor (VPN Gate
+«vpn»/«vpn»; VPNBook «vpnbook» + la contraseña vigente leída de
+su página), porque la lista ahora mezcla fuentes
+(core.fuentes_vpn); (2) MODO SONDA (`sonda=True`): el perfil
+lleva `route-nopull` (la sonda nunca secuestra el tráfico del
+usuario) y el éxito es la ACEPTACIÓN del servidor —el
+PUSH_REPLY del registro o el CONNECTED,SUCCESS de la gestión—,
+tras lo cual el intento se baja al instante: es la prueba real
+de «este servidor funciona» del autoanálisis, la única que
+distingue un nodo sano de uno lleno (esos pasan el TLS y
+rechazan en la autenticación, AUTH_FAILED); (3) cada resultado
+de fallo trae datos["familia"] (la familia del clasificador):
+el failover de la capa de servicios salta al siguiente
+candidato SOLO ante familias del servidor.
 """
 import atexit
 import os
@@ -456,7 +473,8 @@ def version_openvpn() -> str:
         return ""
 
 
-def preparar_perfil_vpngate(contenido: str, ruta_credenciales: str) -> str:
+def preparar_perfil_vpngate(contenido: str, ruta_credenciales: str,
+                            lineas_extra=()) -> str:
     """Prepara el .ovpn de VPN Gate para el motor de la app.
 
     - Quita las líneas que la app controla (auth-user-pass,
@@ -475,6 +493,8 @@ def preparar_perfil_vpngate(contenido: str, ruta_credenciales: str) -> str:
       2.5+ el `cipher` antiguo quedó en desuso y sin el respaldo
       la negociación con servidores viejos de VPN Gate puede
       fallar. No se toca nada más del perfil.
+    - v1.0.14: `lineas_extra` añade directivas al final (la sonda
+      pasa «route-nopull» para no tocar el tráfico del usuario).
     """
     salida = []
     cifrado = ""
@@ -498,6 +518,9 @@ def preparar_perfil_vpngate(contenido: str, ruta_credenciales: str) -> str:
     salida.append(f'auth-user-pass "{ruta_en_perfil}"')
     if cifrado and not trae_data_ciphers:
         salida.append(f"data-ciphers-fallback {cifrado}")
+    for extra in lineas_extra or ():
+        if str(extra).strip():
+            salida.append(str(extra).strip())
     return "\n".join(salida) + "\n"
 
 
@@ -1467,10 +1490,15 @@ def _mensaje_familia(familia: str, causa: str,
                 "para que su instalador deje los permisos en su "
                 "sitio.", causa)
     if familia == "credenciales":
+        # v1.0.14 (investigación A): con las credenciales
+        # correctas de su fuente, un AUTH_FAILED es el servidor
+        # diciendo «no» — está lleno o fuera de servicio aunque
+        # siga anunciado. Jamás se culpa a la credencial.
         return ("El servidor rechazó el inicio de sesión "
-                "(autenticación): VPN Gate acepta usuario y "
-                "contraseña «vpn»; si este servidor pide otra cosa, "
-                "elige otro de la lista.", causa)
+                "(autenticación). No es tu credencial: es la "
+                "correcta de su fuente. Ese servidor está lleno "
+                "o fuera de servicio en este momento; la app lo "
+                "marca y prueba con el siguiente.", causa)
     if familia == "tarjeta":
         return ("OpenVPN no pudo abrir su tarjeta virtual "
                 "(TAP-Windows/DCO). Reinstala la app para repararla: "
@@ -1813,8 +1841,20 @@ def _muerte_probada(proceso, puerto, ruta_log: str = "") -> bool:
 
 
 def conectar_openvpn(contenido_ovpn: str, hostname: str,
-                     espera: int = 45) -> dict:
+                     espera: int = 45, usuario: str | None = None,
+                     clave: str | None = None,
+                     sonda: bool = False) -> dict:
     """Conecta con un servidor de VPN Gate por el motor OpenVPN.
+
+    v1.0.14: `usuario`/`clave` son las credenciales DE LA FUENTE
+    del servidor (por defecto las de VPN Gate, «vpn»/«vpn»: el
+    comportamiento de siempre). Con `sonda=True` no se busca un
+    túnel para el usuario: se comprueba que el servidor ACEPTA
+    (PUSH_REPLY o CONNECTED,SUCCESS) con un perfil route-nopull
+    y el intento se baja al instante — el resultado trae
+    datos["sonda"]=True y datos["verificado"]=True si aceptó.
+    Todo fallo trae datos["familia"] para el failover.
+
 
     v1.0.12: openvpn se lanza por el **Interactive Service**
     (rutas/IP/DNS con privilegios del servicio; reserva elevada
@@ -1841,17 +1881,18 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
     hostname = (hostname or "").strip()
     if not hostname:
         return {"ok": False, "mensaje": "Falta el servidor al que conectar.",
-                "detalle": "", "datos": {}}
+                "detalle": "", "datos": {"familia": "local"}}
     ruta_exe = ruta_openvpn_exe()
     if not ruta_exe:
         return {"ok": False,
                 "mensaje": "OpenVPN no está en este equipo.",
-                "detalle": "openvpn.exe no encontrado.", "datos": {}}
+                "detalle": "openvpn.exe no encontrado.",
+                "datos": {"familia": "local"}}
     if not (contenido_ovpn or "").strip():
         return {"ok": False,
                 "mensaje": "El servidor no trajo su perfil de conexión "
                            "(.ovpn): elige otro de la lista.",
-                "detalle": "", "datos": {}}
+                "detalle": "", "datos": {"familia": "local"}}
     # v1.0.12: un solo intento a la vez + barrido de huérfanos
     # propios antes de tocar nada.
     _cerrar_intento_previo()
@@ -1863,19 +1904,25 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                            "app): ciérralo y vuelve a intentarlo.",
                 "detalle": "Hay un proceso openvpn.exe ajeno a la "
                            "app con la tarjeta TAP-Windows en uso.",
-                "datos": {}}
+                "datos": {"familia": "local"}}
     puerta = puerta_previa_openvpn()
     if not puerta["listo"]:
         return {"ok": False, "mensaje": puerta["motivo"],
-                "detalle": "", "datos": {}}
+                "detalle": "", "datos": {"familia": "local"}}
     aviso_puerta = puerta.get("aviso", "")
     carpeta = carpeta_perfiles_vpn()
     ruta_cred = os.path.join(carpeta, "vpngate-credenciales.txt")
+    # v1.0.14: las credenciales son las de la FUENTE del servidor
+    # (parámetros); sin parámetros, las de VPN Gate de siempre.
+    usuario_efectivo = USUARIO_VPNGATE if usuario is None else usuario
+    clave_efectiva = CLAVE_VPNGATE if clave is None else clave
     with open(ruta_cred, "w", encoding="utf-8", newline="\n") as f:
-        f.write(f"{USUARIO_VPNGATE}\n{CLAVE_VPNGATE}\n")
+        f.write(f"{usuario_efectivo}\n{clave_efectiva}\n")
     ruta_perfil = os.path.join(carpeta, "vpngate-activo.ovpn")
     with open(ruta_perfil, "w", encoding="utf-8", newline="\n") as f:
-        f.write(preparar_perfil_vpngate(contenido_ovpn, ruta_cred))
+        f.write(preparar_perfil_vpngate(
+            contenido_ovpn, ruta_cred,
+            lineas_extra=("route-nopull",) if sonda else ()))
     ruta_log = os.path.join(carpeta, "openvpn-conexion.log")
     # v1.0.11: el registro del intento anterior NO se borra: rota
     # con fecha/hora (se conservan los últimos 5).
@@ -1900,7 +1947,7 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
         _VIA_PREFERIDA = ""
         return {"ok": False,
                 "mensaje": "No se pudo arrancar el motor de OpenVPN.",
-                "detalle": str(exc), "datos": {}}
+                "detalle": str(exc), "datos": {"familia": "local"}}
     _VIA_PREFERIDA = ""
     proceso = _PROCESO
     via = getattr(proceso, "via", "") or ""
@@ -1970,7 +2017,8 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                         "detalle": detalle,
                         "datos": {"codigo_salida": codigo,
                                   "ultimas_lineas": ultimas,
-                                  "via": via}}
+                                  "via": via,
+                                  "familia": analisis["familia"]}}
             try:
                 salida = _mgmt_enviar(puerto, "state", timeout=5)
             except Exception:
@@ -1983,6 +2031,22 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                     + ("respondió." if salida else "no respondió.")
                     + f" poll()={proceso.poll()!r}.")
             if salida and interpretar_estado_mgmt(salida)["conectado"]:
+                if sonda:
+                    # v1.0.14: la sonda ya probó lo que venía a
+                    # probar (el servidor ACEPTA y el túnel se
+                    # levanta en esta máquina): se devuelve el
+                    # veredicto y el finally baja el intento al
+                    # instante — la sonda nunca deja un túnel
+                    # puesto ni toca el tráfico (route-nopull).
+                    return {"ok": True,
+                            "mensaje": (f"Sonda: el servidor "
+                                        f"{hostname} acepta y "
+                                        "conecta."),
+                            "detalle": aviso,
+                            "datos": {"sonda": True,
+                                      "verificado": True,
+                                      "hostname": hostname,
+                                      "via": via}}
                 # v1.0.12: confirmado el túnel, se revisa el
                 # registro: si las rutas fallaron, el túnel está
                 # abierto pero INÚTIL — se dice tal cual y el
@@ -2000,7 +2064,7 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                                 "ni el servidor: es un problema de "
                                 "permisos en este equipo."),
                             "detalle": ultimas or analisis["causa"],
-                            "datos": {"via": via,
+                            "datos": {"via": via, "familia": "rutas",
                                       "ultimas_lineas": ultimas}}
                 _guardar_sesion({"hostname": hostname,
                                  "puerto": puerto,
@@ -2018,6 +2082,23 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                                   "via": "openvpn",
                                   "via_arranque": via,
                                   "puerto_mgmt": puerto}}
+            if sonda:
+                # v1.0.14: la aceptación del servidor también se
+                # conoce por el registro —el PUSH_REPLY llega tras
+                # autenticar, ANTES de tocar rutas ni tarjeta—:
+                # la sonda decide en ese punto y el finally baja
+                # el intento al instante.
+                if any("push_reply" in linea.lower()
+                       for linea in _lineas_archivo(ruta_log)):
+                    return {"ok": True,
+                            "mensaje": (f"Sonda: el servidor "
+                                        f"{hostname} acepta la "
+                                        "conexión."),
+                            "detalle": aviso,
+                            "datos": {"sonda": True,
+                                      "verificado": True,
+                                      "hostname": hostname,
+                                      "via": via}}
             time.sleep(2)
         # Timeout SIN muerte probada: quien detiene el intento
         # es la PROPIA APP (el finally lo baja) y el resultado
@@ -2044,7 +2125,14 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                            or _DETALLE_SIN_REGISTRO,
                 "datos": {"codigo_salida": codigo,
                           "ultimas_lineas": ultimas,
-                          "via": via}}
+                          "via": via,
+                          # v1.0.14: para el failover, un intento
+                          # de usuario sin respuesta cuenta como
+                          # fallo del servidor («sin_respuesta»);
+                          # para la SONDA, un timeout no condena
+                          # al nodo (puede ser lentitud): sin
+                          # familia, sin veredicto.
+                          "familia": "" if sonda else "sin_respuesta"}}
     finally:
         if not exito:
             # Limpieza garantizada: proceso cerrado y verificado,

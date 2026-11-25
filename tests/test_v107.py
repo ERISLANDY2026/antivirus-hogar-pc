@@ -27,9 +27,9 @@ def test_notas_y_version_107():
 
     # v1.0.13: la versión vigente sube (arreglo del motor VPN);
     # las notas de la 1.0.10 y anteriores quedan en el historial.
-    assert config.VERSION == "1.0.13"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.13"
-    notas = notas_version.notas_de("1.0.13")
+    assert config.VERSION == "1.0.14"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.14"
+    notas = notas_version.notas_de("1.0.14")
     assert notas is not None and len(notas["novedades"]) >= 3
     notas = notas_version.notas_de("1.0.10")
     assert notas is not None and len(notas["novedades"]) >= 3
@@ -53,7 +53,7 @@ def test_instalador_lleva_openvpn_incorporado():
     with open(os.path.join(raiz, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
         iss = f.read()
-    assert '#define AppVersion "1.0.13"' in iss  # v1.0.12: vigente
+    assert '#define AppVersion "1.0.14"' in iss  # v1.0.12: vigente
     # El payload de OpenVPN, a {app}\openvpn, y su instalación silenciosa.
     assert "openvpn\\OpenVPN-2.7.9-I002-amd64.msi" in iss
     assert "msiexec" in iss
@@ -155,9 +155,9 @@ def test_servicios_conectar_vpn_usa_openvpn(monkeypatch, tmp_path):
     monkeypatch.setattr(srv.vpn_win, "openvpn_instalado", lambda: True)
     monkeypatch.setattr(
         srv.vpn_win, "conectar_openvpn",
-        lambda contenido, hostname: {"ok": True, "mensaje": "",
-                                     "detalle": "",
-                                     "datos": {"via": "openvpn"}})
+        lambda contenido, hostname, **kw: {"ok": True, "mensaje": "",
+                                           "detalle": "",
+                                           "datos": {"via": "openvpn"}})
 
     class _Serv:
         hostname = "vpn123.opengw.net"
