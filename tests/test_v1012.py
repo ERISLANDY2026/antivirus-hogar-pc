@@ -559,13 +559,28 @@ def test_puerta_sesion_sin_reflejar_avisa_y_usa_elevado(monkeypatch):
     assert "CIERRA" in puerta["aviso"] and "SESIÓN" in puerta["aviso"]
 
 
-def test_puerta_sin_tarjeta_bloquea(monkeypatch):
+def test_puerta_sin_tarjeta_no_bloquea_solo_avisa(monkeypatch):
+    # La detección del adaptador es por nombre y puede fallar:
+    # no bloquea (si la tarjeta falta de verdad, openvpn muere
+    # con su error real y el clasificador dice «tarjeta»).
     monkeypatch.setattr(vpn_win, "es_windows", lambda: True)
     monkeypatch.setattr(vpn_win, "openvpn_instalado", lambda: True)
     monkeypatch.setattr(vpn_win, "hay_tap_windows", lambda: False)
+    monkeypatch.setattr(vpn_win, "_servicio_interactivo_activo",
+                        lambda: True)
+    monkeypatch.setattr(vpn_win, "_usuario_en_grupo_sesion",
+                        lambda: True)
+    puerta = vpn_win.puerta_previa_openvpn()
+    assert puerta["listo"] is True
+    assert "tarjeta virtual" in puerta["aviso"]
+
+
+def test_puerta_sin_openvpn_si_bloquea(monkeypatch):
+    monkeypatch.setattr(vpn_win, "es_windows", lambda: True)
+    monkeypatch.setattr(vpn_win, "openvpn_instalado", lambda: False)
     puerta = vpn_win.puerta_previa_openvpn()
     assert puerta["listo"] is False
-    assert "tarjeta virtual" in puerta["motivo"]
+    assert "no está instalado" in puerta["motivo"]
 
 
 def test_diagnostico_trae_puerta_y_grupo(entorno, monkeypatch):

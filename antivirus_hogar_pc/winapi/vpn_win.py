@@ -1926,9 +1926,13 @@ def puerta_previa_openvpn() -> dict:
       en el grupo, o está añadido pero su sesión aún no lo
       refleja (aviso de cierre de sesión pendiente): se usa la
       reserva elevada para este intento.
-    - listo=False SOLO si en Windows falta el adaptador TAP/DCO
-      (sin tarjeta no hay túnel por ninguna vía) o falta el
-      ejecutable. Fuera de Windows (pruebas) la puerta no bloquea.
+    - listo=False SOLO si falta el ejecutable. El adaptador NO
+      bloquea: su detección es por nombre en la lista de Windows
+      y puede fallar (DCO con otro nombre, permisos); si la
+      tarjeta falta de verdad, openvpn muere con su error real y
+      el clasificador lo reporta como familia «tarjeta». La
+      ausencia detectada queda como AVISO. Fuera de Windows
+      (pruebas) la puerta no bloquea.
     """
     resultado = {"listo": True, "via": "servicio", "aviso": "",
                  "motivo": ""}
@@ -1939,33 +1943,33 @@ def puerta_previa_openvpn() -> dict:
                 "motivo": "OpenVPN no está instalado en este "
                           "equipo: instala (o reinstala) la app."}
     if not hay_tap_windows():
-        return {"listo": False, "via": "servicio", "aviso": "",
-                "motivo": "Windows no ve la tarjeta virtual de "
-                          "OpenVPN (TAP-Windows/DCO): reinstala la "
-                          "app para que su instalador la deje en "
-                          "su sitio."}
+        resultado["aviso"] = (
+            "Windows no muestra la tarjeta virtual de OpenVPN "
+            "(TAP-Windows/DCO) en su lista de adaptadores: si la "
+            "conexión falla por la tarjeta, reinstala la app para "
+            "que su instalador la deje en su sitio.")
     if not _servicio_interactivo_activo():
         resultado["via"] = "elevado"
-        resultado["aviso"] = (
+        resultado["aviso"] = (resultado["aviso"] + " " + (
             "El servicio interactivo de OpenVPN no está corriendo: "
-            "este intento se lanzará elevado.")
+            "este intento se lanzará elevado.")).strip()
         return resultado
     if _usuario_en_grupo_sesion():
         return resultado
     if _usuario_en_grupo_directorio():
         resultado["via"] = "elevado"
-        resultado["aviso"] = (
+        resultado["aviso"] = (resultado["aviso"] + " " + (
             "Ya estás en el grupo «OpenVPN Administrators», pero "
             "esta sesión de Windows aún no lo refleja: CIERRA "
             "SESIÓN una vez y vuelve a entrar para que la VPN use "
             "su vía normal. Este intento se lanzará elevado "
-            "mientras tanto.")
+            "mientras tanto.")).strip()
         return resultado
     resultado["via"] = "elevado"
-    resultado["aviso"] = (
+    resultado["aviso"] = (resultado["aviso"] + " " + (
         "Tu usuario no está en el grupo «OpenVPN Administrators» "
         "(el instalador de la app lo deja hecho): este intento se "
-        "lanzará elevado. Si se repite, reinstala la app.")
+        "lanzará elevado. Si se repite, reinstala la app.")).strip()
     return resultado
 
 
