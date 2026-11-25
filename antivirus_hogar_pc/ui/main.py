@@ -197,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass  # el icono nunca debe impedir abrir la app
     servicios = ServiciosApp()
+    # Idioma guardado (v1.0.14): se fija antes de crear la
+    # ventana para que todo nazca en el idioma elegido.
+    from ..core import i18n as _i18n
+
+    _i18n.fijar_idioma(getattr(servicios.ajustes, "idioma", "es"))
     if servicios.ajustes.letra_grande:
         fuente = app.font()
         fuente.setPointSizeF(fuente.pointSizeF() * 1.125)
@@ -267,14 +272,20 @@ def main(argv: list[str] | None = None) -> int:
                           _escaneo_desde_bandeja, _salir_de_verdad,
                           padre=ventana)
         ventana.fijar_bandeja(bandeja)
+        # v1.0.14: al cambiar el idioma en el panel, el menú de
+        # la bandeja se retraduce en el acto.
+        ventana.al_cambiar_idioma = bandeja.retraducir
 
         def _aviso_escaneo(info):
             if info.get("hallazgos", 0) > 0:
+                from ..core.i18n import t as _t
+
                 bandeja.avisar(
                     "Antivirus Hogar PC",
-                    f"Un escaneo terminó con {info['hallazgos']} "
-                    "hallazgo(s). Abre la app y decide qué hacer: "
-                    "la app nunca actúa sola.")
+                    _t("Un escaneo terminó con {n} "
+                       "hallazgo(s). Abre la app y decide qué hacer: "
+                       "la app nunca actúa sola.",
+                       n=info['hallazgos']))
 
         servicios.al_registrar_escaneo = _aviso_escaneo
     except Exception:
@@ -334,10 +345,12 @@ def main(argv: list[str] | None = None) -> int:
             def _rutina_terminada(_r):
                 ventana.refrescar_rutina()
                 if bandeja is not None:
+                    from ..core.i18n import t as _t
+
                     bandeja.avisar(
                         "Antivirus Hogar PC",
-                        "La rutina automática de arranque terminó. "
-                        "La app sigue en la bandeja.")
+                        _t("La rutina automática de arranque terminó. "
+                           "La app sigue en la bandeja."))
 
             QTimer.singleShot(
                 2500,

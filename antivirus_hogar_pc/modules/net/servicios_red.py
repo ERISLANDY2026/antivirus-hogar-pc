@@ -11,6 +11,7 @@ import time
 from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import ActualizacionWindows, ResultadoModulo
 from antivirus_hogar_pc.core import fuentes_vpn as fuentes
+from antivirus_hogar_pc.core.i18n import t
 from antivirus_hogar_pc.core import updater
 from antivirus_hogar_pc.core.v102 import valorar_velocidad
 from antivirus_hogar_pc.core.velocidad import (
@@ -425,26 +426,29 @@ def conectar_vpn(servidor: ServidorVPN,
                 aviso = str(datos_ov.get("detalle") or "").strip()
                 nota_salto = ""
                 if candidato.hostname != servidor.hostname:
-                    nota_salto = (
-                        f" El servidor {servidor.hostname} no aceptó "
-                        "la conexión (lleno o fuera de servicio); "
-                        "la app probó con el siguiente y conectó "
-                        "con este.")
+                    nota_salto = t(
+                        " El servidor {host} no aceptó la conexión "
+                        "(lleno o fuera de servicio); la app probó "
+                        "con el siguiente y conectó con este.",
+                        host=servidor.hostname)
                 return ResultadoModulo(
                     ok=True,
-                    mensaje=(f"Conectado a {candidato.hostname} "
-                             f"({candidato.pais}) con OpenVPN: el túnel "
-                             "está arriba y trabaja en segundo plano, sin "
-                             "que tengas que abrir ningún otro programa."
+                    mensaje=(t("Conectado a {host} ({pais}) con "
+                               "OpenVPN: el túnel está arriba y "
+                               "trabaja en segundo plano, sin que "
+                               "tengas que abrir ningún otro programa.",
+                               host=candidato.hostname,
+                               pais=candidato.pais)
                              + nota_salto
-                             + (f" Aviso: {aviso}" if aviso else "")),
+                             + (t(" Aviso: {aviso}", aviso=aviso)
+                                if aviso else "")),
                     datos={"via": "openvpn", "conectado": True,
                            "hostname": candidato.hostname,
                            "intentos": intentos,
                            "veredictos": dict(_VEREDICTOS)},
                 )
             mensaje_fallo = (datos_ov.get("mensaje") or
-                             "No se pudo conectar con OpenVPN.")
+                             t("No se pudo conectar con OpenVPN."))
             detalle_fallo = datos_ov.get("detalle") or ""
             datos_motor = datos_ov.get("datos") or {}
             familia = str(datos_motor.get("familia") or "")
@@ -467,25 +471,26 @@ def conectar_vpn(servidor: ServidorVPN,
         # --- desenlace: nadie conectó ---
         if ultimo is None:
             return ResultadoModulo(
-                ok=False, mensaje="No se pudo conectar con OpenVPN.",
+                ok=False, mensaje=t(t("No se pudo conectar con OpenVPN.")),
                 datos={"intentos": intentos,
                        "veredictos": dict(_VEREDICTOS)})
         _cand, datos_ov = ultimo
         mensaje_fallo = (datos_ov.get("mensaje") or
-                         "No se pudo conectar con OpenVPN.")
+                         t("No se pudo conectar con OpenVPN."))
         detalle_fallo = datos_ov.get("detalle") or ""
         if (len(intentos) > 1 and all(
                 i["familia"] in fuentes.FAMILIAS_SERVIDOR
                 for i in intentos)):
             return ResultadoModulo(
                 ok=False,
-                mensaje=(f"Ningún servidor aceptó la conexión: se "
-                         f"probaron {len(intentos)} servidores y "
-                         "todos están llenos o fuera de servicio "
-                         "en este momento. No es tu conexión ni tu "
-                         "credencial: es el estado de los servidores "
-                         "gratuitos. Espera unos minutos o elige "
-                         "otro país y vuelve a intentarlo."),
+                mensaje=t("Ningún servidor aceptó la conexión: se "
+                          "probaron {n} servidores y todos están "
+                          "llenos o fuera de servicio en este "
+                          "momento. No es tu conexión ni tu "
+                          "credencial: es el estado de los servidores "
+                          "gratuitos. Espera unos minutos o elige "
+                          "otro país y vuelve a intentarlo.",
+                          n=len(intentos)),
                 detalle_tecnico=detalle_fallo,
                 datos={"intentos": intentos,
                        "veredictos": dict(_VEREDICTOS)},
@@ -504,16 +509,17 @@ def conectar_vpn(servidor: ServidorVPN,
         vpn_win.guardar_ovpn, servidor.generar_ovpn(), vpn_win.carpeta_perfiles_vpn(), nombre)
     if not res_guardar.ok:
         return ResultadoModulo(
-            ok=False, mensaje="No se pudo guardar el perfil de conexión.",
+            ok=False, mensaje=t("No se pudo guardar el perfil de conexión."),
             detalle_tecnico=res_guardar.mensaje)
     ruta = res_guardar.datos
     if not clientes:
         return ResultadoModulo(
             ok=False,
-            mensaje=("El perfil quedó guardado, pero no se encontró ningún cliente VPN "
-                     "instalado. Instala OpenVPN (el de la comunidad, el que "
-                     "trae esta app) u OpenVPN Connect, y luego abre el perfil "
-                     f"desde la carpeta de perfiles:\n{ruta}"),
+            mensaje=t("El perfil quedó guardado, pero no se encontró "
+                      "ningún cliente VPN instalado. Instala OpenVPN "
+                      "(el de la comunidad, el que trae esta app) u "
+                      "OpenVPN Connect, y luego abre el perfil desde "
+                      "la carpeta de perfiles:\n{ruta}", ruta=ruta),
             datos={"ruta_ovpn": ruta},
         )
     cliente = clientes[0]
@@ -522,14 +528,16 @@ def conectar_vpn(servidor: ServidorVPN,
         _guardar_estado_vpn(servidor)
         return ResultadoModulo(
             ok=True,
-            mensaje=(f"Perfil entregado a {cliente['nombre']}. Termina la conexión "
-                     "en esa aplicación; esta app no crea el túnel."),
+            mensaje=t("Perfil entregado a {nombre}. Termina la "
+                      "conexión en esa aplicación; esta app no crea "
+                      "el túnel.", nombre=cliente['nombre']),
             datos={"ruta_ovpn": ruta, "cliente": cliente["nombre"]},
         )
     return ResultadoModulo(
         ok=False,
-        mensaje=(f"No se pudo abrir el perfil con {cliente['nombre']}. "
-                 f"Ábrelo a mano desde:\n{ruta}"),
+        mensaje=t("No se pudo abrir el perfil con {nombre}. "
+                  "Ábrelo a mano desde:\n{ruta}",
+                  nombre=cliente['nombre'], ruta=ruta),
         datos={"ruta_ovpn": ruta},
         detalle_tecnico=res_abrir.mensaje,
     )
@@ -786,13 +794,12 @@ def estado_vpn() -> ResultadoModulo:
     conectada = conectada_ov
     if conectada:
         via = " con OpenVPN" if conectada_ov else ""
-        mensaje = (f"VPN CONECTADA a {guardado.get('hostname') or 'un servidor'}"
-                   f" ({guardado.get('pais') or 'país sin anotar'}){via}.")
+        mensaje = t("VPN CONECTADA a {host} ({pais}){via}.",
+                    host=guardado.get('hostname') or t('un servidor'),
+                    pais=guardado.get('pais') or t('país sin anotar'),
+                    via=t(" con OpenVPN") if conectada_ov else "")
     else:
-        mensaje = ("VPN desconectada: no hay ningún túnel en marcha. "
-                   "Pulsa «Conectar» en un servidor de la lista: con "
-                   "OpenVPN (incluido) la app levanta el túnel ella "
-                   "misma; sin él, le entrega el perfil a tu cliente VPN.")
+        mensaje = t("VPN desconectada: no hay ningún túnel en marcha. Pulsa «Conectar» en un servidor de la lista: con OpenVPN (incluido) la app levanta el túnel ella misma; sin él, le entrega el perfil a tu cliente VPN.")
     return ResultadoModulo(ok=True, mensaje=mensaje, datos={
         "clientes": nombres, "ip": ip, "conectada": conectada,
         "servidor": guardado.get("hostname", ""), "pais": guardado.get("pais", ""),
@@ -853,9 +860,7 @@ def desconectar_vpn() -> ResultadoModulo:
                              daemon=True).start()
             return ResultadoModulo(
                 ok=True,
-                mensaje=("VPN desconectada: OpenVPN bajó el túnel. "
-                         "Tu IP pública volverá a ser la de tu "
-                         "proveedor en unos segundos."))
+                mensaje=t("VPN desconectada: OpenVPN bajó el túnel. Tu IP pública volverá a ser la de tu proveedor en unos segundos."))
     res = seguro(vpn_win.terminar_procesos_openvpn)
     cerrados = int(res.datos) if res.ok and res.datos else 0
     habia_estado = bool(_leer_estado_vpn())
@@ -863,16 +868,11 @@ def desconectar_vpn() -> ResultadoModulo:
     if cerrados:
         return ResultadoModulo(
             ok=True,
-            mensaje=(f"VPN desconectada: se cerró el proceso de OpenVPN "
-                    f"({cerrados} conexión(es)). Tu IP pública volverá a ser "
-                    "la de tu proveedor en unos segundos."))
+            mensaje=t("VPN desconectada: se cerró el proceso de OpenVPN ({n} conexión(es)). Tu IP pública volverá a ser la de tu proveedor en unos segundos.", n=cerrados))
     if habia_estado:
         return ResultadoModulo(
             ok=True,
-            mensaje=("No se encontró ningún proceso OpenVPN en marcha (la "
-                    "conexión ya estaba cerrada o la lleva otro cliente "
-                    "VPN, que se desconecta en su propia ventana). El "
-                    "estado guardado quedó limpio: VPN desconectada."))
+            mensaje=t("No se encontró ningún proceso OpenVPN en marcha (la conexión ya estaba cerrada o la lleva otro cliente VPN, que se desconecta en su propia ventana). El estado guardado quedó limpio: VPN desconectada."))
     return ResultadoModulo(
         ok=False,
         mensaje=("No hay ninguna conexión VPN activa que esta app pueda "

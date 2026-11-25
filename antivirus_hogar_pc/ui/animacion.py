@@ -29,10 +29,33 @@ def fijar_animaciones_activas(valor: bool) -> None:
     _activas = bool(valor)
     if not _activas:
         RELOJ.detener()
+    elif not _pausado:
+        RELOJ.reanudar()
 
 
 def animaciones_activas() -> bool:
     return _activas
+
+
+_pausado = False
+
+
+def fijar_pausa(pausado: bool) -> None:
+    """Pausa global del reloj (v1.0.14): la ventana la activa al
+    ocultarse/minimizarse y la quita al mostrarse — con la app
+    en la bandeja o minimizada, NINGUNA animación consume CPU.
+    No toca la puerta de Ajustes: al volver, todo sigue como
+    estaba."""
+    global _pausado
+    _pausado = bool(pausado)
+    if _pausado:
+        RELOJ.detener()
+    else:
+        RELOJ.reanudar()
+
+
+def en_pausa() -> bool:
+    return _pausado
 
 
 class _RelojAnimacion(QObject):
@@ -54,7 +77,15 @@ class _RelojAnimacion(QObject):
 
     def suscribir(self) -> None:
         self._suscriptores += 1
-        if animaciones_activas() and not self._temporizador.isActive():
+        if animaciones_activas() and not _pausado \
+                and not self._temporizador.isActive():
+            self._temporizador.start()
+
+    def reanudar(self) -> None:
+        """Relanza el temporizador si hay suscriptores y la
+        puerta de Ajustes está abierta."""
+        if self._suscriptores > 0 and animaciones_activas() \
+                and not self._temporizador.isActive():
             self._temporizador.start()
 
     def desuscribir(self) -> None:

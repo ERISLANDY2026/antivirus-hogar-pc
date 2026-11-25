@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from antivirus_hogar_pc import config
 from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
 from antivirus_hogar_pc.core import fuentes_vpn
+from antivirus_hogar_pc.core.i18n import t
 from antivirus_hogar_pc.core.v102 import valorar_velocidad
 from antivirus_hogar_pc.core.vpngate import ordenar_servidores, paises_disponibles
 from antivirus_hogar_pc.core.wifi_parse import frecuencia_mhz, valorar_wifi
@@ -140,7 +141,7 @@ class _DialogoActualizacion(QDialog):
 
     def __init__(self, info, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Qué trae esta actualización")
+        self.setWindowTitle(t("Qué trae esta actualización"))
         layout = QVBoxLayout(self)
         titulo = QLabel(f"Versión {info.version} disponible")
         titulo.setStyleSheet("font-size: 16px; font-weight: 600;")
@@ -157,9 +158,9 @@ class _DialogoActualizacion(QDialog):
             suave=True)
         layout.addWidget(aviso)
         fila = QHBoxLayout()
-        boton_no = QPushButton("Ahora no")
+        boton_no = QPushButton(t("Ahora no"))
         boton_no.clicked.connect(self.reject)
-        boton_si = QPushButton("Actualizar ahora")
+        boton_si = QPushButton(t("Actualizar ahora"))
         boton_si.setObjectName("verde")
         boton_si.clicked.connect(self.accept)
         fila.addWidget(boton_no)
@@ -181,8 +182,8 @@ class _PaginaActualizaciones(QWidget):
         self._todo_completados = 0
 
         pagina, layout = pagina_base(
-            "Actualizaciones",
-            "Los programas de tu PC, Windows y la propia aplicación, al día.")
+            t("Actualizaciones"),
+            t("Los programas de tu PC, Windows y la propia aplicación, al día."))
         self._scroll = pagina
 
         # --- La propia app -----------------------------------------------------
@@ -190,7 +191,7 @@ class _PaginaActualizaciones(QWidget):
         self._tarjeta_app = tarjeta_app
         self._lbl_app = etiqueta(f"Estás en la versión {config.VERSION}.")
         lay.addWidget(self._lbl_app)
-        self._btn_app = BotonPulso("Buscar actualizaciones de la app")
+        self._btn_app = BotonPulso(t("Buscar actualizaciones de la app"))
         self._btn_app.setObjectName("verde")
         self._btn_app.activar_pulso(True)
         self._btn_app.clicked.connect(lambda: self._buscar_app(silencioso=False))
@@ -198,21 +199,20 @@ class _PaginaActualizaciones(QWidget):
         layout.addWidget(tarjeta_app)
 
         # --- Programas (winget) --------------------------------------------------
-        tarjeta_winget, lay_w = tarjeta("Programas desactualizados (winget)")
+        tarjeta_winget, lay_w = tarjeta(t("Programas desactualizados (winget)"))
         self._tarjeta_winget = tarjeta_winget
         self._barra_winget = BarraProgreso()
         lay_w.addWidget(self._barra_winget)
-        self._lbl_winget = etiqueta("Pulsa buscar para ver qué programas tienen "
-                                    "una versión más nueva.")
+        self._lbl_winget = etiqueta(t("Pulsa buscar para ver qué programas tienen una versión más nueva."))
         lay_w.addWidget(self._lbl_winget)
         self._tabla_winget = QTableWidget(0, 5)
         self._tabla_winget.setHorizontalHeaderLabels(
-            ["Programa", "Versión", "Disponible", "Origen", "Acción"])
+            [t("Programa"), t("Versión"), t("Disponible"), t("Origen"), t("Acción")])
         lay_w.addWidget(self._tabla_winget)
         fila_w = QHBoxLayout()
-        self._btn_winget = boton_principal("Buscar programas desactualizados", "primario")
+        self._btn_winget = boton_principal(t("Buscar programas desactualizados"), "primario")
         self._btn_winget.clicked.connect(self._buscar_winget)
-        self._btn_todo = QPushButton("Actualizar todo")
+        self._btn_todo = QPushButton(t("Actualizar todo"))
         self._btn_todo.clicked.connect(self._actualizar_todo)
         fila_w.addWidget(self._btn_winget)
         fila_w.addWidget(self._btn_todo)
@@ -221,18 +221,18 @@ class _PaginaActualizaciones(QWidget):
         layout.addWidget(tarjeta_winget)
 
         # --- Windows Update ---------------------------------------------------------
-        tarjeta_wu, lay_u = tarjeta("Actualizaciones de Windows pendientes")
+        tarjeta_wu, lay_u = tarjeta(t("Actualizaciones de Windows pendientes"))
         self._tarjeta_wu = tarjeta_wu
         self._barra_wu = BarraProgreso()
         lay_u.addWidget(self._barra_wu)
-        self._lbl_wu = etiqueta("Pulsa buscar para consultar Windows Update.")
+        self._lbl_wu = etiqueta(t("Pulsa buscar para consultar Windows Update."))
         lay_u.addWidget(self._lbl_wu)
         self._lista_wu = QListWidget()
         lay_u.addWidget(self._lista_wu)
         fila_u = QHBoxLayout()
-        self._btn_wu = boton_principal("Buscar actualizaciones de Windows", "primario")
+        self._btn_wu = boton_principal(t("Buscar actualizaciones de Windows"), "primario")
         self._btn_wu.clicked.connect(self._buscar_wu)
-        self._btn_abrir_wu = QPushButton("Abrir Windows Update")
+        self._btn_abrir_wu = QPushButton(t("Abrir Windows Update"))
         self._btn_abrir_wu.clicked.connect(
             lambda: self._mostrar_simple(srv.abrir_windows_update(), self._lbl_wu))
         fila_u.addWidget(self._btn_wu)
@@ -256,7 +256,7 @@ class _PaginaActualizaciones(QWidget):
         return self._scroll
 
     def _mostrar_simple(self, resultado: ResultadoModulo, destino: QLabel) -> None:
-        destino.setText(resultado.mensaje or ("Hecho." if resultado.ok else "No se pudo."))
+        destino.setText(resultado.mensaje or (t("Hecho.") if resultado.ok else t("No se pudo.")))
 
     def _fijar_ocupado(self, ocupado: bool) -> None:
         self._ocupado = ocupado
@@ -268,9 +268,9 @@ class _PaginaActualizaciones(QWidget):
         servicios = getattr(self._ctx, "servicios", None)
         ajustes = getattr(servicios, "ajustes", None)
         if ajustes is None:
-            self._lbl_app.setText("El servicio de ajustes no está disponible.")
+            self._lbl_app.setText(t("El servicio de ajustes no está disponible."))
             return
-        self._lbl_app.setText("Comprobando el canal de actualizaciones…")
+        self._lbl_app.setText(t("Comprobando el canal de actualizaciones…"))
         _lanzar(self, lambda: srv.comprobar_actualizacion_app(ajustes),
                 lambda r: self._app_comprobada(r, silencioso))
 
@@ -285,15 +285,15 @@ class _PaginaActualizaciones(QWidget):
         self._lbl_app.setText(resultado.mensaje)
         dialogo = _DialogoActualizacion(info, self)
         if dialogo.exec():
-            self._lbl_app.setText("Descargando la actualización…")
+            self._lbl_app.setText(t("Descargando la actualización…"))
             _lanzar(self, lambda: srv.instalar_actualizacion_app(info),
                     lambda r: self._lbl_app.setText(r.mensaje))
 
     # -- winget ---------------------------------------------------------------------
     def _buscar_winget(self) -> None:
         self._tarjeta_winget.fijar_activa(True)
-        self._barra_winget.fijar_texto("Buscando con winget…")
-        self._lbl_winget.setText("Buscando con winget… puede tardar un poco.")
+        self._barra_winget.fijar_texto(t("Buscando con winget…"))
+        self._lbl_winget.setText(t("Buscando con winget… puede tardar un poco."))
         self._fijar_ocupado(True)
         _lanzar(self, srv.programas_desactualizados, self._winget_buscado)
 
@@ -309,7 +309,7 @@ class _PaginaActualizaciones(QWidget):
             tabla.setItem(i, 1, QTableWidgetItem(p.version_actual))
             tabla.setItem(i, 2, QTableWidgetItem(p.version_disponible))
             tabla.setItem(i, 3, QTableWidgetItem(p.origen))
-            boton = QPushButton("Actualizar")
+            boton = QPushButton(t("Actualizar"))
             boton.clicked.connect(lambda _=False, prog=p: self._actualizar_uno(prog))
             tabla.setCellWidget(i, 4, boton)
         tabla.resizeColumnsToContents()
@@ -329,15 +329,13 @@ class _PaginaActualizaciones(QWidget):
 
     def _actualizar_todo(self) -> None:
         respuesta = QMessageBox.question(
-            self, "Actualizar todo",
-            "Se actualizarán TODOS los programas de la lista con winget, "
-            "uno a uno. Algunos pueden pedir confirmación o reiniciar su "
-            "instalador. ¿Seguimos?")
+            self, t("Actualizar todo"),
+            t("Se actualizarán TODOS los programas de la lista con winget, uno a uno. Algunos pueden pedir confirmación o reiniciar su instalador. ¿Seguimos?"))
         if respuesta != QMessageBox.StandardButton.Yes:
             return
         if not self._programas:
             self._lbl_winget.setText(
-                "Primero pulsa «Buscar programas desactualizados» para tener la lista.")
+                t("Primero pulsa «Buscar programas desactualizados» para tener la lista."))
             return
         self._todo_restantes = list(self._programas)
         self._todo_total = len(self._todo_restantes)
@@ -376,8 +374,8 @@ class _PaginaActualizaciones(QWidget):
     def _buscar_wu(self) -> None:
         self._tarjeta_wu.fijar_activa(True)
         self._barra_wu.fijar_texto(
-            "Consultando Windows Update… (Windows no informa porcentaje)")
-        self._lbl_wu.setText("Consultando Windows Update… la primera vez tarda.")
+            t("Consultando Windows Update… (Windows no informa porcentaje)"))
+        self._lbl_wu.setText(t("Consultando Windows Update… la primera vez tarda."))
         self._fijar_ocupado(True)
         _lanzar(self, srv.actualizaciones_windows, self._wu_buscado)
 
@@ -599,12 +597,12 @@ class _PaginaRed(QWidget):
         self._veredictos: dict = {}
 
         pagina, layout = pagina_base(
-            "Red y VPN",
-            "Tu Wi-Fi de un vistazo y la VPN gratuita de VPN Gate.")
+            t("Red y VPN"),
+            t("Tu Wi-Fi de un vistazo y la VPN gratuita de VPN Gate."))
         self._scroll = pagina
 
         # --- Wi-Fi ----------------------------------------------------------------
-        tarjeta_wifi, lay = tarjeta("Wi-Fi")
+        tarjeta_wifi, lay = tarjeta(t("Wi-Fi"))
         self._tarjeta_wifi = tarjeta_wifi
         self._fila_wifi = lay
         self._contenedor_wifi = QWidget()
@@ -614,7 +612,7 @@ class _PaginaRed(QWidget):
         # Resumen INTERACTIVO de la red (v1.0.5): el NOMBRE de la red
         # conectada se ve de un vistazo y, al tocar el resumen, se
         # despliega el panel con TODOS los detalles que Windows da.
-        self._btn_red_wifi = QPushButton("Wi-Fi: todavía sin leer")
+        self._btn_red_wifi = QPushButton(t("Wi-Fi: todavía sin leer"))
         self._btn_red_wifi.setObjectName("menu")
         self._btn_red_wifi.setIcon(pixmap_icono("wifi", theme.CIAN, 24))
         self._btn_red_wifi.setCheckable(True)
@@ -629,13 +627,13 @@ class _PaginaRed(QWidget):
         rejilla_wifi.setVerticalSpacing(3)
         self._wifi_valores: dict[str, QLabel] = {}
         for fila_det, (clave_det, titulo_det) in enumerate((
-                ("ssid", "Red (SSID)"), ("senal", "Intensidad de señal"),
-                ("banda", "Banda"), ("canal", "Canal"),
-                ("frecuencia", "Frecuencia"),
-                ("enlace", "Velocidad de enlace"),
-                ("seguridad", "Seguridad"), ("radio", "Tipo de radio"),
-                ("ip", "IP local"), ("puerta", "Puerta de enlace"),
-                ("dns", "DNS"), ("perfil", "Perfil de red"))):
+                ("ssid", t("Red (SSID)")), ("senal", t("Intensidad de señal")),
+                ("banda", t("Banda")), ("canal", t("Canal")),
+                ("frecuencia", t("Frecuencia")),
+                ("enlace", t("Velocidad de enlace")),
+                ("seguridad", t("Seguridad")), ("radio", t("Tipo de radio")),
+                ("ip", t("IP local")), ("puerta", t("Puerta de enlace")),
+                ("dns", "DNS"), ("perfil", t("Perfil de red")))):
             rejilla_wifi.addWidget(etiqueta(titulo_det, suave=True),
                                    fila_det, 0)
             valor_det = etiqueta("—")
@@ -648,7 +646,7 @@ class _PaginaRed(QWidget):
         lay.addWidget(self._lbl_wifi_detalle)
         self._lbl_perfiles = etiqueta("", suave=True)
         lay.addWidget(self._lbl_perfiles)
-        self._btn_wifi = boton_principal("Actualizar datos de Wi-Fi", "primario")
+        self._btn_wifi = boton_principal(t("Actualizar datos de Wi-Fi"), "primario")
         self._btn_wifi.clicked.connect(self._cargar_wifi)
         lay.addWidget(self._btn_wifi)
         self._barra_wifi = BarraProgreso()
@@ -659,46 +657,44 @@ class _PaginaRed(QWidget):
         layout.addWidget(tarjeta_wifi)
 
         # --- Velocidad de internet y estado VPN -------------------------------------
-        tarjeta_vel, lay_vel = tarjeta("Velocidad de internet y estado VPN")
+        tarjeta_vel, lay_vel = tarjeta(t("Velocidad de internet y estado VPN"))
         self._tarjeta_vel = tarjeta_vel
-        self._lbl_velocidad = etiqueta("Todavía no se ha medido la velocidad.")
+        self._lbl_velocidad = etiqueta(t("Todavía no se ha medido la velocidad."))
         lay_vel.addWidget(self._lbl_velocidad)
         # Valores EN VIVO (v1.0.5): ping, descarga y subida en colores
         # RGB y letra mediana (16 px), actualizándose DURANTE la
         # medición — primero la descarga y después la subida.
         fila_vals = QHBoxLayout()
-        self._val_ping = self._bloque_valor(fila_vals, "PING", theme.CIAN)
-        self._val_bajada = self._bloque_valor(fila_vals, "DESCARGA", theme.VERDE)
-        self._val_subida = self._bloque_valor(fila_vals, "SUBIDA", "#A78BFA")
+        self._val_ping = self._bloque_valor(fila_vals, t("PING"), theme.CIAN)
+        self._val_bajada = self._bloque_valor(fila_vals, t("DESCARGA"), theme.VERDE)
+        self._val_subida = self._bloque_valor(fila_vals, t("SUBIDA"), "#A78BFA")
         lay_vel.addLayout(fila_vals)
         self._lbl_valoracion = etiqueta("", suave=True)
         lay_vel.addWidget(self._lbl_valoracion)
-        self._btn_velocidad = boton_principal("Medir velocidad", "primario")
+        self._btn_velocidad = boton_principal(t("Medir velocidad"), "primario")
         self._btn_velocidad.clicked.connect(self._medir_velocidad)
         lay_vel.addWidget(self._btn_velocidad)
-        self._lbl_estado_vpn = etiqueta("Estado VPN sin consultar.", suave=True)
+        self._lbl_estado_vpn = etiqueta(t("Estado VPN sin consultar."), suave=True)
         lay_vel.addWidget(self._lbl_estado_vpn)
-        self._btn_estado_vpn = QPushButton("Ver estado VPN")
+        self._btn_estado_vpn = QPushButton(t("Ver estado VPN"))
         self._btn_estado_vpn.clicked.connect(self._ver_estado_vpn)
         lay_vel.addWidget(self._btn_estado_vpn)
         layout.addWidget(tarjeta_vel)
 
         # --- VPN Gate ----------------------------------------------------------------
         tarjeta_vpn, lay_v = tarjeta(
-            "VPN gratuita (VPN Gate y VPNBook, servidores de voluntarios)")
+            t("VPN gratuita (VPN Gate y VPNBook, servidores de voluntarios)"))
         self._tarjeta_vpn = tarjeta_vpn
         aviso = etiqueta(
-            "AVISO: estos servidores los ofrecen VOLUNTARIOS y el operador puede "
-            "registrar la conexión. Úsalos para navegar con otra ubicación, "
-            "nunca para banca, compras ni datos sensibles.")
+            t("AVISO: estos servidores los ofrecen VOLUNTARIOS y el operador puede registrar la conexión. Úsalos para navegar con otra ubicación, nunca para banca, compras ni datos sensibles."))
         aviso.setStyleSheet(f"color: {theme.AMBAR};")
         lay_v.addWidget(aviso)
 
         # Interruptor general de la VPN (v1.0.2): estado + apagado desde la app
         fila_switch = QHBoxLayout()
-        self._lbl_switch_vpn = etiqueta("VPN: consultando el estado…")
+        self._lbl_switch_vpn = etiqueta(t("VPN: consultando el estado…"))
         fila_switch.addWidget(self._lbl_switch_vpn, 1)
-        self._btn_desconectar = QPushButton("Desconectar VPN")
+        self._btn_desconectar = QPushButton(t("Desconectar VPN"))
         self._btn_desconectar.setObjectName("peligro")
         self._btn_desconectar.setEnabled(False)
         self._btn_desconectar.clicked.connect(self._desconectar_vpn)
@@ -706,33 +702,32 @@ class _PaginaRed(QWidget):
         lay_v.addLayout(fila_switch)
 
         fila_ctrl = QHBoxLayout()
-        fila_ctrl.addWidget(QLabel("País:"))
+        fila_ctrl.addWidget(QLabel(t("País:")))
         self._combo_pais = QComboBox()
-        self._combo_pais.addItem("Todos los países", "")
+        self._combo_pais.addItem(t("Todos los países"), "")
         self._combo_pais.currentIndexChanged.connect(self._repintar_servidores)
         fila_ctrl.addWidget(self._combo_pais)
-        fila_ctrl.addWidget(QLabel("Ordenar por:"))
+        fila_ctrl.addWidget(QLabel(t("Ordenar por:")))
         self._combo_orden = QComboBox()
         # v1.0.14: el orden por defecto es «Recomendado»
         # (verificados primero; luego pocas sesiones y más
         # tiempo en línea): la velocidad bruta deja de mandar,
         # porque los nodos más rápidos de la lista pública son
         # justo los que suelen estar llenos.
-        self._combo_orden.addItem("Recomendado", "recomendado")
-        self._combo_orden.addItem("Velocidad", "velocidad")
-        self._combo_orden.addItem("Ping (respuesta)", "ping")
-        self._combo_orden.addItem("Sesiones actuales", "sesiones")
-        self._combo_orden.addItem("Puntuación", "puntuacion")
+        self._combo_orden.addItem(t("Recomendado"), "recomendado")
+        self._combo_orden.addItem(t("Velocidad"), "velocidad")
+        self._combo_orden.addItem(t("Ping (respuesta)"), "ping")
+        self._combo_orden.addItem(t("Sesiones actuales"), "sesiones")
+        self._combo_orden.addItem(t("Puntuación"), "puntuacion")
         self._combo_orden.currentIndexChanged.connect(self._repintar_servidores)
         fila_ctrl.addWidget(self._combo_orden)
-        self._btn_servidores = boton_principal("Actualizar lista de servidores", "primario")
+        self._btn_servidores = boton_principal(t("Actualizar lista de servidores"), "primario")
         self._btn_servidores.clicked.connect(self._cargar_servidores)
         fila_ctrl.addWidget(self._btn_servidores)
         fila_ctrl.addStretch(1)
         lay_v.addLayout(fila_ctrl)
 
-        self._lbl_vpn = etiqueta("Pulsa «Actualizar lista de servidores» para "
-                                 "descargar la lista pública de VPN Gate.")
+        self._lbl_vpn = etiqueta(t("Pulsa «Actualizar lista de servidores» para descargar la lista pública de VPN Gate."))
         lay_v.addWidget(self._lbl_vpn)
         # v1.0.11: el DETALLE TÉCNICO del intento VPN, visible bajo
         # el mensaje: la causa real del registro de OpenVPN. En la
@@ -752,8 +747,8 @@ class _PaginaRed(QWidget):
         # Velocidad, Ping, Sesiones, Verificación, Acción].
         self._tabla_vpn = QTableWidget(0, 8)
         self._tabla_vpn.setHorizontalHeaderLabels(
-            ["País", "Servidor", "Fuente", "Velocidad", "Ping",
-             "Sesiones", "Verificación", "Acción"])
+            [t("País"), t("Servidor"), t("Fuente"), t("Velocidad"), t("Ping"),
+             t("Sesiones"), t("Verificación"), t("Acción")])
         # v1.0.10: altura de fila suficiente para el botón «Conectar»
         # completo. El tema da al botón ≈37 px (texto 13 px + padding
         # 8 px arriba/abajo + bordes) y el contenedor de la celda
@@ -781,8 +776,8 @@ class _PaginaRed(QWidget):
             "Sin OpenVPN, la app genera el perfil .ovpn y se lo entrega "
             "a tu cliente VPN."))
         fila_ip = QHBoxLayout()
-        self._lbl_ip = etiqueta("Tu IP pública: sin consultar.")
-        self._btn_ip = QPushButton("Consultar mi IP pública")
+        self._lbl_ip = etiqueta(t("Tu IP pública: sin consultar."))
+        self._btn_ip = QPushButton(t("Consultar mi IP pública"))
         self._btn_ip.clicked.connect(self._consultar_ip)
         fila_ip.addWidget(self._lbl_ip)
         fila_ip.addWidget(self._btn_ip)
@@ -816,11 +811,11 @@ class _PaginaRed(QWidget):
         # Feedback INMEDIATO (bug 4): antes el botón no hacía nada visible.
         self._tarjeta_wifi.fijar_activa(True)
         self._btn_wifi.setEnabled(False)
-        self._btn_wifi.setText("Leyendo…")
+        self._btn_wifi.setText(t("Leyendo…"))
         self._barra_wifi.setVisible(True)
-        self._barra_wifi.fijar_texto("Leyendo la red Wi-Fi…")
-        self._btn_red_wifi.setText("Wi-Fi: leyendo…")
-        self._lbl_wifi_detalle.setText("Leyendo la red Wi-Fi…")
+        self._barra_wifi.fijar_texto(t("Leyendo la red Wi-Fi…"))
+        self._btn_red_wifi.setText(t("Wi-Fi: leyendo…"))
+        self._lbl_wifi_detalle.setText(t("Leyendo la red Wi-Fi…"))
         _lanzar(self, srv.informe_wifi, self._wifi_cargado)
 
     def _alternar_detalles_wifi(self, abierto: bool) -> None:
@@ -836,7 +831,7 @@ class _PaginaRed(QWidget):
 
         self._tarjeta_wifi.fijar_activa(False)
         self._btn_wifi.setEnabled(True)
-        self._btn_wifi.setText("Actualizar datos de Wi-Fi")
+        self._btn_wifi.setText(t("Actualizar datos de Wi-Fi"))
         self._barra_wifi.terminar()
         # Vaciar la fila anterior
         while self._lay_wifi.count():
@@ -848,8 +843,8 @@ class _PaginaRed(QWidget):
             if resultado.detalle_tecnico:
                 causa += f" ({resultado.detalle_tecnico})"
             self._lay_wifi.addWidget(fila_estado(
-                "wifi", "estatico", "Wi-Fi no disponible", causa, theme.ROJO))
-            self._btn_red_wifi.setText("Wi-Fi no disponible")
+                "wifi", "estatico", t("Wi-Fi no disponible"), causa, theme.ROJO))
+            self._btn_red_wifi.setText(t("Wi-Fi no disponible"))
             self._lbl_wifi_detalle.setText("")
             self._lbl_perfiles.setText("")
             self._lbl_wifi_sello.setText(
@@ -906,7 +901,7 @@ class _PaginaRed(QWidget):
             self._lbl_wifi_detalle.setText(frase)
         else:
             self._btn_red_wifi.setText(
-                "Sin red Wi-Fi conectada — toca para los detalles")
+                t("Sin red Wi-Fi conectada — toca para los detalles"))
             self._lbl_wifi_detalle.setStyleSheet("")
             if red.get("ip"):
                 # Por cable no es «sección vacía»: se dice claro y los
@@ -917,7 +912,7 @@ class _PaginaRed(QWidget):
                     f"IP {red['ip']}). Sus datos están en el detalle.")
             else:
                 self._lbl_wifi_detalle.setText(
-                    frase or "No hay ninguna red Wi-Fi conectada ahora mismo.")
+                    frase or t("No hay ninguna red Wi-Fi conectada ahora mismo."))
         perfiles = datos.get("perfiles_guardados") or []
         self._lbl_perfiles.setText(
             "Redes guardadas en este PC: " + (", ".join(perfiles) if perfiles else "ninguna"))
@@ -927,7 +922,7 @@ class _PaginaRed(QWidget):
         self._tarjeta_vpn.fijar_activa(True)
         # Barrita temporal: aparece mientras se actualiza (v1.0.5).
         self._barra_vpn.setVisible(True)
-        self._barra_vpn.fijar_texto("Actualizando la lista de servidores…")
+        self._barra_vpn.fijar_texto(t("Actualizando la lista de servidores…"))
         self._btn_servidores.setEnabled(False)
         # SEMILLA PRIMERO (v1.0.5, corrección de raíz): si aún no hay
         # lista, el desplegable y la tabla se pueblan AL INSTANTE con
@@ -953,10 +948,10 @@ class _PaginaRed(QWidget):
                         " Buscando la lista en vivo…")
             else:
                 self._lbl_vpn.setStyleSheet("")
-                self._lbl_vpn.setText("Descargando la lista de VPN Gate…")
+                self._lbl_vpn.setText(t("Descargando la lista de VPN Gate…"))
         else:
             self._lbl_vpn.setStyleSheet("")
-            self._lbl_vpn.setText("Actualizando la lista de servidores…")
+            self._lbl_vpn.setText(t("Actualizando la lista de servidores…"))
         _lanzar(self, srv.descargar_servidores_completos,
                 self._servidores_cargados)
 
@@ -976,12 +971,12 @@ class _PaginaRed(QWidget):
                 self._lbl_vpn.setText(
                     "⚠ No se pudo actualizar la lista en vivo; sigues "
                     "con la lista de respaldo. " + resultado.mensaje)
-                self._btn_servidores.setText("Reintentar descarga")
+                self._btn_servidores.setText(t("Reintentar descarga"))
                 return
             # Error VISIBLE con la causa y reintento
             self._lbl_vpn.setStyleSheet(f"color: {theme.ROJO};")
             self._lbl_vpn.setText(resultado.mensaje)
-            self._btn_servidores.setText("Reintentar descarga")
+            self._btn_servidores.setText(t("Reintentar descarga"))
             return
         self._aplicar_lista(resultado)
 
@@ -1007,12 +1002,12 @@ class _PaginaRed(QWidget):
             # reintentar la descarga en vivo.
             self._lbl_vpn.setStyleSheet(f"color: {theme.AMBAR}; font-weight: 600;")
             self._lbl_vpn.setText("⚠ " + resultado.mensaje)
-            self._btn_servidores.setText("Reintentar descarga")
+            self._btn_servidores.setText(t("Reintentar descarga"))
             self._poblar_combo_paises()
             self._repintar_servidores()
             return
         self._lbl_vpn.setStyleSheet("")
-        self._btn_servidores.setText("Actualizar lista de servidores")
+        self._btn_servidores.setText(t("Actualizar lista de servidores"))
         self._poblar_combo_paises()
         self._repintar_servidores()
         # Aviso final obligatorio (v1.0.5): cuántos servidores/países
@@ -1024,7 +1019,7 @@ class _PaginaRed(QWidget):
         pais_actual = self._combo_pais.currentData()
         self._combo_pais.blockSignals(True)
         self._combo_pais.clear()
-        self._combo_pais.addItem("Todos los países", "")
+        self._combo_pais.addItem(t("Todos los países"), "")
         for pais in paises_disponibles(self._servidores):
             self._combo_pais.addItem(pais, pais)
         indice = self._combo_pais.findData(pais_actual or "")
@@ -1051,18 +1046,18 @@ class _PaginaRed(QWidget):
         estado, cuando = fuentes_vpn.veredicto_de(
             self._veredictos, servidor)
         if estado == "verificado":
-            return "✓ Verificado " + time.strftime(
+            return t("✓ Verificado ") + time.strftime(
                 "%H:%M", time.localtime(cuando))
         if estado == "auth_failed":
-            return "Lleno/sin acceso " + time.strftime(
+            return t("Lleno/sin acceso ") + time.strftime(
                 "%H:%M", time.localtime(cuando))
         if estado == "inaccesible":
-            return "No responde " + time.strftime(
+            return t("No responde ") + time.strftime(
                 "%H:%M", time.localtime(cuando))
         if cuando:
-            return "Sin verificar · " + time.strftime(
+            return t("Sin verificar · ") + time.strftime(
                 "%H:%M", time.localtime(cuando))
-        return "Sin verificar"
+        return t("Sin verificar")
 
     def _repintar_servidores(self) -> None:
         if not self._servidores:
@@ -1118,16 +1113,16 @@ class _PaginaRed(QWidget):
             fila_botones = QHBoxLayout(celda)
             fila_botones.setContentsMargins(2, 2, 2, 2)
             fila_botones.setSpacing(6)
-            boton = QPushButton("Conectar")
+            boton = QPushButton(t("Conectar"))
             if s.hostname == self._servidor_conectado:
-                boton.setText("Conectado")
+                boton.setText(t("Conectado"))
                 boton.setObjectName("verde")
                 boton.setEnabled(False)
                 boton.setStyleSheet(
                     f"background-color: {theme.VERDE_BOTON}; color: white; "
                     "font-weight: 700; border-radius: 8px; padding: 6px 12px;")
                 fila_botones.addWidget(boton)
-                boton_desc = QPushButton("Desconectar")
+                boton_desc = QPushButton(t("Desconectar"))
                 boton_desc.setObjectName("peligro")
                 boton_desc.setStyleSheet(
                     f"background-color: {theme.ROJO_BOTON}; color: white; "
@@ -1161,8 +1156,7 @@ class _PaginaRed(QWidget):
         # el primero quedaba huérfano).
         if self._vpn_conectando:
             self._lbl_vpn.setText(
-                "Ya hay una conexión en curso: espera a que "
-                "termine antes de conectar con otro servidor.")
+                t("Ya hay una conexión en curso: espera a que termine antes de conectar con otro servidor."))
             return
         self._vpn_conectando = True
         self._lbl_vpn.setStyleSheet("")
@@ -1185,7 +1179,7 @@ class _PaginaRed(QWidget):
                 self._repintar_servidores()
                 self._lbl_vpn.setStyleSheet(
                     f"color: {theme.VERDE}; font-weight: 700;")
-                self._lbl_vpn.setText("Conectado: " + r.mensaje)
+                self._lbl_vpn.setText(t("Conectado: ") + t(r.mensaje))
                 self._lbl_vpn_detalle.setText("")
             else:
                 # v1.0.14: los sellos se repintan con los
@@ -1214,12 +1208,12 @@ class _PaginaRed(QWidget):
 
     def _desconectar_vpn(self) -> None:
         self._btn_desconectar.setEnabled(False)
-        self._lbl_switch_vpn.setText("VPN: desconectando…")
+        self._lbl_switch_vpn.setText(t("VPN: desconectando…"))
         _lanzar(self, srv.desconectar_vpn, self._vpn_desconectada)
 
     def _vpn_desconectada(self, resultado: ResultadoModulo) -> None:
         self._lbl_switch_vpn.setText(
-            "VPN: Desconectada" if resultado.ok else f"VPN: {resultado.mensaje}")
+            t("VPN: Desconectada") if resultado.ok else f"VPN: {resultado.mensaje}")
         self._btn_desconectar.setEnabled(False)
         self._lbl_estado_vpn.setText(resultado.mensaje)
         if resultado.ok and self._servidor_conectado:
@@ -1229,7 +1223,7 @@ class _PaginaRed(QWidget):
         self._consultar_ip()  # la IP pública se refresca tras desconectar
 
     def _consultar_ip(self) -> None:
-        self._lbl_ip.setText("Consultando tu IP pública…")
+        self._lbl_ip.setText(t("Consultando tu IP pública…"))
         _lanzar(self, srv.ip_publica,
                 lambda r: self._lbl_ip.setText(
                     f"Tu IP pública: {r.datos}" if r.ok else r.mensaje))
@@ -1252,8 +1246,7 @@ class _PaginaRed(QWidget):
     def _medir_velocidad(self) -> None:
         self._tarjeta_vel.fijar_activa(True)
         self._lbl_velocidad.setText(
-            "Midiendo en segundo plano… primero la DESCARGA y después "
-            "la SUBIDA (valores en vivo).")
+            t("Midiendo en segundo plano… primero la DESCARGA y después la SUBIDA (valores en vivo)."))
         self._lbl_valoracion.setText("")
         self._val_ping.setText("…")
         self._val_bajada.setText("…")
@@ -1299,7 +1292,7 @@ class _PaginaRed(QWidget):
         self._lbl_valoracion.setText(valorar_velocidad(bajada))
 
     def _ver_estado_vpn(self) -> None:
-        self._lbl_estado_vpn.setText("Consultando el estado VPN…")
+        self._lbl_estado_vpn.setText(t("Consultando el estado VPN…"))
         self._btn_estado_vpn.setEnabled(False)
         _lanzar(self, srv.estado_vpn, self._estado_vpn_visto)
 
@@ -1316,21 +1309,21 @@ class _PaginaRed(QWidget):
             servidor = datos.get("servidor") or "un servidor"
             pais = datos.get("pais") or ""
             self._lbl_switch_vpn.setText(
-                f"VPN: CONECTADA a {servidor}" + (f" ({pais})" if pais else ""))
+                t("VPN: CONECTADA a {servidor}", servidor=servidor) + (f" ({pais})" if pais else ""))
             self._btn_desconectar.setEnabled(True)
             # v1.0.7: el botón del servidor conectado se ve en verde.
             if datos.get("servidor") != self._servidor_conectado:
                 self._servidor_conectado = datos.get("servidor") or ""
                 self._repintar_servidores()
         else:
-            self._lbl_switch_vpn.setText("VPN: Desconectada")
+            self._lbl_switch_vpn.setText(t("VPN: Desconectada"))
             self._btn_desconectar.setEnabled(False)
             if self._servidor_conectado:
                 self._servidor_conectado = ""
                 self._repintar_servidores()
         lineas = [
-            "Clientes VPN instalados: " + (", ".join(clientes) if clientes else "ninguno"),
-            "IP pública actual: " + (ip if ip else "sin consultar / no disponible"),
+            t("Clientes VPN instalados: ") + (", ".join(clientes) if clientes else t("ninguno")),
+            t("IP pública actual: ") + (ip if ip else t("sin consultar / no disponible")),
             ("Con OpenVPN (incluido con la app) el túnel lo levanta y "
              "lo baja la propia app desde aquí; con otro cliente, la app "
              "le entrega el perfil y «Desconectar VPN» cierra su proceso "

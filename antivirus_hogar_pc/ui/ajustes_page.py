@@ -7,29 +7,30 @@ from PySide6.QtWidgets import QCheckBox, QLineEdit
 
 from .. import config
 from ..contracts import ContextoModulo
+from ..core.i18n import t
 from .paginas_base import boton_principal, etiqueta, pagina_base, tarjeta
 
 
 def crear_pagina_ajustes(ctx: ContextoModulo):
     servicios = ctx.servicios
     ajustes = servicios.ajustes if servicios else None
-    pagina, layout = pagina_base("Ajustes", "La aplicación y su canal de actualización.")
+    pagina, layout = pagina_base(t("Ajustes"), t("La aplicación y su canal de actualización."))
 
-    tarjeta_app, lay = tarjeta("Aplicación")
-    lay.addWidget(etiqueta(f"Antivirus Hogar PC · versión {config.VERSION}"))
-    lay.addWidget(etiqueta(
+    tarjeta_app, lay = tarjeta(t("Aplicación"))
+    lay.addWidget(etiqueta(t("Antivirus Hogar PC · versión {version}", version=config.VERSION)))
+    lay.addWidget(etiqueta(t(
         "Compañero de Microsoft Defender: la protección en tiempo real la hace "
         "Defender; esta app escanea, limpia e informa. Sin firma comercial: "
-        "Windows mostrará el aviso de SmartScreen al instalar.", suave=True))
+        "Windows mostrará el aviso de SmartScreen al instalar."), suave=True))
     layout.addWidget(tarjeta_app)
 
     # --- Arranque con Windows + rutina automática (v1.0.5) -------------------
-    tarjeta_arranque, lay_ar = tarjeta("Arranque y rutina automática")
-    check_arranque = QCheckBox(
-        "Arrancar con Windows (la app abre minimizada, en segundo plano)")
-    check_rutina = QCheckBox(
+    tarjeta_arranque, lay_ar = tarjeta(t("Arranque y rutina automática"))
+    check_arranque = QCheckBox(t(
+        "Arrancar con Windows (la app abre minimizada, en segundo plano)"))
+    check_rutina = QCheckBox(t(
         "Al arrancar, ejecutar la rutina automática: escaneo rápido, "
-        "revisión de drivers, limpieza segura y revisión de inicio")
+        "revisión de drivers, limpieza segura y revisión de inicio"))
     if ajustes is not None:
         check_arranque.setChecked(bool(ajustes.arranque_windows))
         check_rutina.setChecked(bool(ajustes.rutina_automatica))
@@ -51,22 +52,22 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
         check_rutina.toggled.connect(_rutina)
     lay_ar.addWidget(check_arranque)
     lay_ar.addWidget(check_rutina)
-    lay_ar.addWidget(etiqueta(
+    lay_ar.addWidget(etiqueta(t(
         "La rutina solo revisa y limpia lo seguro (temporales, cachés "
         "y papelera): ante una amenaza NO actúa sola — deja el "
         "resultado en Inicio y en el registro de actividad para que "
-        "decidas tú.", suave=True))
+        "decidas tú."), suave=True))
     layout.addWidget(tarjeta_arranque)
 
-    tarjeta_canal, lay_c = tarjeta("Canal de actualización (Google Drive)")
+    tarjeta_canal, lay_c = tarjeta(t("Canal de actualización (Google Drive)"))
     campo_url = QLineEdit(ajustes.url_actualizacion if ajustes else "")
-    campo_url.setPlaceholderText("URL del version-pc.json del canal")
+    campo_url.setPlaceholderText(t("URL del version-pc.json del canal"))
     lay_c.addWidget(campo_url)
-    lay_c.addWidget(etiqueta(
+    lay_c.addWidget(etiqueta(t(
         "Al buscar actualizaciones se compara la versión y, si hay una nueva, "
         "se enseña «Qué trae esta actualización» antes de descargar nada. "
-        "El instalador se verifica por su huella SHA-256.", suave=True))
-    boton_guardar = boton_principal("Guardar canal", "primario")
+        "El instalador se verifica por su huella SHA-256."), suave=True))
+    boton_guardar = boton_principal(t("Guardar canal"), "primario")
     if ajustes is not None:
         def _guardar() -> None:
             ajustes.url_actualizacion = campo_url.text().strip()
@@ -76,8 +77,8 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
     lay_c.addWidget(boton_guardar)
     layout.addWidget(tarjeta_canal)
 
-    tarjeta_vista, lay_v = tarjeta("Vista")
-    check_letra = QCheckBox("Letra grande (para leer más cómodo)")
+    tarjeta_vista, lay_v = tarjeta(t("Vista"))
+    check_letra = QCheckBox(t("Letra grande (para leer más cómodo)"))
     if ajustes is not None:
         check_letra.setChecked(bool(ajustes.letra_grande))
 
@@ -87,9 +88,9 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
 
         check_letra.toggled.connect(_letra)
     lay_v.addWidget(check_letra)
-    check_radar = QCheckBox(
+    check_radar = QCheckBox(t(
         "Animaciones de la interfaz (iconos, bordes con movimiento "
-        "y fondo del Panel)")
+        "y fondo del Panel)"))
     if ajustes is not None:
         check_radar.setChecked(bool(getattr(ajustes, "fondo_animado", True)))
 
@@ -104,13 +105,13 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
 
         check_radar.toggled.connect(_radar)
     lay_v.addWidget(check_radar)
-    lay_v.addWidget(etiqueta(
+    lay_v.addWidget(etiqueta(t(
         "Los iconos del panel se mueven suave, los bordes de las "
         "tarjetas tienen un recorrido de color y el radar de Inicio "
         "se anima; todo cuelga de un solo temporizador compartido y "
         "gasta muy poco. Si Windows tiene activado «reducir "
         "animaciones», la app lo respeta aunque esto esté marcado. "
-        "Apagarlo deja toda la interfaz quieta al momento.", suave=True))
+        "Apagarlo deja toda la interfaz quieta al momento."), suave=True))
     layout.addWidget(tarjeta_vista)
     layout.addStretch(1)
     return pagina

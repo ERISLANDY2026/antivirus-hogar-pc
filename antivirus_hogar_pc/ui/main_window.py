@@ -5,11 +5,14 @@ declare su registro (modules/<paquete>/registro.py) y figure en
 PAQUETES_MODULOS de modules/__init__.py. Las páginas se crean
 perezosamente al navegar por primera vez.
 """
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QPushButton,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QMainWindow,
+                               QPushButton, QStackedWidget, QVBoxLayout,
+                               QWidget)
 
 from ..contracts import ContextoModulo
+from ..core import i18n
+from ..core.i18n import t
 from ..modules import crear_pagina, descubrir_modulos, errores_descubrimiento
 from . import theme
 from .ajustes_page import crear_pagina_ajustes
@@ -32,6 +35,10 @@ class VentanaPrincipal(QMainWindow):
     def __init__(self, servicios: ServiciosApp | None = None) -> None:
         super().__init__()
         self.servicios = servicios or ServiciosApp()
+        # Idioma guardado en los ajustes (v1.0.14): se fija ANTES
+        # de construir nada para que toda la carcasa nazca en el
+        # idioma elegido.
+        i18n.fijar_idioma(getattr(self.servicios.ajustes, "idioma", "es"))
         self.setWindowTitle("Antivirus Hogar PC")
         self.resize(1120, 700)
         self.setMinimumSize(960, 620)
@@ -57,12 +64,12 @@ class VentanaPrincipal(QMainWindow):
         lay_barra = QVBoxLayout(barra)
         lay_barra.setContentsMargins(12, 16, 12, 12)
         lay_barra.setSpacing(6)
-        titulo = QLabel("🛡  Antivirus Hogar")
-        titulo.setStyleSheet("font-size: 16px; font-weight: 700;")
-        lay_barra.addWidget(titulo)
-        subtitulo = QLabel("Compañero de Defender")
-        subtitulo.setObjectName("detalle")
-        lay_barra.addWidget(subtitulo)
+        self._lbl_titulo = QLabel("🛡  " + t("Antivirus Hogar"))
+        self._lbl_titulo.setStyleSheet("font-size: 16px; font-weight: 700;")
+        lay_barra.addWidget(self._lbl_titulo)
+        self._lbl_subtitulo = QLabel(t("Compañero de Defender"))
+        self._lbl_subtitulo.setObjectName("detalle")
+        lay_barra.addWidget(self._lbl_subtitulo)
         lay_barra.addSpacing(10)
 
         # Iconos 3D animados: uno por pestaña, en colores, más
@@ -77,7 +84,7 @@ class VentanaPrincipal(QMainWindow):
         fijar_animaciones_activas(_animado)
         for _i, registro in enumerate(
                 sorted(self._registros.values(), key=lambda r: r.orden)):
-            boton = QPushButton(registro.titulo)
+            boton = QPushButton(t(registro.titulo))
             boton.setObjectName("menu")
             nombre_nav = _ICONO_NAV_POR_REGISTRO.get(registro.icono, "inicio")
             boton.setIcon(icono_nav(nombre_nav))
@@ -94,9 +101,9 @@ class VentanaPrincipal(QMainWindow):
         # era silencioso y la ventana abría vacía sin explicación.
         errores = errores_descubrimiento()
         if errores or not self._registros:
-            aviso = QLabel(
+            aviso = QLabel(t(
                 "⚠ Algunos módulos no cargaron. Detalle en "
-                "errores-modulos.log (carpeta de datos de la app)."
+                "errores-modulos.log (carpeta de datos de la app).")
             )
             aviso.setWordWrap(True)
             aviso.setStyleSheet("color: #F87171; font-size: 12px;")
@@ -104,7 +111,7 @@ class VentanaPrincipal(QMainWindow):
 
         # «Versión de la app» (v1.0.5): entrada fija bajo Informes (el
         # último módulo), con su icono 3D animado como los demás.
-        boton_version = QPushButton("Versión de la app")
+        boton_version = QPushButton(t("Versión de la app"))
         boton_version.setObjectName("menu")
         boton_version.setIcon(icono_nav("version"))
         boton_version.setIconSize(QSize(LADO, LADO))
@@ -117,7 +124,7 @@ class VentanaPrincipal(QMainWindow):
 
         # «Programador de tareas» (v1.0.5): bajo «Versión de la app»,
         # con el icono de calendario 3D animado.
-        boton_programar = QPushButton("Programador de tareas")
+        boton_programar = QPushButton(t("Programador de tareas"))
         boton_programar.setObjectName("menu")
         boton_programar.setIcon(icono_nav("calendario"))
         boton_programar.setIconSize(QSize(LADO, LADO))
@@ -129,7 +136,27 @@ class VentanaPrincipal(QMainWindow):
             desfase=6.05)
 
         lay_barra.addStretch(1)
-        boton_ajustes = QPushButton("Ajustes")
+        # Selector de IDIOMA (v1.0.14, agregado del usuario):
+        # visible en el panel izquierdo, sobre «Ajustes». Cambia
+        # TODA la interfaz al momento (la carcasa se retraduce y
+        # la página visible se recrea en el idioma nuevo; el
+        # túnel VPN no se toca) y la elección queda guardada en
+        # los ajustes para los próximos arranques.
+        self._lbl_idioma = QLabel(t("Idioma"))
+        self._lbl_idioma.setObjectName("detalle")
+        lay_barra.addWidget(self._lbl_idioma)
+        self._combo_idioma = QComboBox()
+        self._combo_idioma.addItem("Español", "es")
+        self._combo_idioma.addItem("English", "en")
+        indice_idioma = self._combo_idioma.findData(
+            i18n.idioma_actual())
+        self._combo_idioma.setCurrentIndex(
+            indice_idioma if indice_idioma >= 0 else 0)
+        self._combo_idioma.currentIndexChanged.connect(
+            lambda _i: self._cambiar_idioma(
+                self._combo_idioma.currentData()))
+        lay_barra.addWidget(self._combo_idioma)
+        boton_ajustes = QPushButton(t("Ajustes"))
         boton_ajustes.setObjectName("menu")
         boton_ajustes.setIcon(icono_nav("ajustes"))
         boton_ajustes.setIconSize(QSize(LADO, LADO))
@@ -152,15 +179,20 @@ class VentanaPrincipal(QMainWindow):
         self._bandeja = None
         self._saliendo = False
         self._aviso_bandeja_dado = False
+        # v1.0.14: página visible (para recrearla al cambiar el
+        # idioma) y gancho opcional que main usa para retraducir
+        # la bandeja del sistema al cambiar el idioma.
+        self._id_actual = ""
+        self.al_cambiar_idioma = None
 
         primero = sorted(self._registros.values(), key=lambda r: r.orden)
         if primero:
             self.ir_a(primero[0].id)
         else:
             # Sin módulos no se deja el área en blanco: se explica el fallo.
-            vacio = QLabel(
+            vacio = QLabel(t(
                 "No se cargó ningún módulo de la aplicación.\n"
-                "Revisa errores-modulos.log en la carpeta de datos de la app."
+                "Revisa errores-modulos.log en la carpeta de datos de la app.")
             )
             vacio.setWordWrap(True)
             self.pila.addWidget(vacio)
@@ -206,16 +238,74 @@ class VentanaPrincipal(QMainWindow):
                 self._aviso_bandeja_dado = True
                 self._bandeja.avisar(
                     "Antivirus Hogar PC",
-                    "La app sigue trabajando en la bandeja, junto al "
-                    "reloj. Doble clic en su icono para abrirla; "
-                    "«Salir» en su menú la cierra de verdad.")
+                    t("La app sigue trabajando en la bandeja, junto al "
+                      "reloj. Doble clic en su icono para abrirla; "
+                      "«Salir» en su menú la cierra de verdad."))
             return
         super().closeEvent(evento)
+
+    # -- idioma (v1.0.14) ---------------------------------------------------------
+    def _cambiar_idioma(self, codigo: str) -> None:
+        """El selector del panel: guarda la elección, retraduce
+        la carcasa y RECREA las páginas en el idioma nuevo, sin
+        reiniciar la app y sin tocar el motor (un túnel VPN
+        activo sigue arriba: vive fuera de la UI)."""
+        codigo = codigo if codigo in i18n.IDIOMAS else "es"
+        if codigo == i18n.idioma_actual():
+            return
+        try:
+            self.servicios.ajustes.idioma = codigo
+            self.servicios.ajustes.guardar()
+        except Exception:
+            pass  # el cambio vale para la sesión aunque no se guarde
+        i18n.fijar_idioma(codigo)
+        self._retraducir_carcasa()
+        destino = self._id_actual
+        for pagina in list(self._paginas.values()):
+            self.pila.removeWidget(pagina)
+            pagina.deleteLater()
+        self._paginas.clear()
+        if destino:
+            self.ir_a(destino)
+        if callable(self.al_cambiar_idioma):
+            self.al_cambiar_idioma()
+
+    def _retraducir_carcasa(self) -> None:
+        self._lbl_titulo.setText("🛡  " + t("Antivirus Hogar"))
+        self._lbl_subtitulo.setText(t("Compañero de Defender"))
+        self._lbl_idioma.setText(t("Idioma"))
+        for rid, boton in self._botones.items():
+            if rid in self._registros:
+                boton.setText(t(self._registros[rid].titulo))
+        self._botones["version"].setText(t("Versión de la app"))
+        self._botones["programar"].setText(t("Programador de tareas"))
+        self._botones["ajustes"].setText(t("Ajustes"))
+
+    # -- pausa de animaciones con la ventana oculta (v1.0.14) ----------------------
+    def hideEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        from .animacion import fijar_pausa
+
+        fijar_pausa(True)
+        super().hideEvent(evento)
+
+    def showEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        from .animacion import fijar_pausa
+
+        fijar_pausa(False)
+        super().showEvent(evento)
+
+    def changeEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        if evento.type() == QEvent.Type.WindowStateChange:
+            from .animacion import fijar_pausa
+
+            fijar_pausa(self.isMinimized())
+        super().changeEvent(evento)
 
     def ir_a(self, id_modulo: str) -> None:
         if id_modulo not in ("ajustes", "version", "programar") \
                 and id_modulo not in self._registros:
             return
+        self._id_actual = id_modulo
         pagina = self._obtener_pagina(id_modulo)
         if id_modulo == "panel":
             self.refrescar_rutina()

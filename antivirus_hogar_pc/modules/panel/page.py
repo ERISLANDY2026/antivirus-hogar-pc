@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from antivirus_hogar_pc.contracts import ContextoModulo, InformeSalud, ResultadoModulo
+from antivirus_hogar_pc.core.i18n import t
 from antivirus_hogar_pc.ui import theme
 from antivirus_hogar_pc.ui.health_ring import AnilloSalud
 from antivirus_hogar_pc.ui.paginas_base import etiqueta, fila_estado, pagina_base, tarjeta
@@ -64,25 +65,25 @@ def _formatear_encendido(horas: float | None) -> str:
         return f"{horas:.0f} h"
     dias = int(horas // 24)
     resto = int(horas % 24)
-    return f"{dias} días y {resto} h"
+    return t("{dias} días y {resto} h", dias=dias, resto=resto)
 
 
 def _frase_defender(informe: InformeSalud) -> tuple[str, str]:
     d = informe.defender
     if not d:
-        return "No disponible en este equipo de pruebas.", theme.TEXTO_SUAVE
+        return t("No disponible en este equipo de pruebas."), theme.TEXTO_SUAVE
     if not d.get("activo"):
-        return "Microsoft Defender está DESACTIVADO: actívalo cuanto antes.", theme.ROJO
+        return t("Microsoft Defender está DESACTIVADO: actívalo cuanto antes."), theme.ROJO
     if not d.get("tiempo_real"):
-        return ("Defender está activo, pero la protección en tiempo real "
-                "está apagada."), theme.AMBAR
-    frase = "Activo y protegiendo en tiempo real."
+        return (t("Defender está activo, pero la protección en tiempo real "
+                "está apagada.")), theme.AMBAR
+    frase = t("Activo y protegiendo en tiempo real.")
     if d.get("version_firmas"):
-        frase += f" Firmas {d['version_firmas']}"
+        frase += t(" Firmas {version}", version=d['version_firmas'])
         if d.get("firmas_al_dia") is True:
-            frase += " (al día)."
+            frase += t(" (al día).")
         elif d.get("firmas_al_dia") is False:
-            frase += " (atrasadas)."
+            frase += t(" (atrasadas).")
         else:
             frase += "."
     color = theme.AMBAR if d.get("firmas_al_dia") is False else theme.VERDE
@@ -91,45 +92,45 @@ def _frase_defender(informe: InformeSalud) -> tuple[str, str]:
 
 def _frase_firewall(informe: InformeSalud) -> tuple[str, str]:
     if informe.firewall_activo is None:
-        return "No disponible en este equipo de pruebas.", theme.TEXTO_SUAVE
+        return t("No disponible en este equipo de pruebas."), theme.TEXTO_SUAVE
     if informe.firewall_activo:
-        return "Activo en todos los perfiles (dominio, privado y público).", theme.VERDE
-    return "Desactivado en algún perfil: revísalo cuanto antes.", theme.ROJO
+        return t("Activo en todos los perfiles (dominio, privado y público)."), theme.VERDE
+    return t("Desactivado en algún perfil: revísalo cuanto antes."), theme.ROJO
 
 
 def _frase_actualizaciones(informe: InformeSalud) -> tuple[str, str]:
     n = informe.actualizaciones_windows
     if n is None:
-        return "No disponible en este equipo de pruebas.", theme.TEXTO_SUAVE
+        return t("No disponible en este equipo de pruebas."), theme.TEXTO_SUAVE
     if n == 0:
-        return "Windows está al día: no hay actualizaciones pendientes.", theme.VERDE
-    return f"Hay {n} actualización(es) de Windows pendiente(s) de instalar.", theme.AMBAR
+        return t("Windows está al día: no hay actualizaciones pendientes."), theme.VERDE
+    return t("Hay {n} actualización(es) de Windows pendiente(s) de instalar.", n=n), theme.AMBAR
 
 
 def _frase_cfa(informe: InformeSalud) -> tuple[str, str]:
     if not informe.cfa:
-        return "No disponible en este equipo de pruebas.", theme.TEXTO_SUAVE
+        return t("No disponible en este equipo de pruebas."), theme.TEXTO_SUAVE
     texto = informe.cfa.get("texto", "")
     color = theme.VERDE if informe.cfa.get("activo") else theme.AMBAR
-    return f"Protección de carpetas contra ransomware: {texto}.", color
+    return t("Protección de carpetas contra ransomware: {texto}.", texto=texto), color
 
 
 def _frase_disco(informe: InformeSalud) -> tuple[str, str]:
     p = informe.panel
     numeros = ""
     if p.disco_libre_gb is not None and p.disco_total_gb is not None:
-        numeros = f" {p.disco_libre_gb:.0f} GB libres de {p.disco_total_gb:.0f} GB."
+        numeros = t(" {libre:.0f} GB libres de {total:.0f} GB.", libre=p.disco_libre_gb, total=p.disco_total_gb)
     if any("disco principal está sano" in a for a in informe.salud.aciertos):
-        return "Sano." + numeros, theme.VERDE
+        return t("Sano.") + numeros, theme.VERDE
     if any("disco principal reporta problemas" in m for m in informe.salud.motivos):
-        return "Reporta problemas de salud: haz copia de seguridad ya." + numeros, theme.ROJO
-    return "No se pudo leer la salud del disco en este equipo." + numeros, theme.TEXTO_SUAVE
+        return t("Reporta problemas de salud: haz copia de seguridad ya.") + numeros, theme.ROJO
+    return t("No se pudo leer la salud del disco en este equipo.") + numeros, theme.TEXTO_SUAVE
 
 
 def crear_pagina(ctx: ContextoModulo):
     pagina, layout = pagina_base(
-        "¿Estoy protegido?",
-        "La salud de tu equipo, con datos reales y cada punto explicado.",
+        t("¿Estoy protegido?"),
+        t("La salud de tu equipo, con datos reales y cada punto explicado."),
     )
     servicios = ctx.servicios if ctx is not None else None
     estado: dict = {"trabajador": None}
@@ -147,16 +148,16 @@ def crear_pagina(ctx: ContextoModulo):
 
     pagina.destroyed.connect(_soltar_lectura)
 
-    lbl_estado = etiqueta("Leyendo el estado del equipo…", suave=True)
+    lbl_estado = etiqueta(t("Leyendo el estado del equipo…"), suave=True)
     layout.addWidget(lbl_estado)
 
     if not es_windows():
-        tarjeta_aviso, lay_aviso = tarjeta("Aviso")
+        tarjeta_aviso, lay_aviso = tarjeta(t("Aviso"))
         lay_aviso.addWidget(fila_estado(
-            "alerta", "estatico", "Equipo de pruebas sin Windows",
-            "Defender, el firewall y las actualizaciones de Windows no se "
-            "pueden leer aquí: saldrán como «no disponible» y la puntuación "
-            "solo contará lo comprobable. En tu PC con Windows se verá todo.",
+            "alerta", "estatico", t("Equipo de pruebas sin Windows"),
+            t("Defender, el firewall y las actualizaciones de Windows no se "
+              "pueden leer aquí: saldrán como «no disponible» y la puntuación "
+              "solo contará lo comprobable. En tu PC con Windows se verá todo."),
             theme.AMBAR))
         layout.addWidget(tarjeta_aviso)
 
@@ -199,20 +200,20 @@ def crear_pagina(ctx: ContextoModulo):
     layout.addWidget(banda_radar)
 
     fila_superior = QHBoxLayout()
-    tarjeta_estado, lay_tarjeta_estado = tarjeta("Estado de la protección")
+    tarjeta_estado, lay_tarjeta_estado = tarjeta(t("Estado de la protección"))
     lay_estado = QVBoxLayout()
     lay_tarjeta_estado.addLayout(lay_estado)
     lay_estado.addWidget(fila_estado(
-        "lupa", "estatico", "Comprobando…",
-        "Estamos leyendo Defender, el firewall y las actualizaciones.",
+        "lupa", "estatico", t("Comprobando…"),
+        t("Estamos leyendo Defender, el firewall y las actualizaciones."),
         theme.TEXTO_SUAVE))
     fila_superior.addWidget(tarjeta_estado, 1)
     layout.addLayout(fila_superior)
 
     # --- Rutina automática al arrancar (v1.0.5) --------------------------------
-    tarjeta_rutina, lay_rutina = tarjeta("Rutina automática al arrancar")
-    lbl_rutina = etiqueta(
-        "Todavía no se ha ejecutado la rutina automática de arranque.",
+    tarjeta_rutina, lay_rutina = tarjeta(t("Rutina automática al arrancar"))
+    lbl_rutina = etiqueta(t(
+        "Todavía no se ha ejecutado la rutina automática de arranque."),
         suave=True)
     lay_rutina.addWidget(lbl_rutina)
     layout.addWidget(tarjeta_rutina)
@@ -224,63 +225,63 @@ def crear_pagina(ctx: ContextoModulo):
 
         resumen = leer_resumen_rutina()
         if not resumen:
-            lbl_rutina.setText(
+            lbl_rutina.setText(t(
                 "Todavía no se ha ejecutado la rutina automática de "
-                "arranque.")
+                "arranque."))
             return
         cuando = _time.strftime(
             "%d/%m/%Y %H:%M", _time.localtime(float(resumen.get("cuando", 0))))
-        nombres = {"escaneo": "Escaneo rápido", "drivers": "Drivers",
-                   "limpieza": "Limpieza segura", "inicio": "Inicio"}
+        nombres = {"escaneo": t("Escaneo rápido"), "drivers": t("Drivers"),
+                   "limpieza": t("Limpieza segura"), "inicio": t("Inicio")}
         partes = []
         for clave, res in (resumen.get("resultados") or {}).items():
             marca = "✓" if res.get("ok") else "⚠"
             partes.append(f"{marca} {nombres.get(clave, clave)}: "
                           f"{res.get('resumen', '')}")
         lbl_rutina.setText(
-            f"Última rutina: {cuando} (al arrancar Windows).\n"
-            + "\n".join(partes))
+            t("Última rutina: {cuando} (al arrancar Windows).", cuando=cuando)
+            + "\n" + "\n".join(partes))
 
     _refrescar_rutina()
     pagina.refrescar_rutina = _refrescar_rutina  # gancho para la ventana
 
     # --- Aviso de fin de soporte (solo si el informe lo confirma) -------------
-    tarjeta_soporte, lay_soporte = tarjeta("Aviso importante")
+    tarjeta_soporte, lay_soporte = tarjeta(t("Aviso importante"))
     lay_soporte.addWidget(fila_estado(
-        "alerta", "estatico", "Windows 10 ya no recibe parches",
-        "Este equipo usa Windows 10, sin soporte desde el 14 de octubre de "
-        "2025. Mantener todo lo demás actualizado es aún más importante.",
+        "alerta", "estatico", t("Windows 10 ya no recibe parches"),
+        t("Este equipo usa Windows 10, sin soporte desde el 14 de octubre de "
+          "2025. Mantener todo lo demás actualizado es aún más importante."),
         theme.AMBAR))
     tarjeta_soporte.setVisible(False)
     layout.addWidget(tarjeta_soporte)
 
     # --- Por qué esta puntuación ------------------------------------------------
-    tarjeta_motivos, lay_tarjeta_motivos = tarjeta("Por qué esta puntuación")
+    tarjeta_motivos, lay_tarjeta_motivos = tarjeta(t("Por qué esta puntuación"))
     lay_motivos = QVBoxLayout()
     lay_tarjeta_motivos.addLayout(lay_motivos)
-    lay_motivos.addWidget(etiqueta("Leyendo el estado del equipo…", suave=True))
+    lay_motivos.addWidget(etiqueta(t("Leyendo el estado del equipo…"), suave=True))
     layout.addWidget(tarjeta_motivos)
 
     # --- El equipo ahora mismo (psutil, en vivo) ----------------------------------
-    tarjeta_sistema, lay_sistema = tarjeta("El equipo ahora mismo")
-    med_cpu = Medidor("Procesador")
-    med_ram = Medidor("Memoria")
-    med_disco = Medidor("Disco del sistema")
-    lbl_encendido = etiqueta("Encendido desde hace: —")
+    tarjeta_sistema, lay_sistema = tarjeta(t("El equipo ahora mismo"))
+    med_cpu = Medidor(t("Procesador"))
+    med_ram = Medidor(t("Memoria"))
+    med_disco = Medidor(t("Disco del sistema"))
+    lbl_encendido = etiqueta(t("Encendido desde hace: —"))
     for widget in (med_cpu, med_ram, med_disco, lbl_encendido):
         lay_sistema.addWidget(widget)
     layout.addWidget(tarjeta_sistema)
 
     # --- Último escaneo + acciones --------------------------------------------------
-    tarjeta_escaneo, lay_escaneo = tarjeta("Escaneos con esta aplicación")
-    lbl_escaneo = etiqueta("Todavía no has hecho ningún escaneo con esta aplicación.")
+    tarjeta_escaneo, lay_escaneo = tarjeta(t("Escaneos con esta aplicación"))
+    lbl_escaneo = etiqueta(t("Todavía no has hecho ningún escaneo con esta aplicación."))
     lay_escaneo.addWidget(lbl_escaneo)
     fila_botones = QHBoxLayout()
-    boton_actualizar = QPushButton("Actualizar estado")
+    boton_actualizar = QPushButton(t("Actualizar estado"))
     boton_actualizar.setObjectName("primario")
     fila_botones.addWidget(boton_actualizar)
     if ctx is not None and ctx.al_navegar is not None:
-        boton_escaner = QPushButton("Ir al escáner")
+        boton_escaner = QPushButton(t("Ir al escáner"))
         boton_escaner.clicked.connect(lambda: ctx.al_navegar("escaner"))
         fila_botones.addWidget(boton_escaner)
     fila_botones.addStretch(1)
@@ -288,12 +289,12 @@ def crear_pagina(ctx: ContextoModulo):
     layout.addWidget(tarjeta_escaneo)
 
     # --- Registro de actividad ------------------------------------------------------
-    tarjeta_actividad, lay_actividad = tarjeta("Registro de actividad")
+    tarjeta_actividad, lay_actividad = tarjeta(t("Registro de actividad"))
     lay_lista_actividad = QVBoxLayout()
     lay_actividad.addLayout(lay_lista_actividad)
     fila_actividad = QHBoxLayout()
-    boton_refrescar_actividad = QPushButton("Actualizar")
-    boton_exportar_actividad = QPushButton("Exportar registro")
+    boton_refrescar_actividad = QPushButton(t("Actualizar"))
+    boton_exportar_actividad = QPushButton(t("Exportar registro"))
     fila_actividad.addWidget(boton_refrescar_actividad)
     fila_actividad.addWidget(boton_exportar_actividad)
     fila_actividad.addStretch(1)
@@ -313,7 +314,7 @@ def crear_pagina(ctx: ContextoModulo):
                     entradas = []
         if not entradas:
             lay_lista_actividad.addWidget(
-                etiqueta("Sin actividad registrada todavía.", suave=True))
+                etiqueta(t("Sin actividad registrada todavía."), suave=True))
             return
         for entrada in entradas:
             lay_lista_actividad.addWidget(etiqueta(
@@ -326,8 +327,8 @@ def crear_pagina(ctx: ContextoModulo):
         if actividad is None:
             return
         ruta, _filtro = QFileDialog.getSaveFileName(
-            pagina, "Exportar registro", "registro-actividad.txt",
-            "Texto (*.txt)")
+            pagina, t("Exportar registro"), "registro-actividad.txt",
+            t("Texto (*.txt)"))
         if not ruta:
             return
         try:
@@ -354,16 +355,17 @@ def crear_pagina(ctx: ContextoModulo):
             detalle_ram = "—"
         med_ram.fijar(p.ram_pct, detalle_ram)
         if p.disco_sistema_pct is not None and p.disco_total_gb is not None:
-            detalle_disco = (f"{p.disco_sistema_pct:.0f} % usado "
-                             f"({p.disco_libre_gb:.0f} GB libres de "
-                             f"{p.disco_total_gb:.0f} GB)")
+            detalle_disco = t("{pct:.0f} % usado ({libre:.0f} GB libres de "
+                              "{total:.0f} GB)", pct=p.disco_sistema_pct,
+                              libre=p.disco_libre_gb, total=p.disco_total_gb)
         elif p.disco_sistema_pct is not None:
-            detalle_disco = f"{p.disco_sistema_pct:.0f} % usado"
+            detalle_disco = t("{pct:.0f} % usado", pct=p.disco_sistema_pct)
         else:
             detalle_disco = "—"
         med_disco.fijar(p.disco_sistema_pct, detalle_disco)
-        lbl_encendido.setText(
-            f"Encendido desde hace: {_formatear_encendido(p.tiempo_encendido_h)}")
+        lbl_encendido.setText(t(
+            "Encendido desde hace: {tiempo}",
+            tiempo=_formatear_encendido(p.tiempo_encendido_h)))
 
     temporizador = QTimer(pagina)
     temporizador.timeout.connect(refrescar_sistema)
@@ -374,7 +376,7 @@ def crear_pagina(ctx: ContextoModulo):
     def aplicar(resultado: ResultadoModulo) -> None:
         boton_actualizar.setEnabled(True)
         anillo.fijar_girando(False)
-        lbl_estado.setText(resultado.mensaje)
+        lbl_estado.setText(t(resultado.mensaje))
         informe = resultado.datos
         if not isinstance(informe, InformeSalud):
             return
@@ -386,29 +388,30 @@ def crear_pagina(ctx: ContextoModulo):
         _vaciar(lay_estado)
         frase, color = _frase_defender(informe)
         lay_estado.addWidget(fila_estado(
-            "escudo", "pulso", "Microsoft Defender", frase, color))
+            "escudo", "pulso", t("Microsoft Defender"), frase, color))
         frase, color = _frase_firewall(informe)
         lay_estado.addWidget(fila_estado(
-            "llama", "llama", "Firewall de Windows", frase, color))
+            "llama", "llama", t("Firewall de Windows"), frase, color))
         frase, color = _frase_actualizaciones(informe)
         lay_estado.addWidget(fila_estado(
-            "actualizar", "giro", "Actualizaciones de Windows", frase, color))
+            "actualizar", "giro", t("Actualizaciones de Windows"), frase, color))
         frase, color = _frase_cfa(informe)
         lay_estado.addWidget(fila_estado(
-            "carpeta", "estatico", "Protección contra ransomware", frase, color))
+            "carpeta", "estatico", t("Protección contra ransomware"), frase, color))
         frase, color = _frase_disco(informe)
         lay_estado.addWidget(fila_estado(
-            "disco", "parpadeo", "Disco principal", frase, color))
+            "disco", "parpadeo", t("Disco principal"), frase, color))
 
         tarjeta_soporte.setVisible(bool(informe.windows_sin_soporte))
 
         _vaciar(lay_motivos)
         salud = informe.salud
         if 0 < salud.maximo_conocido < 100:
-            lay_motivos.addWidget(etiqueta(
-                f"La puntuación se calcula sobre los {salud.maximo_conocido} "
+            lay_motivos.addWidget(etiqueta(t(
+                "La puntuación se calcula sobre los {maximo} "
                 "puntos que sí se pudieron comprobar en este equipo; el resto "
-                "no resta, simplemente no se pudo leer.", suave=True))
+                "no resta, simplemente no se pudo leer.",
+                maximo=salud.maximo_conocido), suave=True))
         for motivo in salud.motivos:
             lay_motivos.addWidget(etiqueta(f"•  {motivo}"))
         for acierto in salud.aciertos:
@@ -418,9 +421,11 @@ def crear_pagina(ctx: ContextoModulo):
         if ultimo:
             fecha = datetime.fromtimestamp(
                 float(ultimo.get("fecha", 0))).strftime("%d/%m/%Y a las %H:%M")
-            lbl_escaneo.setText(
-                f"Último escaneo: {fecha} — {ultimo.get('revisados', 0)} archivos "
-                f"revisados, {ultimo.get('hallazgos', 0)} hallazgo(s).")
+            lbl_escaneo.setText(t(
+                "Último escaneo: {fecha} — {revisados} archivos "
+                "revisados, {hallazgos} hallazgo(s).", fecha=fecha,
+                revisados=ultimo.get('revisados', 0),
+                hallazgos=ultimo.get('hallazgos', 0)))
         refrescar_sistema()
 
     def lanzar_lectura() -> None:
@@ -432,7 +437,7 @@ def crear_pagina(ctx: ContextoModulo):
             estado["trabajador"] = None  # hilo ya destruido
         boton_actualizar.setEnabled(False)
         anillo.fijar_girando(True)
-        lbl_estado.setText("Leyendo el estado del equipo…")
+        lbl_estado.setText(t("Leyendo el estado del equipo…"))
         trabajador = _TrabajadorInforme(servicios, parent=pagina)
         trabajador.listo.connect(aplicar)
         trabajador.finished.connect(trabajador.deleteLater)

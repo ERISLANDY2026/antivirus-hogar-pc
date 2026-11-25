@@ -19,6 +19,8 @@ from __future__ import annotations
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
+from ..core.i18n import t
+
 
 class Bandeja:
     """El icono de la bandeja y su menú (Abrir / Escaneo rápido / Salir)."""
@@ -32,12 +34,12 @@ class Bandeja:
         self.tray.setToolTip("Antivirus Hogar PC")
 
         self.menu = QMenu()
-        self.accion_abrir = QAction("Abrir", self.menu)
+        self.accion_abrir = QAction(t("Abrir"), self.menu)
         self.accion_abrir.triggered.connect(lambda _=False: self._al_abrir())
-        self.accion_escaneo = QAction("Escaneo rápido", self.menu)
+        self.accion_escaneo = QAction(t("Escaneo rápido"), self.menu)
         self.accion_escaneo.triggered.connect(
             lambda _=False: self._al_escaneo_rapido())
-        self.accion_salir = QAction("Salir", self.menu)
+        self.accion_salir = QAction(t("Salir"), self.menu)
         self.accion_salir.triggered.connect(lambda _=False: self._al_salir())
         self.menu.addAction(self.accion_abrir)
         self.menu.addAction(self.accion_escaneo)
@@ -49,6 +51,13 @@ class Bandeja:
         self.disponible = QSystemTrayIcon.isSystemTrayAvailable()
         if self.disponible:
             self.tray.show()
+
+    def retraducir(self) -> None:
+        """v1.0.14: el menú se retraduce al cambiar el idioma
+        desde el panel, sin recrear la bandeja."""
+        self.accion_abrir.setText(t("Abrir"))
+        self.accion_escaneo.setText(t("Escaneo rápido"))
+        self.accion_salir.setText(t("Salir"))
 
     def _activado(self, motivo) -> None:
         """Doble clic en el icono: abrir/restaurar la ventana."""

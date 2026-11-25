@@ -33,6 +33,7 @@ from ..core.programaciones import (
     desde_dicts,
     proxima_ejecucion,
 )
+from ..core.i18n import t
 from ..winapi import tasks as tareas_win
 from .paginas_base import etiqueta, pagina_base, tarjeta
 from .services import ServiciosApp, seguro
@@ -56,20 +57,22 @@ def leer_ultimo_resultado(id_: str) -> dict | None:
 def _texto_ultimo_resultado(id_: str) -> str:
     res = leer_ultimo_resultado(id_)
     if not res:
-        return "Última ejecución: todavía ninguna."
+        return t("Última ejecución: todavía ninguna.")
     cuando = time.strftime("%d/%m/%Y %H:%M",
                            time.localtime(float(res.get("cuando", 0))))
     marca = "✓" if res.get("ok") else "⚠"
-    return f"Última ejecución: {cuando} — {marca} {res.get('resumen', '')}"
+    return t("Última ejecución: {cuando} — {marca} {resumen}",
+             cuando=cuando, marca=marca,
+             resumen=res.get('resumen', ''))
 
 
 def _texto_proxima(prog: Programacion) -> str:
     proxima = proxima_ejecucion(prog)
     if proxima is None:
-        return "Próxima ejecución: — (desactivada)"
-    dia = DIAS_SEMANA[proxima.weekday()].capitalize()
-    return (f"Próxima ejecución: {dia} "
-            + proxima.strftime("%d/%m/%Y a las %H:%M"))
+        return t("Próxima ejecución: — (desactivada)")
+    dia = t(DIAS_SEMANA[proxima.weekday()].capitalize())
+    return t("Próxima ejecución: {dia} {fecha}",
+             dia=dia, fecha=proxima.strftime("%d/%m/%Y a las %H:%M"))
 
 
 class _TarjetaProgramacion:
@@ -81,20 +84,27 @@ class _TarjetaProgramacion:
         self.prog = prog
         self._al_guardar = al_guardar
         info = TIPOS_PROGRAMACION[prog.id]
-        self.tarjeta, lay = tarjeta(info["titulo"])
-        lay.addWidget(etiqueta(info["descripcion"], suave=True))
+        self.tarjeta, lay = tarjeta(t(info["titulo"]))
+        lay.addWidget(etiqueta(t(info["descripcion"]), suave=True))
         fila = QHBoxLayout()
-        self.check = QCheckBox("Activada")
+        self.check = QCheckBox(t("Activada"))
         self.check.setChecked(prog.activa)
         fila.addWidget(self.check)
         self.combo_frecuencia = QComboBox()
-        self.combo_frecuencia.addItems(_DIAS_UI)
-        self.combo_frecuencia.setCurrentText(
-            "Diaria" if prog.frecuencia == "diaria" else "Semanal")
+        # v1.0.14: el texto visible se traduce; el VALOR viaja
+        # en el data («diaria»/«semanal», las claves de core).
+        self.combo_frecuencia.addItem(t("Diaria"), "diaria")
+        self.combo_frecuencia.addItem(t("Semanal"), "semanal")
+        indice_f = self.combo_frecuencia.findData(
+            prog.frecuencia if prog.frecuencia in ("diaria", "semanal")
+            else "diaria")
+        self.combo_frecuencia.setCurrentIndex(max(indice_f, 0))
         fila.addWidget(self.combo_frecuencia)
         self.combo_dia = QComboBox()
-        self.combo_dia.addItems([d.capitalize() for d in DIAS_SEMANA])
-        self.combo_dia.setCurrentText(prog.dia.capitalize())
+        for d in DIAS_SEMANA:
+            self.combo_dia.addItem(t(d.capitalize()), d)
+        indice_d = self.combo_dia.findData(prog.dia)
+        self.combo_dia.setCurrentIndex(max(indice_d, 0))
         fila.addWidget(self.combo_dia)
         self.hora = QTimeEdit()
         self.hora.setDisplayFormat("HH:mm")
@@ -112,7 +122,7 @@ class _TarjetaProgramacion:
                                    suave=True)
         lay.addWidget(self.lbl_ultima)
         fila_b = QHBoxLayout()
-        self.boton = QPushButton("Guardar y aplicar")
+        self.boton = QPushButton(t("Guardar y aplicar"))
         self.boton.setObjectName("primario")
         self.boton.clicked.connect(self._guardar)
         fila_b.addWidget(self.boton)
@@ -120,22 +130,22 @@ class _TarjetaProgramacion:
         fila_b.addWidget(self.lbl_estado)
         fila_b.addStretch(1)
         lay.addLayout(fila_b)
-        self.combo_frecuencia.currentTextChanged.connect(self._refrescar_dia)
+        self.combo_frecuencia.currentIndexChanged.connect(
+            lambda _i: self._refrescar_dia())
         self._refrescar_dia()
 
     def _refrescar_dia(self) -> None:
         self.combo_dia.setEnabled(
-            self.combo_frecuencia.currentText() == "Semanal")
+            self.combo_frecuencia.currentData() == "semanal")
 
     def widget(self) -> QWidget:
         return self.tarjeta
 
     def _guardar(self) -> None:
         self.prog.activa = self.check.isChecked()
-        self.prog.frecuencia = (
-            "diaria" if self.combo_frecuencia.currentText() == "Diaria"
-            else "semanal")
-        self.prog.dia = self.combo_dia.currentText().lower()
+        self.prog.frecuencia = self.combo_frecuencia.currentData() \
+            or "diaria"
+        self.prog.dia = self.combo_dia.currentData() or prog.dia
         self.prog.hora = self.hora.time().toString("HH:mm")
         self.lbl_proxima.setText(_texto_proxima(self.prog))
         self.lbl_ultima.setText(_texto_ultimo_resultado(self.prog.id))
@@ -144,19 +154,19 @@ class _TarjetaProgramacion:
 
 def crear_pagina_programar(ctx) -> QWidget:
     pagina, layout = pagina_base(
-        "Programador de tareas",
-        "Escaneos y mantenimientos automáticos, a tu hora.")
+        t("Programador de tareas"),
+        t("Escaneos y mantenimientos automáticos, a tu hora."))
     servicios: ServiciosApp | None = ctx.servicios if ctx is not None else None
 
-    tarjeta_nota, lay_nota = tarjeta("Cómo funciona")
-    lay_nota.addWidget(etiqueta(
+    tarjeta_nota, lay_nota = tarjeta(t("Cómo funciona"))
+    lay_nota.addWidget(etiqueta(t(
         "Las tareas las ejecuta el Programador de tareas de Windows: "
         "corren en segundo plano AUNQUE LA APP ESTÉ CERRADA, y dejan "
         "su resultado aquí (última ejecución) y en el registro de "
         "actividad de Inicio. Ante una amenaza la app nunca actúa "
         "sola: anota el hallazgo y te avisa para que decidas tú. La "
         "limpieza programada usa solo las categorías seguras "
-        "(temporales, cachés y papelera).", suave=True))
+        "(temporales, cachés y papelera)."), suave=True))
     layout.addWidget(tarjeta_nota)
 
     ajustes = servicios.ajustes if servicios is not None else None
@@ -172,7 +182,7 @@ def crear_pagina_programar(ctx) -> QWidget:
             res = seguro(tareas_win.crear_tarea_programada_detalle,
                          prog.id, prog.frecuencia, prog.dia, prog.hora)
             if res.ok and res.datos and res.datos[0]:
-                return "Guardada: tarea de Windows creada."
+                return t("Guardada: tarea de Windows creada.")
             causa = ""
             detalle = ""
             if res.ok and res.datos:
@@ -187,11 +197,11 @@ def crear_pagina_programar(ctx) -> QWidget:
                         f"schtasks no creó la tarea {prog.id}: {detalle}")
                 except Exception:
                     pass
-            return ("Guardada en la app, pero la tarea de Windows NO "
-                    "se creó. " + (causa or
-                                   "Windows no aceptó la tarea."))
+            return t("Guardada en la app, pero la tarea de Windows NO "
+                     "se creó. {causa}",
+                     causa=causa or t("Windows no aceptó la tarea."))
         res = seguro(tareas_win.eliminar_tarea_programada, prog.id)
-        return "Guardada: programación desactivada y tarea retirada."
+        return t("Guardada: programación desactivada y tarea retirada.")
 
     # ANCLA DE VIDA (v1.0.6, causa raíz de «Próxima ejecución:
     # Desactivado» en las SEIS tarjetas): las _TarjetaProgramacion

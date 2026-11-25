@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
 )
 
 from antivirus_hogar_pc import config
-from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
+from antivirus_hogar_pc.contracts import ContextoModulo
+from antivirus_hogar_pc.core.i18n import t, ResultadoModulo
 from antivirus_hogar_pc.core import seguridad
 from antivirus_hogar_pc.core.hashing import tamano_legible
 from antivirus_hogar_pc.core.scanner import Hallazgo, ResultadoEscaneo, analizar_archivo, escanear
@@ -196,13 +197,13 @@ def _fila_hallazgo(hallazgo: Hallazgo, ctx: ContextoModulo, al_resolver) -> QWid
         _guardar_ref(contenedor, trabajador)
         trabajador.start()
 
-    boton = QPushButton("Escanear con Defender")
+    boton = QPushButton(t("Escanear con Defender"))
     boton.clicked.connect(a_defender)
-    b_cuarentena = QPushButton("Poner en cuarentena")
+    b_cuarentena = QPushButton(t("Poner en cuarentena"))
     b_cuarentena.clicked.connect(a_cuarentena)
-    b_eliminar = QPushButton("Eliminar")
+    b_eliminar = QPushButton(t("Eliminar"))
     b_eliminar.clicked.connect(a_eliminar)
-    b_ignorar = QPushButton("Ignorar")
+    b_ignorar = QPushButton(t("Ignorar"))
     b_ignorar.clicked.connect(al_resolver)
     for b in (b_cuarentena, b_eliminar, boton, b_ignorar):
         fila_botones.addWidget(b)
@@ -229,11 +230,10 @@ def _raices_escaneo_completo() -> list[str]:
 def crear_pagina_escaner(ctx: ContextoModulo):
     servicios = ctx.servicios
     pagina, layout = pagina_base(
-        "Escanear", "Escaneo por huellas contra la base de malware conocido. "
-                    "Ante un hallazgo decides tú: la app nunca actúa sola.")
+        t("Escanear"), t("Escaneo por huellas contra la base de malware conocido. Ante un hallazgo decides tú: la app nunca actúa sola."))
 
     # --- tarjeta de escaneo -------------------------------------------------
-    tarjeta_escaneo, lay = tarjeta("Escaneo")
+    tarjeta_escaneo, lay = tarjeta(t("Escaneo"))
     barra = BarraProgreso()
     lay.addWidget(barra)
     lbl_estado = etiqueta("Listo. La base local tiene "
@@ -243,18 +243,18 @@ def crear_pagina_escaner(ctx: ContextoModulo):
     lay.addWidget(lbl_actual)
 
     fila1 = QHBoxLayout()
-    b_rapido = boton_principal("Escaneo rápido", "primario")
-    b_completo = QPushButton("Escaneo completo")
-    b_carpeta = QPushButton("Elegir carpeta…")
-    b_cancelar = QPushButton("Cancelar")
+    b_rapido = boton_principal(t("Escaneo rápido"), "primario")
+    b_completo = QPushButton(t("Escaneo completo"))
+    b_carpeta = QPushButton(t("Elegir carpeta…"))
+    b_cancelar = QPushButton(t("Cancelar"))
     b_cancelar.setEnabled(False)
     for b in (b_rapido, b_completo, b_carpeta, b_cancelar):
         fila1.addWidget(b)
     fila1.addStretch(1)
     lay.addLayout(fila1)
     fila2 = QHBoxLayout()
-    b_defender = QPushButton("Escanear con Defender")
-    b_archivo = QPushButton("Analizar ESTE archivo")
+    b_defender = QPushButton(t("Escanear con Defender"))
+    b_archivo = QPushButton(t("Analizar ESTE archivo"))
     fila2.addWidget(b_defender)
     fila2.addWidget(b_archivo)
     fila2.addStretch(1)
@@ -262,18 +262,18 @@ def crear_pagina_escaner(ctx: ContextoModulo):
     layout.addWidget(tarjeta_escaneo)
 
     # --- tarjeta de hallazgos -------------------------------------------------
-    tarjeta_hallazgos, lay_h = tarjeta("Hallazgos")
-    lbl_sin = etiqueta("Sin hallazgos todavía.")
+    tarjeta_hallazgos, lay_h = tarjeta(t("Hallazgos"))
+    lbl_sin = etiqueta(t("Sin hallazgos todavía."))
     lay_h.addWidget(lbl_sin)
     layout.addWidget(tarjeta_hallazgos)
 
     # --- tarjeta de cuarentena ------------------------------------------------
-    tarjeta_cuarentena, lay_c = tarjeta("Cuarentena")
+    tarjeta_cuarentena, lay_c = tarjeta(t("Cuarentena"))
     lbl_cuarentena = etiqueta("")
     lay_c.addWidget(lbl_cuarentena)
     contenedor_cuarentena = QVBoxLayout()
     lay_c.addLayout(contenedor_cuarentena)
-    b_refrescar_c = QPushButton("Actualizar lista")
+    b_refrescar_c = QPushButton(t("Actualizar lista"))
     lay_c.addWidget(b_refrescar_c)
     layout.addWidget(tarjeta_cuarentena)
     layout.addStretch(1)
@@ -318,7 +318,7 @@ def crear_pagina_escaner(ctx: ContextoModulo):
             fila = QHBoxLayout()
             fila.addWidget(etiqueta(
                 f"{os.path.basename(entrada.ruta_original)} — {entrada.etiqueta}"))
-            b_rest = QPushButton("Restaurar")
+            b_rest = QPushButton(t("Restaurar"))
 
             def restaurar(e=entrada):
                 r = seguro(servicios.cuarentena.restaurar, e.id)
@@ -329,7 +329,7 @@ def crear_pagina_escaner(ctx: ContextoModulo):
                     QMessageBox.warning(pagina, "Cuarentena", r.mensaje)
                 refrescar_cuarentena()
 
-            b_borrar = QPushButton("Eliminar definitivo")
+            b_borrar = QPushButton(t("Eliminar definitivo"))
 
             def borrar(e=entrada):
                 if _confirmar(pagina, "Eliminar definitivo",
@@ -477,31 +477,28 @@ def crear_pagina_escaner(ctx: ContextoModulo):
 def crear_pagina_proteccion(ctx: ContextoModulo):
     servicios = ctx.servicios
     pagina, layout = pagina_base(
-        "Protección", "Bloqueador de dominios peligrosos y de anuncios, "
-                      "protección al instalar y escaneo semanal.")
+        t("Protección"), t("Bloqueador de dominios peligrosos y de anuncios, protección al instalar y escaneo semanal."))
 
     # --- bloqueador hosts -----------------------------------------------------
-    tarjeta_hosts, lay = tarjeta("Bloqueador (archivo hosts)")
-    lbl_hosts = etiqueta("Consultando el estado del bloqueo…")
+    tarjeta_hosts, lay = tarjeta(t("Bloqueador (archivo hosts)"))
+    lbl_hosts = etiqueta(t("Consultando el estado del bloqueo…"))
     lay.addWidget(lbl_hosts)
-    lay.addWidget(etiqueta(
-        "Bloquea por dominio, no por dirección completa: es el límite de esta "
-        "vía, sin certificado local. Antes de tocar el archivo hosts se guarda "
-        "una copia de seguridad.", suave=True))
+    lay.addWidget(etiqueta(t(
+        "Bloquea por dominio, no por dirección completa: es el límite de esta vía, sin certificado local. Antes de tocar el archivo hosts se guarda una copia de seguridad."), suave=True))
     fila_h1 = QHBoxLayout()
-    b_activar = QPushButton("Activar bloqueo")
+    b_activar = QPushButton(t("Activar bloqueo"))
     b_activar.setObjectName("primario")
-    b_fusionada = QPushButton("Usar base fusionada (100.776)")
-    b_pausar = QPushButton("Pausar")
-    b_reanudar = QPushButton("Reanudar")
+    b_fusionada = QPushButton(t("Usar base fusionada (100.776)"))
+    b_pausar = QPushButton(t("Pausar"))
+    b_reanudar = QPushButton(t("Reanudar"))
     for b in (b_activar, b_fusionada, b_pausar, b_reanudar):
         fila_h1.addWidget(b)
     fila_h1.addStretch(1)
     lay.addLayout(fila_h1)
     fila_h2 = QHBoxLayout()
-    b_quitar = QPushButton("Quitar el bloqueo")
-    b_restaurar = QPushButton("Restaurar copia del hosts")
-    b_dns = QPushButton("Modo reforzado (DNS)")
+    b_quitar = QPushButton(t("Quitar el bloqueo"))
+    b_restaurar = QPushButton(t("Restaurar copia del hosts"))
+    b_dns = QPushButton(t("Modo reforzado (DNS)"))
     for b in (b_quitar, b_restaurar, b_dns):
         fila_h2.addWidget(b)
     fila_h2.addStretch(1)
@@ -559,7 +556,7 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
     refrescar_hosts()
 
     # --- base de amenazas -------------------------------------------------------
-    tarjeta_base, lay_b = tarjeta("Base de amenazas")
+    tarjeta_base, lay_b = tarjeta(t("Base de amenazas"))
     lbl_base = etiqueta(f"Huellas conocidas en la base local: {servicios.base_firmas.total}.")
     lay_b.addWidget(lbl_base)
     lay_b.addWidget(etiqueta(
@@ -574,15 +571,15 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
     barra_base = BarraProgreso()
     barra_base.setVisible(False)
     lay_b.addWidget(barra_base)
-    b_actualizar_base = boton_principal("Actualizar firmas (varias fuentes)")
+    b_actualizar_base = boton_principal(t("Actualizar firmas (varias fuentes)"))
     lay_b.addWidget(b_actualizar_base)
 
     def actualizar_base():
         b_actualizar_base.setEnabled(False)
         tarjeta_base.fijar_activa(True)
         barra_base.setVisible(True)
-        barra_base.fijar_texto("Consultando las fuentes…")
-        lbl_fuentes.setText("Consultando las fuentes… puede tardar un poco.")
+        barra_base.fijar_texto(t("Consultando las fuentes…"))
+        lbl_fuentes.setText(t("Consultando las fuentes… puede tardar un poco."))
 
         def trabajo():
             from antivirus_hogar_pc.core.threats_update import (
@@ -631,12 +628,10 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
     layout.addWidget(tarjeta_base)
 
     # --- protección al instalar --------------------------------------------------
-    tarjeta_instalar, lay_i = tarjeta("Protección al instalar (modo usuario)")
-    lay_i.addWidget(etiqueta(
-        "Vigila Descargas, Escritorio y la carpeta temporal, y los programas "
-        "recién instalados, y los contrasta con la base. No es tiempo real de "
-        "kernel: la protección en tiempo real la hace Defender."))
-    b_revisar = QPushButton("Revisar ahora")
+    tarjeta_instalar, lay_i = tarjeta(t("Protección al instalar (modo usuario)"))
+    lay_i.addWidget(etiqueta(t(
+        "Vigila Descargas, Escritorio y la carpeta temporal, y los programas recién instalados, y los contrasta con la base. No es tiempo real de kernel: la protección en tiempo real la hace Defender.")))
+    b_revisar = QPushButton(t("Revisar ahora"))
     lay_i.addWidget(b_revisar)
     lbl_revision = etiqueta("")
     lay_i.addWidget(lbl_revision)
@@ -683,15 +678,14 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
     b_revisar.clicked.connect(revisar)
 
     # --- escaneo semanal ------------------------------------------------------------
-    tarjeta_semanal, lay_s = tarjeta("Escaneo automático semanal")
-    lay_s.addWidget(etiqueta(
-        "Una vez por semana, en silencio; solo avisa si encuentra algo. "
-        "Usa el Programador de tareas de Windows."))
+    tarjeta_semanal, lay_s = tarjeta(t("Escaneo automático semanal"))
+    lay_s.addWidget(etiqueta(t(
+        "Una vez por semana, en silencio; solo avisa si encuentra algo. Usa el Programador de tareas de Windows.")))
     lbl_semanal = etiqueta("")
     lay_s.addWidget(lbl_semanal)
     fila_s = QHBoxLayout()
-    b_semanal_on = QPushButton("Activar escaneo semanal")
-    b_semanal_off = QPushButton("Desactivar")
+    b_semanal_on = QPushButton(t("Activar escaneo semanal"))
+    b_semanal_off = QPushButton(t("Desactivar"))
     fila_s.addWidget(b_semanal_on)
     fila_s.addWidget(b_semanal_off)
     fila_s.addStretch(1)
@@ -739,16 +733,13 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
 
 def crear_pagina_informes(ctx: ContextoModulo):
     pagina, layout = pagina_base(
-        "Informes", "Informe de privacidad y persistencia: qué programas hay, "
-                    "qué arranca con Windows y qué merece una mirada.")
+        t("Informes"), t("Informe de privacidad y persistencia: qué programas hay, qué arranca con Windows y qué merece una mirada."))
     estado = {"texto": ""}
 
-    tarjeta_gen, lay = tarjeta("Informe de privacidad y persistencia")
-    lay.addWidget(etiqueta(
-        "Programas instalados, claves Run/RunOnce, carpeta de inicio, tareas "
-        "programadas sospechosas y servicios de terceros. Solo lectura: "
-        "la app no desactiva ni borra nada."))
-    b_generar = boton_principal("Generar informe", "primario")
+    tarjeta_gen, lay = tarjeta(t("Informe de privacidad y persistencia"))
+    lay.addWidget(etiqueta(t(
+        "Programas instalados, claves Run/RunOnce, carpeta de inicio, tareas programadas sospechosas y servicios de terceros. Solo lectura: la app no desactiva ni borra nada.")))
+    b_generar = boton_principal(t("Generar informe"), "primario")
     lay.addWidget(b_generar)
     barra_informe = BarraProgreso()
     barra_informe.setVisible(False)
@@ -757,15 +748,15 @@ def crear_pagina_informes(ctx: ContextoModulo):
     lay.addWidget(lbl_resumen)
     layout.addWidget(tarjeta_gen)
 
-    tarjeta_texto, lay_t = tarjeta("Contenido del informe")
+    tarjeta_texto, lay_t = tarjeta(t("Contenido del informe"))
     texto = QPlainTextEdit()
     texto.setReadOnly(True)
-    texto.setPlaceholderText("Pulsa «Generar informe» para ver aquí el contenido.")
+    texto.setPlaceholderText(t("Pulsa «Generar informe» para ver aquí el contenido."))
     lay_t.addWidget(texto)
     layout.addWidget(tarjeta_texto)
 
-    tarjeta_exp, lay_e = tarjeta("Exportar")
-    b_guardar = QPushButton("Guardar informe como archivo")
+    tarjeta_exp, lay_e = tarjeta(t("Exportar"))
+    b_guardar = QPushButton(t("Guardar informe como archivo"))
     b_guardar.setEnabled(False)
     lay_e.addWidget(b_guardar)
     layout.addWidget(tarjeta_exp)

@@ -28,7 +28,8 @@ from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                                QPushButton, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
-from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
+from antivirus_hogar_pc.contracts import ContextoModulo
+from antivirus_hogar_pc.core.i18n import t, ResultadoModulo
 from antivirus_hogar_pc.core import drivers_logic
 from antivirus_hogar_pc.core.hashing import tamano_legible
 from antivirus_hogar_pc.ui import theme
@@ -164,7 +165,7 @@ def _confirmar(padre: QWidget, titulo: str, texto: str) -> bool:
 # === DRIVERS ======================================================================
 def crear_pagina_drivers(ctx: ContextoModulo):
     pagina, layout = pagina_base(
-        "Drivers",
+        t("Drivers"),
         "Escanea los drivers de la PC y los contrasta con las fuentes "
         "oficiales, en este orden: Windows Update y el Catálogo de Microsoft; "
         "si no está ahí, el fabricante del chip (NVIDIA, AMD, Intel) y la "
@@ -173,10 +174,10 @@ def crear_pagina_drivers(ctx: ContextoModulo):
     gestor = _GestorTrabajos()
     estado_actual: dict = {"estados": [], "fabricante_pc": ""}
 
-    tarjeta_escaner, lay_e = tarjeta("Drivers de esta PC")
+    tarjeta_escaner, lay_e = tarjeta(t("Drivers de esta PC"))
     barra = BarraProgreso()
     barra.setVisible(False)
-    lbl_estado = etiqueta("Todavía no se ha escaneado. Pulsa «Escanear drivers».",
+    lbl_estado = etiqueta(t("Todavía no se ha escaneado. Pulsa «Escanear drivers»."),
                           suave=True)
     tabla = QTableWidget(0, 5)
     tabla.setHorizontalHeaderLabels(
@@ -195,7 +196,7 @@ def crear_pagina_drivers(ctx: ContextoModulo):
     tabla.setColumnWidth(3, 130)   # Estado, acotada
     tabla.setColumnWidth(4, 250)   # Acción: Actualizar + Fuentes oficiales
     tabla.setTextElideMode(Qt.TextElideMode.ElideRight)
-    btn_escanear = boton_principal("Escanear drivers", "primario")
+    btn_escanear = boton_principal(t("Escanear drivers"), "primario")
     lbl_causa_wu = etiqueta("", suave=True)
     lbl_causa_wu.setVisible(False)
     lay_e.addWidget(btn_escanear)
@@ -203,18 +204,13 @@ def crear_pagina_drivers(ctx: ContextoModulo):
     lay_e.addWidget(lbl_estado)
     lay_e.addWidget(lbl_causa_wu)
     lay_e.addWidget(tabla)
-    lay_e.addWidget(etiqueta(
-        "Antes de instalar un driver se crea un punto de restauración "
-        "automático, y solo se instalan drivers firmados (Windows Update "
-        "solo sirve drivers firmados por Microsoft). Nada de bases de "
-        "terceros."))
+    lay_e.addWidget(etiqueta(t(
+        "Antes de instalar un driver se crea un punto de restauración automático, y solo se instalan drivers firmados (Windows Update solo sirve drivers firmados por Microsoft). Nada de bases de terceros.")))
     layout.addWidget(tarjeta_escaner)
 
-    tarjeta_fuentes, lay_f = tarjeta("Cadena oficial de fuentes")
-    lay_f.addWidget(etiqueta(
-        "1) Windows Update / Microsoft Update Catalog · 2) Fabricante del "
-        "chip · 3) Página oficial de la marca de tu PC. Tras escanear, cada "
-        "driver tendrá aquí y en su fila los enlaces que le tocan."))
+    tarjeta_fuentes, lay_f = tarjeta(t("Cadena oficial de fuentes"))
+    lay_f.addWidget(etiqueta(t(
+        "1) Windows Update / Microsoft Update Catalog · 2) Fabricante del chip · 3) Página oficial de la marca de tu PC. Tras escanear, cada driver tendrá aquí y en su fila los enlaces que le tocan.")))
     contenedor_enlaces = QVBoxLayout()
     lay_f.addLayout(contenedor_enlaces)
     layout.addWidget(tarjeta_fuentes)
@@ -223,10 +219,10 @@ def crear_pagina_drivers(ctx: ContextoModulo):
     def _pintar_enlaces():
         _vaciar(contenedor_enlaces)
         fila = QHBoxLayout()
-        btn_wu = QPushButton("Abrir Windows Update")
+        btn_wu = QPushButton(t("Abrir Windows Update"))
         btn_wu.clicked.connect(lambda: _abrir("ms-settings:windowsupdate"))
         fila.addWidget(btn_wu)
-        btn_catalogo = QPushButton("Microsoft Update Catalog")
+        btn_catalogo = QPushButton(t("Microsoft Update Catalog"))
         btn_catalogo.clicked.connect(
             lambda: _abrir(drivers_logic.URL_CATALOGO_MICROSOFT))
         fila.addWidget(btn_catalogo)
@@ -260,7 +256,7 @@ def crear_pagina_drivers(ctx: ContextoModulo):
 
     def _actualizar():
         if not _confirmar(
-                pagina, "Actualizar drivers",
+                pagina, t("Actualizar drivers"),
                 "Se creará primero un punto de restauración. Después, "
                 "Windows Update descargará e instalará los drivers nuevos "
                 "que ofrece para esta PC (solo firmados). Windows pedirá "
@@ -292,10 +288,10 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             fila = QHBoxLayout(celda)
             fila.setContentsMargins(0, 0, 0, 0)
             if drivers_logic.puede_actualizar(est):
-                btn = QPushButton("Actualizar")
+                btn = QPushButton(t("Actualizar"))
                 btn.clicked.connect(lambda _=False: _actualizar())
                 fila.addWidget(btn)
-            btn_fuentes = QPushButton("Fuentes oficiales")
+            btn_fuentes = QPushButton(t("Fuentes oficiales"))
             btn_fuentes.clicked.connect(
                 lambda _=False, e=est: _mostrar_fuentes(pagina, e,
                                                         estado_actual["fabricante_pc"]))
@@ -445,13 +441,13 @@ def _mostrar_fuentes(pagina: QWidget, estado, fabricante_pc: str) -> None:
              f"{estado.detalle}\n\n"
              "Fuentes oficiales, en el orden de la cadena:")
     caja = QMessageBox(pagina)
-    caja.setWindowTitle("Fuentes oficiales del driver")
+    caja.setWindowTitle(t("Fuentes oficiales del driver"))
     caja.setText(texto)
     botones = []
     for nombre, url in enlaces:
         boton = caja.addButton(nombre, QMessageBox.ButtonRole.ActionRole)
         botones.append((boton, url))
-    caja.addButton("Cerrar", QMessageBox.ButtonRole.RejectRole)
+    caja.addButton(t("Cerrar"), QMessageBox.ButtonRole.RejectRole)
     caja.exec()
     for boton, url in botones:
         if caja.clickedButton() is boton:
@@ -462,7 +458,7 @@ def _mostrar_fuentes(pagina: QWidget, estado, fabricante_pc: str) -> None:
 # === DISCOS =======================================================================
 def crear_pagina_discos(ctx: ContextoModulo):
     pagina, layout = pagina_base(
-        "Discos",
+        t("Discos"),
         "Salud SMART de cada disco y optimización con la herramienta de "
         "Windows: TRIM en discos SSD y desfragmentación solo en mecánicos. "
         "Si un disco no deja leer su salud (USB o RAID), se dice tal cual: "
@@ -470,11 +466,11 @@ def crear_pagina_discos(ctx: ContextoModulo):
     gestor = _GestorTrabajos()
     datos_actuales: dict = {"fisicos": [], "volumenes": []}
 
-    tarjeta_discos, lay_d = tarjeta("Salud de los discos")
+    tarjeta_discos, lay_d = tarjeta(t("Salud de los discos"))
     barra = BarraProgreso()
     barra.setVisible(False)
-    lbl_estado = etiqueta("Todavía no se ha analizado ningún disco.", suave=True)
-    btn_analizar = boton_principal("Analizar discos", "primario")
+    lbl_estado = etiqueta(t("Todavía no se ha analizado ningún disco."), suave=True)
+    btn_analizar = boton_principal(t("Analizar discos"), "primario")
     contenedor_discos = QVBoxLayout()
     lay_d.addWidget(btn_analizar)
     lay_d.addWidget(barra)
@@ -482,7 +478,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
     lay_d.addLayout(contenedor_discos)
     layout.addWidget(tarjeta_discos)
 
-    tarjeta_vol, lay_v = tarjeta("Optimizar volúmenes")
+    tarjeta_vol, lay_v = tarjeta(t("Optimizar volúmenes"))
     lay_v.addWidget(etiqueta(
         "La optimización la hace Windows con Optimize-Volume y pedirá "
         "permiso de administrador. En un SSD jamás se desfragmenta: se "
@@ -497,21 +493,21 @@ def crear_pagina_discos(ctx: ContextoModulo):
     barra_opt.setVisible(False)
     lay_v.addWidget(barra_opt)
     lbl_opt = etiqueta(
-        "El progreso aparecerá aquí mientras Windows optimiza.", suave=True)
+        t("El progreso aparecerá aquí mientras Windows optimiza."), suave=True)
     lay_v.addWidget(lbl_opt)
     botones_opt: list[QPushButton] = []
     layout.addWidget(tarjeta_vol)
 
-    tarjeta_mapa, lay_m = tarjeta("Mapa de uso de disco")
+    tarjeta_mapa, lay_m = tarjeta(t("Mapa de uso de disco"))
     lay_m.addWidget(etiqueta(
         "Cuánto ocupa cada carpeta tuya (Descargas, Documentos, Escritorio, "
         "Imágenes, Vídeos, Música) más la carpeta temporal. El porcentaje de "
         "cada una es sobre el total medido de esas carpetas, no sobre todo "
         "el disco."))
-    btn_mapa = QPushButton("Calcular mapa")
+    btn_mapa = QPushButton(t("Calcular mapa"))
     barra_mapa = BarraProgreso()
     barra_mapa.setVisible(False)
-    lbl_mapa = etiqueta("Todavía no se ha calculado el mapa.", suave=True)
+    lbl_mapa = etiqueta(t("Todavía no se ha calculado el mapa."), suave=True)
     contenedor_mapa = QVBoxLayout()
     lay_m.addWidget(btn_mapa)
     lay_m.addWidget(barra_mapa)
@@ -616,7 +612,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
             fila = QHBoxLayout()
             fila.addWidget(etiqueta(texto), 1)
             if tipo in ("SSD", "HDD"):
-                btn = QPushButton("Optimizar con Windows")
+                btn = QPushButton(t("Optimizar con Windows"))
                 btn.setToolTip("TRIM" if tipo == "SSD" else "Desfragmentar")
                 btn.clicked.connect(
                     lambda _=False, v=volumen, t=tipo: _optimizar(v, t))
@@ -695,7 +691,7 @@ def crear_pagina_discos(ctx: ContextoModulo):
 # === LIMPIEZA =======================================================================
 def crear_pagina_limpieza(ctx: ContextoModulo):
     pagina, layout = pagina_base(
-        "Limpieza",
+        t("Limpieza"),
         "Tune-up seguro: primero el informe de qué se borraría y cuánto "
         "ocupa; el borrado lo confirmas tú. El arranque se desactiva de "
         "forma reversible y antes de cambios tienes punto de restauración "
@@ -703,17 +699,16 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
         "y un error ahí puede impedir que Windows arranque.")
     gestor = _GestorTrabajos()
 
-    tarjeta_inf, lay_i = tarjeta("Temporales y papelera")
+    tarjeta_inf, lay_i = tarjeta(t("Temporales y papelera"))
     barra = BarraProgreso()
     barra.setVisible(False)
-    lbl_estado = etiqueta("Pulsa «Analizar» para ver cuánto se puede liberar. "
-                          "No se borra nada sin tu confirmación.", suave=True)
-    btn_analizar = boton_principal("Analizar", "primario")
+    lbl_estado = etiqueta(t("Pulsa «Analizar» para ver cuánto se puede liberar. No se borra nada sin tu confirmación."), suave=True)
+    btn_analizar = boton_principal(t("Analizar"), "primario")
     contenedor_partidas = QVBoxLayout()
     lbl_total = etiqueta("")
-    btn_limpiar = QPushButton("Limpiar temporales")
+    btn_limpiar = QPushButton(t("Limpiar temporales"))
     btn_limpiar.setEnabled(False)
-    btn_papelera = QPushButton("Vaciar papelera")
+    btn_papelera = QPushButton(t("Vaciar papelera"))
     btn_papelera.setEnabled(False)
     lay_i.addWidget(btn_analizar)
     lay_i.addWidget(barra)
@@ -727,7 +722,7 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
     lay_i.addLayout(fila_botones)
     layout.addWidget(tarjeta_inf)
 
-    tarjeta_arr, lay_a = tarjeta("Programas que arrancan con Windows")
+    tarjeta_arr, lay_a = tarjeta(t("Programas que arrancan con Windows"))
     lay_a.addWidget(etiqueta(
         "Desactivar es reversible: el acceso se guarda en Respaldos y "
         "puedes restaurarlo cuando quieras; nada se borra a la primera. "
@@ -735,24 +730,23 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
         "inicio; el resto se enseña con su origen. Cada programa enseña "
         "su impacto al arrancar: alto en rojo, medio en ámbar, bajo en "
         "verde."))
-    btn_ver_arranque = QPushButton("Ver programas de arranque")
+    btn_ver_arranque = QPushButton(t("Ver programas de arranque"))
     contenedor_arranque = QVBoxLayout()
-    btn_restaurar = QPushButton("Restaurar todo lo desactivado")
+    btn_restaurar = QPushButton(t("Restaurar todo lo desactivado"))
     lay_a.addWidget(btn_ver_arranque)
     lay_a.addLayout(contenedor_arranque)
     lay_a.addWidget(btn_restaurar)
     layout.addWidget(tarjeta_arr)
 
-    tarjeta_res, lay_r = tarjeta("Respaldo antes de cambios")
+    tarjeta_res, lay_r = tarjeta(t("Respaldo antes de cambios"))
     lbl_respaldo = etiqueta("", suave=True)
-    btn_punto = QPushButton("Crear punto de restauración")
-    btn_registro = QPushButton("Hacer copia del registro")
+    btn_punto = QPushButton(t("Crear punto de restauración"))
+    btn_registro = QPushButton(t("Hacer copia del registro"))
     lay_r.addWidget(btn_punto)
     lay_r.addWidget(btn_registro)
     lay_r.addWidget(lbl_respaldo)
-    lay_r.addWidget(etiqueta(
-        "La copia del registro es la alternativa segura al «limpiador de "
-        "registro»: se guarda una copia, no se toca nada."))
+    lay_r.addWidget(etiqueta(t(
+        "La copia del registro es la alternativa segura al «limpiador de registro»: se guarda una copia, no se toca nada.")))
     layout.addWidget(tarjeta_res)
     layout.addStretch(1)
 
@@ -805,10 +799,8 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
             _analizar()  # refresca el informe con lo que quede
 
     def _limpiar():
-        if not _confirmar(pagina, "Limpiar temporales",
-                          "Se borrará el contenido de las carpetas "
-                          "temporales. Lo que esté en uso se salta solo. "
-                          "¿Seguir?"):
+        if not _confirmar(pagina, t("Limpiar temporales"),
+                          t("Se borrará el contenido de las carpetas temporales. Lo que esté en uso se salta solo. ¿Seguir?")):
             return
         _ocupado(True, "Limpiando temporales…")
         gestor.lanzar(svc.limpiar_con_progreso, _al_terminar_limpieza,
@@ -824,9 +816,8 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
             _analizar()  # refresca el informe con lo que quede
 
     def _papelera():
-        if not _confirmar(pagina, "Vaciar papelera",
-                          "Se vaciará la papelera de reciclaje. Esto sí es "
-                          "definitivo. ¿Seguir?"):
+        if not _confirmar(pagina, t("Vaciar papelera"),
+                          t("Se vaciará la papelera de reciclaje. Esto sí es definitivo. ¿Seguir?")):
             return
         _ocupado(True, "Vaciando la papelera…")
         gestor.lanzar(svc.vaciar_papelera, _al_terminar_papelera)
@@ -853,7 +844,7 @@ def crear_pagina_limpieza(ctx: ContextoModulo):
                 fila = QHBoxLayout()
                 fila.addWidget(etiqueta(f"{nombre} — carpeta de inicio"), 1)
                 fila.addWidget(_etiqueta_impacto(elemento))
-                btn = QPushButton("Desactivar (reversible)")
+                btn = QPushButton(t("Desactivar (reversible)"))
                 btn.clicked.connect(
                     lambda _=False, arch=elemento["archivo_inicio"]:
                     _desactivar(arch))

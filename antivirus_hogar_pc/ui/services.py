@@ -46,6 +46,11 @@ class Ajustes:
     # usuario): activados por defecto; interruptores en Ajustes.
     arranque_windows: bool = True
     rutina_automatica: bool = True
+    # Idioma de la interfaz (v1.0.14, agregado del usuario):
+    # «es» (por defecto, el de siempre) o «en». Lo fija el
+    # selector del panel lateral y persiste entre arranques;
+    # las instalaciones anteriores no lo traen y quedan en «es».
+    idioma: str = "es"
     # Programaciones (v1.0.5): lista de dicts de core.programaciones.
     programaciones: list = field(default_factory=list)
 
