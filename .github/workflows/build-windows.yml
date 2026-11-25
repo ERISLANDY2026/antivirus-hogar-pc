@@ -115,6 +115,11 @@ jobs:
           assert v["sha256"] == "d050efadc6cabc4e304eb810dd7fedfc54b859d34730ab9cdcb22d61eb86ab7a", v
           f = firma_authenticode(ruta)
           print("Firma Authenticode:", f)
+          if not f["valida"]:
+              from antivirus_hogar_pc.winapi import openvpn_update as ou
+              from antivirus_hogar_pc.winapi.powershell import ejecutar_powershell
+              cruda = ejecutar_powershell(ou._script_firma(ruta), timeout=60)
+              print("Salida cruda de Get-AuthenticodeSignature:", repr(cruda))
           assert f["valida"], f
           print("Auto-actualizador de OpenVPN OK contra el instalador oficial real")
           '@ | Set-Content -Path "ovpn-probar-verificacion.py" -Encoding ascii

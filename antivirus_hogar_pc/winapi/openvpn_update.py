@@ -247,11 +247,20 @@ def interpretar_firma(salida: str) -> dict:
 
     Válida solo si el estado es «Valid» y el firmante es OpenVPN:
     es la garantía de que el paquete viene del proyecto oficial.
+    Tolera líneas extra alrededor del JSON (avisos del propio
+    PowerShell): si el parseo directo falla, extrae el objeto {…}.
     """
+    datos = None
     try:
-        datos = json.loads(salida or "")
+        datos = json.loads((salida or "").strip())
     except ValueError:
-        return {"valida": False, "firmante": ""}
+        texto = salida or ""
+        ini, fin = texto.find("{"), texto.rfind("}")
+        if 0 <= ini < fin:
+            try:
+                datos = json.loads(texto[ini:fin + 1])
+            except ValueError:
+                datos = None
     if not isinstance(datos, dict):
         return {"valida": False, "firmante": ""}
     firmante = str(datos.get("firmante") or "")
@@ -260,16 +269,26 @@ def interpretar_firma(salida: str) -> dict:
             "firmante": firmante}
 
 
+def _script_firma(ruta: str) -> str:
+    """El script de PowerShell que lee la firma (una sola línea).
+
+    En UNA línea y con [PSCustomObject]: la forma anterior (la
+    tabla @{…} empezando línea tras el salto) devolvió vacío en
+    la CI de Windows (corrida 45622879778) y la firma se leía
+    como inválida sin serlo.
+    """
+    return (
+        "$s = Get-AuthenticodeSignature -FilePath '" + ruta + "'; "
+        "[PSCustomObject]@{ estado = [string]$s.Status; firmante = "
+        "[string]$s.SignerCertificate.Subject } | ConvertTo-Json -Compress")
+
+
 def firma_authenticode(ruta: str) -> dict:
     """Firma Authenticode real del archivo (PowerShell, en Windows)."""
     from .powershell import ejecutar_powershell
 
-    script = (
-        "$s = Get-AuthenticodeSignature -FilePath '" + ruta + "'\n"
-        "@{ estado = [string]$s.Status; firmante = "
-        "[string]$s.SignerCertificate.Subject } | ConvertTo-Json")
     try:
-        salida = ejecutar_powershell(script, timeout=60)
+        salida = ejecutar_powershell(_script_firma(ruta), timeout=60)
     except Exception:
         return {"valida": False, "firmante": ""}
     return interpretar_firma(salida)
