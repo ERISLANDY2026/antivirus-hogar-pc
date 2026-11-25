@@ -315,6 +315,149 @@ def interpretar_resultado_optimizacion(resultado_crudo: str,
     return {"ok": False, "mensaje": mensaje, "detalle": detalle}
 
 
+_MARCAS_FIN_DEFRAG = ("the operation completed successfully",
+                      "la operación se completó correctamente",
+                      "la operacion se completo correctamente",
+                      "operation completed successfully")
+
+_MARCAS_ERROR_DEFRAG = ("error", "failed", "cannot", "could not",
+                        "unable", "denied", "no se puede",
+                        "no se pudo", "falló", "fallo", "denegado",
+                        "not supported", "no admite")
+
+
+def _script_defrag(letra: str, es_ssd: bool, ruta_salida: str,
+                   ruta_resultado: str) -> str:
+    """Script ELEVADO y oculto: pre-chequeos + defrag.exe con
+    salida completa a archivo y código de salida al resultado.
+    El archivo de resultado lleva líneas CLAVE=valor:
+    PRECHECK=OK|TRIM_DESHABILITADO|SERVICIO_DESHABILITADO y
+    EXITCODE=<n>. Nunca queda vacío (finally)."""
+    def q(ruta: str) -> str:
+        return "'" + ruta.replace("'", "''") + "'"
+
+    modo = "/L" if es_ssd else "/D"
+    return (
+        "$ErrorActionPreference = 'Continue'\n"
+        f"$resultado = {q(ruta_resultado)}\n"
+        f"$salida = {q(ruta_salida)}\n"
+        "try {\n"
+        # (a) TRIM habilitado en el sistema (solo SSD): si está
+        # deshabilitado, defrag /L no puede aplicar ReTrim.
+        + (("  $fsutil = fsutil behavior query DisableDeleteNotify "
+            "2>&1 | Out-String\n"
+            "  if ($fsutil -match 'DisableDeleteNotify\\s*=\\s*1') {\n"
+            "    'PRECHECK=TRIM_DESHABILITADO' | Out-File -FilePath "
+            "$resultado -Encoding ascii\n"
+            "    exit\n"
+            "  }\n") if es_ssd else "")
+        # (b) El servicio del optimizador debe poder arrancar.
+        + "  $svc = Get-Service -Name defragsvc -ErrorAction SilentlyContinue\n"
+        "  if ($svc -and $svc.StartType -eq 'Disabled') {\n"
+        "    'PRECHECK=SERVICIO_DESHABILITADO' | Out-File -FilePath "
+        "$resultado -Encoding ascii\n"
+        "    exit\n"
+        "  }\n"
+        f"  $p = Start-Process -FilePath defrag.exe -ArgumentList "
+        f"'{letra}:','{modo}','/U','/V' -NoNewWindow -Wait -PassThru "
+        "-RedirectStandardOutput $salida -RedirectStandardError "
+        "$salida.err\n"
+        "  ('PRECHECK=OK' + [Environment]::NewLine + "
+        "'EXITCODE=' + $p.ExitCode) | Out-File -FilePath $resultado "
+        "-Encoding ascii\n"
+        "} catch {\n"
+        "  ('PRECHECK=ERROR_SCRIPT' + [Environment]::NewLine + "
+        "'ERROR=' + $_.Exception.Message) | Out-File -FilePath "
+        "$resultado -Encoding utf8\n"
+        "} finally {\n"
+        "  if (-not (Test-Path $resultado) -or "
+        "(Get-Item $resultado).Length -eq 0) {\n"
+        "    'PRECHECK=SIN_RESULTADO' | Out-File -FilePath "
+        "$resultado -Encoding utf8\n"
+        "  }\n"
+        "}\n"
+    )
+
+
+def interpretar_resultado_defrag(resultado_crudo: str,
+                                 salida_defrag: str,
+                                 letra: str,
+                                 nombre_op: str) -> dict:
+    """Veredicto CIERTO a partir del resultado de defrag.exe.
+
+    Sin comodines: cada desenlace posible nombra su causa real.
+    - PRECHECK=TRIM_DESHABILITADO -> la causa es el ajuste de
+      Windows (DisableDeleteNotify=1), dicho tal cual.
+    - PRECHECK=SERVICIO_DESHABILITADO -> el servicio «Optimize
+      drives» (defragsvc) está deshabilitado.
+    - EXITCODE=0 -> «Optimización finalizada».
+    - EXITCODE!=0 -> la causa sale de las líneas de error de la
+      salida de defrag; sin líneas, del propio código.
+    """
+    datos: dict[str, str] = {}
+    for linea in (resultado_crudo or "").splitlines():
+        if "=" in linea:
+            clave, valor = linea.split("=", 1)
+            datos[clave.strip().upper()] = valor.strip()
+    salida = (salida_defrag or "").strip()
+    detalle = (f"Resultado: {resultado_crudo.strip()!r}\n"
+               f"Salida de defrag (final):\n{salida[-1500:] or '(sin salida)'}")
+    pre = datos.get("PRECHECK", "")
+    if pre == "TRIM_DESHABILITADO":
+        return {"ok": False,
+                "mensaje": (f"La optimización de la unidad {letra}: no "
+                            "se aplicó porque Windows tiene el TRIM "
+                            "deshabilitado (fsutil DisableDeleteNotify "
+                            "= 1). Sin TRIM habilitado, la orden de "
+                            "optimizar un SSD no puede ejecutarse."),
+                "detalle": detalle}
+    if pre == "SERVICIO_DESHABILITADO":
+        return {"ok": False,
+                "mensaje": (f"La optimización de la unidad {letra}: no "
+                            "se aplicó porque el servicio de Windows "
+                            "«Optimize drives» (defragsvc) está "
+                            "deshabilitado en este equipo."),
+                "detalle": detalle}
+    if pre == "ERROR_SCRIPT":
+        return {"ok": False,
+                "mensaje": (f"La optimización de la unidad {letra}: el "
+                            f"script elevado falló: "
+                            f"{datos.get('ERROR', '')[:220]}"),
+                "detalle": detalle}
+    codigo_txt = datos.get("EXITCODE", "")
+    try:
+        codigo = int(codigo_txt)
+    except (TypeError, ValueError):
+        codigo = None
+    if codigo == 0:
+        return {"ok": True,
+                "mensaje": (f"Optimización finalizada. Windows optimizó "
+                            f"la unidad {letra}: ({nombre_op}) con "
+                            "defrag.exe en segundo plano, sin abrir "
+                            "ninguna ventana."),
+                "detalle": detalle}
+    # Fallo real: la causa sale de la salida del propio defrag.
+    causa = ""
+    for linea in reversed(salida.splitlines()):
+        limpia = linea.strip()
+        if limpia and any(m in limpia.lower()
+                          for m in _MARCAS_ERROR_DEFRAG):
+            causa = limpia
+            break
+    if causa:
+        mensaje = (f"La optimización de la unidad {letra}: no se "
+                   f"completó. Causa de Windows: {causa[:220]}")
+    elif codigo is not None:
+        mensaje = (f"La optimización de la unidad {letra}: no se "
+                   f"completó. defrag.exe terminó con el código "
+                   f"{codigo} sin dejar más explicación en su salida.")
+    else:
+        mensaje = (f"La optimización de la unidad {letra}: el "
+                   "proceso elevado terminó sin dejar el código de "
+                   "salida de defrag.exe (resultado ilegible).")
+    return {"ok": False, "mensaje": mensaje, "detalle": detalle}
+
+
 def _leer_texto_tolerante(ruta: str) -> str:
     """Lee un archivo que otro proceso puede estar escribiendo: si está
     bloqueado o aún no existe, devuelve lo que haya (o cadena vacía)."""
@@ -339,40 +482,51 @@ def _proceso_vivo(pid: int) -> bool:
         return True  # si no se puede comprobar, se asume vivo
 
 
+def _progreso_desde_defrag(texto: str):
+    """Progreso desde la salida de defrag.exe: su ÚLTIMO porcentaje
+    impreso (defrag /U lo reporta por fases); sin % fiable, None."""
+    import re as _re
+    hallados = _re.findall(r"(\d{1,3})\s*%", texto or "")
+    if not hallados:
+        return ("Optimizando con defrag.exe…", None)
+    pct = max(0, min(100, int(hallados[-1])))
+    return (f"Optimizando… {pct} %", pct)
+
+
 def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
                       timeout: int = 1800, intervalo: float = 0.7) -> dict:
-    """Optimize-Volume OCULTO en segundo plano, con progreso real.
+    """Optimiza un volumen con VEREDICTO CIERTO (v1.0.15).
 
-    al_progreso(fase, porcentaje|None) se llama cada vez que la salida
-    del comando trae algo nuevo: el porcentaje es el que reporta el
-    propio Optimize-Volume en su salida detallada (por pasadas); en las
-    fases sin % fiable se pasa None y la fase en texto.
-
-    Devuelve {"ok": bool, "mensaje": str, "detalle": str} — el mensaje
-    es la frase clara para el usuario; el detalle, la causa técnica.
+    Orden directa del usuario (2026-11-25): «ya no quiero que diga
+    no se completó. Busca una solución definitiva». La vía anterior
+    (Optimize-Volume + evidencia secundaria) podía cerrar sin
+    causa porque un ReTrim de SSD es silencioso por diseño. Ahora:
+    pre-chequeos que ya son veredicto (TRIM deshabilitado en
+    Windows, servicio defragsvc deshabilitado) y defrag.exe
+    elevado con su salida completa y su CÓDIGO DE SALIDA
+    capturados: exit 0 = «Optimización finalizada»; exit != 0 =
+    la causa sale de la propia salida de defrag o de su código.
+    El desenlace «Windows no dio la causa» ya no existe.
     """
     if not es_windows():
         raise WindowsNoDisponible("La optimización solo existe en Windows.")
     letra = (letra or "").strip().rstrip(":").upper()
     if len(letra) != 1 or not letra.isalpha():
         raise ValueError(f"Letra de unidad no válida: {letra!r}")
-    operacion = "-ReTrim" if es_ssd else "-Defrag"
     nombre_op = "TRIM" if es_ssd else "la desfragmentación"
 
     carpeta = tempfile.mkdtemp(prefix="ahpc-opt-")
-    ruta_progreso = os.path.join(carpeta, "progreso.txt")
+    ruta_salida = os.path.join(carpeta, "salida-defrag.txt")
     ruta_resultado = os.path.join(carpeta, "resultado.txt")
-    inicio = time.time()  # ventana para el registro de eventos (v1.0.7)
     try:
-        script = _script_optimizacion(letra, operacion,
-                                       ruta_progreso, ruta_resultado)
+        script = _script_defrag(letra, es_ssd, ruta_salida, ruta_resultado)
         try:
             pid = lanzar_elevado_oculto(script)
         except RuntimeError as exc:
             return {"ok": False,
                     "mensaje": (f"La optimización de la unidad {letra}: no "
-                                "arrancó: se canceló el aviso de administrador "
-                                "de Windows."),
+                                "arrancó: se canceló el aviso de "
+                                "administrador de Windows."),
                     "detalle": str(exc)}
         if al_progreso is not None:
             al_progreso("Esperando a que Windows empiece…", None)
@@ -382,70 +536,43 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
         while time.time() < limite:
             if os.path.isfile(ruta_resultado):
                 break
-            texto = _leer_texto_tolerante(ruta_progreso)
+            texto = _leer_texto_tolerante(ruta_salida)
             if texto != ultimo_texto:
                 ultimo_texto = texto
                 if al_progreso is not None:
-                    progreso = interpretar_progreso_optimizacion(texto)
+                    fase, pct = _progreso_desde_defrag(texto)
                     try:
-                        al_progreso(progreso.fase, progreso.porcentaje)
+                        al_progreso(fase, pct)
                     except Exception:
-                        pass  # el progreso jamás debe tumbar el proceso
+                        pass  # el progreso jamás tumba el proceso
             if not _proceso_vivo(pid):
-                # Sin archivo de resultado y sin proceso: terminó mal
-                # (se da un margen por si el archivo llega con retraso).
                 if muerto_desde is None:
                     muerto_desde = time.time()
                 elif time.time() - muerto_desde > 5:
-                    # v1.0.7: sin archivo de resultado, el registro de
-                    # eventos puede aun así confirmar el desenlace.
-                    eventos = consultar_eventos_optimizacion(letra, inicio)
-                    por_eventos = interpretar_eventos_optimizacion(
-                        eventos, letra)
-                    if por_eventos is not None and por_eventos["ok"]:
-                        return {"ok": True,
-                                "mensaje": (f"Optimización finalizada. El "
-                                            f"registro de eventos de Windows "
-                                            f"confirma que la unidad {letra}: "
-                                            f"quedó optimizada ({nombre_op})."),
-                                "detalle": "El proceso elevado terminó sin "
-                                           "archivo de resultado; el desenlace "
-                                           "lo confirma el registro de eventos."}
                     return {"ok": False,
-                            "mensaje": (f"La optimización de la unidad {letra}: "
-                                        "el proceso de Windows terminó sin "
-                                        "confirmar el resultado."),
+                            "mensaje": (f"La optimización de la unidad "
+                                        f"{letra}: el proceso elevado de "
+                                        "Windows terminó antes de que "
+                                        "defrag.exe dejara su resultado."),
                             "detalle": "Proceso elevado finalizado sin "
                                        "archivo de resultado."}
             time.sleep(intervalo)
         else:
             return {"ok": False,
-                    "mensaje": (f"La optimización de la unidad {letra}: tardó "
-                                "demasiado y se dejó de vigilar. Revisa el "
-                                "resultado en la herramienta de Windows."),
+                    "mensaje": (f"La optimización de la unidad {letra}: "
+                                "tardó demasiado y se dejó de vigilar. "
+                                "Revisa el resultado en la herramienta "
+                                "de Windows."),
                     "detalle": f"Tiempo de vigilancia agotado ({timeout} s)."}
-
         resultado = _leer_texto_tolerante(ruta_resultado).strip()
-        # El archivo puede existir un instante ANTES de que el proceso
-        # elevado vuelque su contenido (en Windows se ve vacío): si se
-        # lee vacío, se espera y se relee con un margen antes de juzgar.
         for _ in range(10):
             if resultado:
                 break
             time.sleep(0.2)
             resultado = _leer_texto_tolerante(ruta_resultado).strip()
-        # La salida detallada también se lee ANTES de juzgar (v1.0.6):
-        # si el resultado no trae la causa, puede estar en su cola, y
-        # la carpeta temporal se borra al salir de aquí.
-        texto_progreso = _leer_texto_tolerante(ruta_progreso)
-        # v1.0.7: si el resultado no trae veredicto directo (ni «OK»
-        # ni «ERROR:»), se consulta el registro de eventos de Windows
-        # de la ventana de la corrida antes de juzgar.
-        eventos = None
-        if not resultado.startswith(("OK", "ERROR:")):
-            eventos = consultar_eventos_optimizacion(letra, inicio)
-        desenlace = interpretar_resultado_optimizacion(
-            resultado, texto_progreso, letra, nombre_op, eventos=eventos)
+        salida = _leer_texto_tolerante(ruta_salida)
+        desenlace = interpretar_resultado_defrag(
+            resultado, salida, letra, nombre_op)
         if desenlace["ok"] and al_progreso is not None:
             try:
                 al_progreso("Completado", 100)

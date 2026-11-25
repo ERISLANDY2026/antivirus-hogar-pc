@@ -1,26 +1,30 @@
-"""Iconos 3D ANIMADOS del panel izquierdo (v1.0.5).
+"""Iconos del panel izquierdo.
 
-Lo que pidió el usuario: para CADA pestaña, un icono propio y
-correspondiente a su función, MÁS GRANDE que el glyph anterior
-(36 px lógicos en el panel), EN COLORES MODERNOS con efecto 3D y
-ANIMADO con sentido:
+v1.0.15 (veredicto del usuario sobre la 1.0.14: «no llegaron los
+iconos como yo los quiero», con foto de su panel): los iconos
+dibujados por código eran glifos planos de un color — la brecha
+con su foto de referencia (3D realistas brillantes, materiales:
+cristal, metal, disco iridiscente) era total. Desde esta versión
+los iconos son RECURSOS GRÁFICOS generados a ese acabado
+(assets/iconos3d/<nombre>.png, fondo transparente, uno por
+entrada, identidades y colores de su foto: casa azul con
+ventanas encendidas, lupa de cristal, escudo metálico con check
+verde, chip negro de pines dorados, escoba de mango azul y
+cerdas doradas, CD iridiscente, flechas verde/azul, globo con
+anillo orbital, portapapeles con gráfica, moneda dorada «i»,
+calendario con reloj, engranaje metálico).
 
-- Paleta vibrante actual: gradientes cian/violeta/verde neón y
-  compañía, dos paradas por icono, combinados con el tema de cristal.
-- Efecto 3D: sombra suave desplazada, relleno en gradiente diagonal
-  y GLOSS (brillo de cristal en la mitad superior).
-- Animación sutil: al pasar el ratón el icono crece un poco y gana
-  brillo; la pestaña SELECCIONADA pulsa despacio; el de
-  «Actualizaciones» además GIRA mientras es la activa (comprobando).
-- Se respeta el interruptor «Fondo animado» de Ajustes: con la
-  animación apagada los iconos quedan estáticos (sin temporizador).
-
-Los iconos se dibujan por código con QPainter (siluetas rellenas en
-una caja de 48, supersampling ×2): ningún archivo externo, ningún
-glyph de texto plano. ui/icons.py (iconos de FILAS de estado) no se
-toca: esto es solo la navegación.
+La ANIMACIÓN sigue siendo la de siempre, aplicada por
+transformaciones sobre el recurso: pulso y brillo de la pestaña
+activa/hover, banda de brillo que cruza (SourceAtop, solo sobre
+el icono), flotación y el giro de «Actualizaciones», todo con el
+reloj compartido de ui.animacion y el interruptor de Ajustes;
+con las animaciones apagadas el icono queda estático en su
+versión 3D. Si un recurso faltara, se cae al dibujo por código
+anterior (siluetas), que queda como respaldo.
 """
 import math
+import os
 
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PySide6.QtGui import (
@@ -242,6 +246,72 @@ def _mezcla(a: QColor, b: QColor, t: float) -> QColor:
                   int(a.blue() + (b.blue() - a.blue()) * t))
 
 
+_RECURSOS_3D: dict[str, QPixmap | None] = {}
+
+
+def _recurso_3d(nombre: str) -> QPixmap | None:
+    """El recurso gráfico 3D de un icono (assets/iconos3d), o None
+    si no está (respaldo: dibujo por código). Se carga una vez."""
+    if nombre in _RECURSOS_3D:
+        return _RECURSOS_3D[nombre]
+    ruta = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets", "iconos3d", f"{nombre}.png")
+    pm = QPixmap(ruta) if os.path.isfile(ruta) else None
+    if pm is not None and pm.isNull():
+        pm = None
+    _RECURSOS_3D[nombre] = pm
+    return pm
+
+
+def _pixmap_desde_recurso(nombre: str, recurso: QPixmap,
+                          escala: float, brillo: float,
+                          rotacion: float, dy: float,
+                          barrido: float) -> QPixmap:
+    """Compone el marco de animación desde el recurso 3D: mismas
+    transformaciones que el dibujo por código (escala/pulso,
+    flotación, giro) y los mismos brillos SourceAtop (hover y
+    banda que cruza), para que la animación no cambie."""
+    pm = QPixmap(LADO * _SS, LADO * _SS)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    p.translate(LADO * _SS / 2, LADO * _SS / 2 + dy * _SS)
+    p.scale(escala, escala)
+    if rotacion:
+        p.rotate(rotacion)
+    p.translate(-LADO * _SS / 2, -LADO * _SS / 2)
+    p.drawPixmap(0, 0, LADO * _SS, LADO * _SS, recurso)
+    if brillo > 0.01:
+        p.save()
+        p.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_SourceAtop)
+        p.setBrush(QColor(255, 255, 255, int(70 * min(brillo, 1.0))))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QRectF(0, 0, LADO * _SS, LADO * _SS))
+        p.restore()
+    if 0.0 <= barrido <= 1.0:
+        p.save()
+        p.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_SourceAtop)
+        lado = float(LADO * _SS)
+        p.translate(lado / 2, lado / 2)
+        p.rotate(24)
+        x = -lado * 1.1 + barrido * lado * 2.2
+        banda = QLinearGradient(x - 7, 0, x + 7, 0)
+        banda.setColorAt(0.0, QColor(255, 255, 255, 0))
+        banda.setColorAt(0.5, QColor(255, 255, 255, 95))
+        banda.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setBrush(banda)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRect(QRectF(x - 7, -lado, 14, lado * 2))
+        p.restore()
+    p.end()
+    pm.setDevicePixelRatio(_SS)
+    return pm
+
+
 def pixmap_nav(nombre: str, escala: float = 1.0, brillo: float = 0.0,
                rotacion: float = 0.0, dy: float = 0.0,
                barrido: float = -1.0) -> QPixmap:
@@ -259,6 +329,10 @@ def pixmap_nav(nombre: str, escala: float = 1.0, brillo: float = 0.0,
     color pleno en el centro, sombra abajo) y gloss de cristal más
     marcado en la mitad superior.
     """
+    recurso = _recurso_3d(nombre)
+    if recurso is not None:
+        return _pixmap_desde_recurso(nombre, recurso, escala, brillo,
+                                     rotacion, dy, barrido)
     claro_hex, oscuro_hex = PALETA_NAV[nombre]
     claro, oscuro = QColor(claro_hex), QColor(oscuro_hex)
     pm = QPixmap(LADO * _SS, LADO * _SS)

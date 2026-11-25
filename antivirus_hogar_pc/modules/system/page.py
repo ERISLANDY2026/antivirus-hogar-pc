@@ -28,8 +28,8 @@ from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                                QPushButton, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
-from antivirus_hogar_pc.contracts import ContextoModulo
-from antivirus_hogar_pc.core.i18n import t, ResultadoModulo
+from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
+from antivirus_hogar_pc.core.i18n import t
 from antivirus_hogar_pc.core import drivers_logic
 from antivirus_hogar_pc.core.hashing import tamano_legible
 from antivirus_hogar_pc.ui import theme
@@ -479,11 +479,8 @@ def crear_pagina_discos(ctx: ContextoModulo):
     layout.addWidget(tarjeta_discos)
 
     tarjeta_vol, lay_v = tarjeta(t("Optimizar volúmenes"))
-    lay_v.addWidget(etiqueta(
-        "La optimización la hace Windows con Optimize-Volume y pedirá "
-        "permiso de administrador. En un SSD jamás se desfragmenta: se "
-        "aplica TRIM. El proceso corre EN SEGUNDO PLANO, sin abrir "
-        "ninguna ventana: aquí verás su progreso real."))
+    lay_v.addWidget(etiqueta(t(
+        "La optimización la hace Windows con defrag.exe, su herramienta de optimización, y pedirá permiso de administrador. En un SSD jamás se desfragmenta: se aplica TRIM. El proceso corre EN SEGUNDO PLANO, sin abrir ninguna ventana: aquí verás su progreso real y el resultado final sale del propio informe de Windows.")))
     contenedor_volumenes = QVBoxLayout()
     lay_v.addLayout(contenedor_volumenes)
     # Barra RGB propia de la optimización (v1.0.5): refleja la salida

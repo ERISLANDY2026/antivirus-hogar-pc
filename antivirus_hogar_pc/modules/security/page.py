@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
 )
 
 from antivirus_hogar_pc import config
-from antivirus_hogar_pc.contracts import ContextoModulo
-from antivirus_hogar_pc.core.i18n import t, ResultadoModulo
+from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
+from antivirus_hogar_pc.core.i18n import t
 from antivirus_hogar_pc.core import seguridad
 from antivirus_hogar_pc.core.hashing import tamano_legible
 from antivirus_hogar_pc.core.scanner import Hallazgo, ResultadoEscaneo, analizar_archivo, escanear

@@ -379,4 +379,5 @@ _EN: dict[str, str] = {
     'Último escaneo: {fecha} — {revisados} archivos revisados, {hallazgos} hallazgo(s).': 'Last scan: {fecha} — {revisados} files checked, {hallazgos} finding(s).',
     '⚠ Algunos módulos no cargaron. Detalle en errores-modulos.log (carpeta de datos de la app).': '⚠ Some modules did not load. Details in errores-modulos.log (app data folder).',
     '✓ Verificado ': '✓ Verified ',
+    'La optimización la hace Windows con defrag.exe, su herramienta de optimización, y pedirá permiso de administrador. En un SSD jamás se desfragmenta: se aplica TRIM. El proceso corre EN SEGUNDO PLANO, sin abrir ninguna ventana: aquí verás su progreso real y el resultado final sale del propio informe de Windows.': "The optimization is done by Windows with defrag.exe, its optimization tool, and will ask for administrator permission. On an SSD it never defragments: TRIM is applied. The process runs IN THE BACKGROUND, without opening any window: here you will see its real progress and the final result comes from Windows' own report.",
 }

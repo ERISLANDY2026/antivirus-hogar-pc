@@ -91,11 +91,17 @@ def app_qt():
     i18n.fijar_idioma("es")
 
 
-def test_ventana_nace_en_ingles_y_el_selector_vuelve_al_espanol(app_qt):
+def test_ventana_nace_en_ingles_y_el_selector_vuelve_al_espanol(
+        app_qt, tmp_path):
     from antivirus_hogar_pc.ui.main_window import VentanaPrincipal
     from antivirus_hogar_pc.ui.services import ServiciosApp
 
     servicios = ServiciosApp()
+    # La ruta de guardado, a un temporal: este test NO debe dejar
+    # idioma="en" escrito en la carpeta de datos compartida de la
+    # suite (los tests siguientes cargarían esos ajustes y
+    # nacerían en inglés — pasó en la CI de la primera subida).
+    servicios.ajustes._ruta = str(tmp_path / "ajustes.json")
     servicios.ajustes.idioma = "en"
     ventana = VentanaPrincipal(servicios)
     try:
