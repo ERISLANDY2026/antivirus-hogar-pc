@@ -1,23 +1,34 @@
 """Anillo de salud animado (QPainter + QPropertyAnimation).
 
-Muestra la puntuación 0–100 con el color semántico que corresponda y un
-punto orbital girando mientras hay un escaneo en curso.
+Muestra la puntuación 0–100 como ARCO con el color semántico que
+corresponda y un punto orbital girando mientras hay un escaneo en
+curso. La CIFRA ya no se dibuja en el centro (v1.0.9, pedido del
+usuario: quedaba encima del radar de Inicio): la página la enseña
+en la esquina inferior izquierda de la banda del radar, fuera del
+círculo, leyéndola de texto_puntuacion() al ritmo de la señal
+valor_cambiado (la cuenta animada se sigue viendo, en su esquina).
 """
 import math
 
-from PySide6.QtCore import Property, QPropertyAnimation, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtCore import Property, QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
 from . import theme
 
 
 class AnilloSalud(QWidget):
+    # Se emite cada vez que cambia lo que la cifra debe enseñar
+    # (cada paso de la animación y cada fijado directo), para que
+    # la página sincronice la etiqueta de la esquina del radar.
+    valor_cambiado = Signal(float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._valor = 0.0
         self._objetivo = 0
         self._sin_datos = False
+        self._fijada = False  # aún sin puntuación: la esquina enseña «…»
         self._girando = False
         self._angulo_orbita = 0.0
         self.setMinimumSize(190, 190)
@@ -33,6 +44,7 @@ class AnilloSalud(QWidget):
 
     def _set_valor(self, v: float) -> None:
         self._valor = float(v)
+        self.valor_cambiado.emit(self._valor)
         self.update()
 
     valor = Property(float, _get_valor, _set_valor)
@@ -40,6 +52,7 @@ class AnilloSalud(QWidget):
     # -- API --------------------------------------------------------------------
     def fijar_puntuacion(self, puntuacion: int, animado: bool = True) -> None:
         self._sin_datos = False
+        self._fijada = True
         self._objetivo = max(0, min(100, int(puntuacion)))
         if animado:
             self._animacion.stop()
@@ -48,6 +61,7 @@ class AnilloSalud(QWidget):
             self._animacion.start()
         else:
             self._valor = float(self._objetivo)
+            self.valor_cambiado.emit(self._valor)
             self.update()
 
     def fijar_sin_datos(self) -> None:
@@ -55,9 +69,26 @@ class AnilloSalud(QWidget):
         se enseña «—» en gris, nunca un 0 en rojo que parezca un desastre."""
         self._animacion.stop()
         self._sin_datos = True
+        self._fijada = True
         self._objetivo = 0
         self._valor = 0.0
+        self.valor_cambiado.emit(self._valor)
         self.update()
+
+    def texto_puntuacion(self) -> tuple[str, str, str]:
+        """(cifra, color_hex, leyenda) de la puntuación AHORA mismo.
+
+        Lo usa la página de Inicio para la etiqueta de la esquina
+        inferior izquierda del radar (v1.0.9): la cifra con su color
+        semántico y su leyenda, sincronizada con la animación del
+        arco vía la señal valor_cambiado.
+        """
+        if self._sin_datos:
+            return "—", theme.TEXTO_SUAVE, "Sin datos de Windows"
+        if not self._fijada:
+            return "…", theme.TEXTO_SUAVE, "Salud del equipo"
+        return (f"{round(self._valor)}", self._color().name(),
+                "Salud del equipo")
 
     def fijar_girando(self, girando: bool) -> None:
         self._girando = girando
@@ -104,17 +135,8 @@ class AnilloSalud(QWidget):
             pintor.setBrush(QColor(theme.CIAN))
             pintor.drawEllipse(QRectF(x - 5, y - 5, 10, 10))
 
-        # Cifra central
-        pintor.setPen(QColor(theme.TEXTO))
-        fuente = QFont("Segoe UI Variable", 40)
-        fuente.setBold(True)
-        pintor.setFont(fuente)
-        cifra = "—" if self._sin_datos else f"{round(self._valor)}"
-        pintor.drawText(QRectF(0, self.height() / 2 - 46, self.width(), 56),
-                        Qt.AlignmentFlag.AlignCenter, cifra)
-        pintor.setPen(QColor(theme.TEXTO_SUAVE))
-        pintor.setFont(QFont("Segoe UI Variable", 11))
-        leyenda = "Sin datos de Windows" if self._sin_datos else "Salud del equipo"
-        pintor.drawText(QRectF(0, self.height() / 2 + 12, self.width(), 24),
-                        Qt.AlignmentFlag.AlignCenter, leyenda)
+        # v1.0.9: SIN cifra en el centro. La calificación va en la
+        # esquina inferior izquierda de la banda del radar (fuera
+        # del círculo), la pinta la página de Inicio con
+        # texto_puntuacion(); aquí queda solo el anillo.
         pintor.end()

@@ -24,6 +24,7 @@ VERDE = "#34D399"
 AMBAR = "#FBBF24"
 ROJO = "#F87171"
 VERDE_BOTON = "#34A853"  # el botón verde de actualizar, como en Android
+ROJO_BOTON = "#D93025"  # el botón rojo de desconectar (v1.0.9), pareja del verde
 
 # Cristal: rellenos semitransparentes y bordes luminosos.
 _CRISTAL = "rgba(22, 32, 52, 168)"

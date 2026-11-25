@@ -8,8 +8,15 @@
 """
 from datetime import datetime
 
-from PySide6.QtCore import QThread, QTimer, Signal
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QPushButton, QVBoxLayout
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+)
 
 from antivirus_hogar_pc.contracts import ContextoModulo, InformeSalud, ResultadoModulo
 from antivirus_hogar_pc.ui import theme
@@ -164,10 +171,31 @@ def crear_pagina(ctx: ContextoModulo):
         animado=_quiere_animacion and animaciones_windows_permitidas())
     anillo = AnilloSalud()
     anillo.fijar_girando(True)
-    lay_banda = QHBoxLayout(banda_radar)
-    lay_banda.addStretch(1)
-    lay_banda.addWidget(anillo)
-    lay_banda.addStretch(1)
+    # v1.0.9 (pedido del usuario): la calificación numérica SALE del
+    # centro del radar y va al BORDE INFERIOR IZQUIERDO de la banda,
+    # fuera del círculo. Rejilla de UNA celda: el anillo sigue
+    # centrado en la banda (alineado con el radar, que no cambia) y
+    # la etiqueta se ancla abajo a la izquierda de la misma celda.
+    lay_banda = QGridLayout(banda_radar)
+    lay_banda.setContentsMargins(12, 6, 12, 10)
+    lay_banda.addWidget(anillo, 0, 0, Qt.AlignmentFlag.AlignCenter)
+    lbl_puntuacion = QLabel()
+    lbl_puntuacion.setTextFormat(Qt.TextFormat.RichText)
+    lay_banda.addWidget(
+        lbl_puntuacion, 0, 0,
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
+
+    def _sincronizar_puntuacion_esquina() -> None:
+        cifra, color, leyenda = anillo.texto_puntuacion()
+        lbl_puntuacion.setText(
+            f'<span style="font-size: 30px; font-weight: 700; '
+            f'color: {color};">{cifra}</span>'
+            f'<span style="font-size: 12px; '
+            f'color: {theme.TEXTO_SUAVE};">  {leyenda}</span>')
+
+    anillo.valor_cambiado.connect(
+        lambda _v: _sincronizar_puntuacion_esquina())
+    _sincronizar_puntuacion_esquina()
     layout.addWidget(banda_radar)
 
     fila_superior = QHBoxLayout()

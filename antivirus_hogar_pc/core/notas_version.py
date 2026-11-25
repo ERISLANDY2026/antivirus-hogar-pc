@@ -29,6 +29,16 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.9",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "VPN Gate: LA SOLUCIÓN del fallo de la tarjeta virtual (el «Error 31» de SoftEther). La causa probada: el controlador de la tarjeta nunca quedaba instalado en el almacén de controladores de Windows (el DriverStore), y crear la tarjeta lo exigía. Ahora el instalador, ANTES de crear la tarjeta y a la vista, instala el paquete oficial del controlador de SoftEther para Windows 10 (Neo6_x64_VPN, extraído del propio paquete oficial y verificado por su huella) con la herramienta de Windows pnputil, comprueba que quedó almacenado y deja todo el resultado —salida de pnputil incluida— en «softether-nic-instalacion.txt», junto a la app.",
+            "Respaldo al conectar reforzado: si la tarjeta faltara al darle a «Conectar», el paso de administrador ahora se abre INTERACTIVO en tu sesión (sin el modo no interactivo que impedía que saliera el aviso de Windows), vuelve a almacenar el controlador y guarda la salida real de SoftEther en el registro de la app.",
+            "Red y VPN: en la tabla de servidores de VPN Gate, cuando un servidor está conectado, su botón se pone verde y dice «Conectado» y A SU LADO, en la misma fila, aparece el botón rojo «Desconectar» para bajar el túnel desde esa fila.",
+            "Inicio: la calificación numérica de salud ya no va en el centro del radar (quedaba encima del haz); ahora se enseña en el borde inferior izquierdo de la imagen del radar, fuera del círculo. El radar y su animación no cambian.",
+        ],
+    },
+    {
         "version": "1.0.8",
         "fecha": "25/11/2026",
         "novedades": [

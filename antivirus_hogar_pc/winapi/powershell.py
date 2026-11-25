@@ -68,6 +68,34 @@ def ejecutar_elevado(script: str, timeout: int = 300) -> bool:
     return proc.returncode == 0
 
 
+def ejecutar_elevado_interactivo(script: str, timeout: int = 300) -> bool:
+    """Ejecuta PowerShell ELEVADO e INTERACTIVO (SIN -NonInteractive).
+
+    v1.0.9: diferencia con ejecutar_elevado — el proceso elevado va
+    SIN «-NonInteractive», en la sesión del usuario y con su ventana
+    a la vista, para que los avisos de Windows (en concreto el de
+    confianza del editor al instalar un controlador) PUEDAN aparecer
+    y el usuario los acepte. Con -NonInteractive ese aviso no puede
+    mostrarse y la instalación del controlador de la tarjeta virtual
+    de SoftEther moría en silencio (el «Error code: 31» de vpncmd).
+    Se usa solo para ese paso de reparación de la tarjeta virtual.
+    Devuelve True si el proceso elevado terminó con código 0.
+    """
+    if not es_windows():
+        raise WindowsNoDisponible("La elevación UAC solo existe en Windows.")
+    codificado = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    lanzador = (
+        "$p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru "
+        f"-ArgumentList '-NoProfile','-EncodedCommand','{codificado}'; "
+        "exit $p.ExitCode"
+    )
+    proc = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", lanzador],
+        capture_output=True, text=True, timeout=timeout, creationflags=_flags(),
+    )
+    return proc.returncode == 0
+
+
 def lanzar_elevado_oculto(script: str, timeout_lanzamiento: int = 120) -> int:
     """Lanza PowerShell ELEVADO con la ventana OCULTA y devuelve su PID.
 

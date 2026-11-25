@@ -2,7 +2,7 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.8.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.9.exe
 ;
 ; v1.0.7: el instalador lleva INCORPORADO SoftEther VPN Client
 ; (archivos oficiales en packaging\softether\client\, ver su
@@ -18,7 +18,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.8"
+#define AppVersion "1.0.9"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 
@@ -112,11 +112,24 @@ procedure SHChangeNotify(wEventId: Cardinal; uFlags: Cardinal;
   propio sin parámetros desatendidos documentados), así que la vía
   es la de su comunidad oficial: copiar los archivos del cliente y
   registrar su servicio de Windows (SEVPNCLIENT, binario
-  «vpnclient_x64.exe /service»). La tarjeta virtual la crea ESTE
-  instalador al terminar (v1.0.8: ver CrearTarjetaVirtualSoftEther),
-  elevado e interactivo, que es el contexto que Windows exige para
-  instalar su driver; en la 1.0.7 ese paso quedaba para el primer
-  «Conectar» de la app, sin elevar y en oculto, y fallaba siempre.
+  «vpnclient_x64.exe /service»).
+  v1.0.9 — LA SOLUCIÓN DEL «ERROR 31»: en la 1.0.8 la tarjeta se
+  creaba aquí, elevado, y AUN ASÍ NicCreate devolvía «Error code:
+  31 — Installation of the Virtual Network Adapter device driver
+  failed» (evidencia: el softether-nic-instalacion.txt de la PC del
+  usuario). Causa raíz probada: el paquete del CONTROLADOR de la
+  tarjeta (Neo6 x64) nunca quedaba instalado en el almacén de
+  controladores de Windows (DriverStore); NicCreate lo ejecuta el
+  servicio (SYSTEM, sesión 0), que no puede mostrar el aviso de
+  confianza del editor para un controlador aún no almacenado, y la
+  instalación del driver moría siempre. El instalador oficial de
+  SoftEther SÍ deja ese controlador almacenado al instalar. Desde
+  la 1.0.9 ESTE instalador hace lo mismo: con pnputil, A LA VISTA y
+  ANTES de NicCreate, almacena el paquete oficial del controlador
+  (softether\driver\Neo6_x64_VPN.inf, extraído en la compilación
+  del hamcore del instalador oficial y verificado por huella) y
+  comprueba con pnputil /enum-drivers que quedó guardado. Todo el
+  proceso queda en softether-nic-instalacion.txt.
   Si el equipo YA tiene un servicio SEVPNCLIENT (SoftEther propio
   del usuario), no se toca nada. Si lo registramos nosotros, se
   deja una marca en el registro para que el desinstalador solo
@@ -209,22 +222,89 @@ begin
   end;
 end;
 
-// v1.0.8: LA TARJETA VIRTUAL SE CREA EN LA INSTALACION.
-// Causa raiz del fallo de VPN Gate en la 1.0.7: el instalador nunca
-// instalaba el driver de la tarjeta virtual y la app intentaba
-// crearla despues, sin elevar y en oculto; crear esa tarjeta es
-// operacion de administrador con posible dialogo de Windows. El
-// instalador SI corre elevado e interactivo: aqui se asegura el
-// servicio en marcha, se ejecuta NicCreate con el vpncmd incorporado
-// y se verifica con NicList. TODO queda escrito, con la salida
-// exacta de vpncmd, en softether-nic-instalacion.txt junto a la app.
+// v1.0.9: registro ACUMULADO de la preparación de la tarjeta
+// virtual (sección del controlador + sección de NicCreate) que se
+// guarda de una vez en softether-nic-instalacion.txt.
+var
+  LogNic: String;
+
+procedure AgregarLogNic(Texto: String);
+begin
+  LogNic := LogNic + Texto;
+end;
+
+// Trae el paquete del controlador en la enumeración de pnputil?
+// La salida de /enum-drivers trae «Original Name: Neo6_x64_VPN.inf»
+// (en español: «Nombre original:»); basta buscar el nombre del .inf.
+function EnumTraeControlador(RutaCaptura: String): Boolean;
+begin
+  Result := Pos('neo6_x64_vpn.inf',
+    LowerCase(LeerCaptura(RutaCaptura))) > 0;
+end;
+
+// v1.0.9: EL CONTROLADOR SE ALMACENA EN EL DRIVERSTORE, A LA VISTA
+// Y ANTES DE CREAR LA TARJETA. Es EL paso que faltaba (ver la causa
+// raíz en el comentario de RegistrarServicioSoftEther): pnputil
+// /add-driver deja el paquete Neo6_x64_VPN (el controlador oficial
+// de SoftEther para Windows 10 x64, hardware NeoAdapter_VPN) en el
+// almacén de controladores de Windows; con el paquete ya
+// almacenado y aceptado, el servicio SEVPNCLIENT puede crear la
+// tarjeta sin necesitar ningún aviso interactivo. Este paso corre
+// VISIBLE (SW_SHOW), NUNCA SW_HIDE: si Windows enseña su aviso de
+// instalación del controlador, el usuario debe poder verlo y
+// aceptarlo. Su salida exacta y la verificación con
+// pnputil /enum-drivers van al registro acumulado.
+procedure InstalarControladorTarjetaVirtual();
+var
+  ResultCode: Integer;
+  Inf: String;
+  Pnp: String;
+  CapAdd: String;
+  CapEnum: String;
+  Orden: String;
+begin
+  Inf := ExpandConstant('{app}\softether\driver\Neo6_x64_VPN.inf');
+  if not FileExists(Inf) then
+  begin
+    AgregarLogNic('Controlador de la tarjeta virtual: el paquete ' +
+      'NO trae softether\driver\Neo6_x64_VPN.inf: no se pudo ' +
+      'almacenar el controlador en el DriverStore.' + #13#10);
+    Exit;
+  end;
+  Pnp := ExpandConstant('{sys}\pnputil.exe');
+  CapAdd := ExpandConstant('{tmp}\ahpc-pnputil-add.txt');
+  CapEnum := ExpandConstant('{tmp}\ahpc-pnputil-enum.txt');
+  Orden := '/C ""' + Pnp + '" /add-driver "' + Inf + '" /install ' +
+    '> "' + CapAdd + '" 2>&1"';
+  Exec(ExpandConstant('{cmd}'), Orden, '', SW_SHOW,
+    ewWaitUntilTerminated, ResultCode);
+  AgregarLogNic('--- pnputil /add-driver "' + Inf + '" /install ' +
+    '(codigo del proceso: ' + IntToStr(ResultCode) + ') ---' +
+    #13#10 + LeerCaptura(CapAdd) + #13#10);
+  Orden := '/C ""' + Pnp + '" /enum-drivers > "' + CapEnum + '" 2>&1"';
+  Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+  if EnumTraeControlador(CapEnum) then
+    AgregarLogNic('Verificacion del controlador: pnputil ' +
+      '/enum-drivers TRAE el paquete Neo6_x64_VPN.inf: el ' +
+      'controlador quedo ALMACENADO en el DriverStore.' + #13#10)
+  else
+    AgregarLogNic('Verificacion del controlador: pnputil ' +
+      '/enum-drivers NO trae Neo6_x64_VPN.inf: el controlador NO ' +
+      'quedo almacenado; la salida de pnputil va arriba.' + #13#10);
+  AgregarLogNic(#13#10);
+end;
+
+// LA TARJETA VIRTUAL SE CREA EN LA INSTALACION (v1.0.8), DESPUÉS de
+// almacenar su controlador (v1.0.9). Aqui se asegura el servicio en
+// marcha, se ejecuta NicCreate con el vpncmd incorporado y se
+// verifica con NicList; su sección se añade al registro acumulado.
 // Si algo falla NO se aborta la instalacion: queda registrado para
 // que el usuario pueda reportarlo.
 procedure CrearTarjetaVirtualSoftEther();
 var
   ResultCode: Integer;
   Cmd: String;
-  Log: String;
   CapAntes: String;
   CapCreate: String;
   CapDespues: String;
@@ -233,10 +313,8 @@ begin
   Cmd := VpncmdPath();
   if Cmd = '' then
   begin
-    SaveStringToFile(ExpandConstant('{app}\softether-nic-instalacion.txt'),
-      'v1.0.8: vpncmd no encontrado en la carpeta de SoftEther: este ' +
-      'instalador no traia el paquete y la tarjeta virtual NO se ' +
-      'pudo crear.' + #13#10, False);
+    AgregarLogNic('vpncmd no encontrado en la carpeta de ' +
+      'SoftEther: la tarjeta virtual NO se pudo crear.' + #13#10);
     Exit;
   end;
   CapAntes := ExpandConstant('{tmp}\ahpc-niclist-antes.txt');
@@ -253,8 +331,8 @@ begin
     ewWaitUntilTerminated, ResultCode);
   if NicListTraeVPN(CapAntes) then
   begin
-    Log := 'v1.0.8: la tarjeta virtual (VPN) YA existia: NicList la ' +
-      'trae y no hizo falta crearla.' + #13#10;
+    AgregarLogNic('La tarjeta virtual (VPN) YA existia: NicList ' +
+      'la trae y no hizo falta crearla.' + #13#10);
   end
   else
   begin
@@ -262,27 +340,46 @@ begin
       ' > "' + CapCreate + '" 2>&1"';
     Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
-    Log := 'v1.0.8: NicCreate ejecutado durante la instalacion ' +
-      '(codigo del proceso: ' + IntToStr(ResultCode) + ').' + #13#10;
+    AgregarLogNic('NicCreate ejecutado durante la instalacion ' +
+      '(codigo del proceso: ' + IntToStr(ResultCode) + ').' + #13#10);
     Sleep(2000);
     Orden := '/C ""' + Cmd + '" localhost /CLIENT /CMD NicList > "' +
       CapDespues + '" 2>&1"';
     Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
     if NicListTraeVPN(CapDespues) then
-      Log := Log + 'Verificacion: NicList trae la tarjeta (VPN): ' +
-        'tarjeta creada y presente.' + #13#10
+      AgregarLogNic('Verificacion: NicList trae la tarjeta (VPN): ' +
+        'tarjeta creada y presente.' + #13#10)
     else
-      Log := Log + 'Verificacion: NicList sigue SIN traer la tarjeta ' +
-        '(VPN): la creacion fallo; la salida exacta de vpncmd va ' +
-        'debajo para poder reportarla.' + #13#10;
-    Log := Log + #13#10 + '--- Salida de NicCreate ---' + #13#10 +
+      AgregarLogNic('Verificacion: NicList sigue SIN traer la ' +
+        'tarjeta (VPN): la creacion fallo; la salida exacta de ' +
+        'vpncmd va debajo para poder reportarla.' + #13#10);
+    AgregarLogNic(#13#10 + '--- Salida de NicCreate ---' + #13#10 +
       LeerCaptura(CapCreate) + #13#10 +
       '--- Salida de NicList (despues) ---' + #13#10 +
-      LeerCaptura(CapDespues);
+      LeerCaptura(CapDespues));
+  end;
+end;
+
+// v1.0.9: la preparación completa de la tarjeta, en orden: primero
+// el controlador al DriverStore (pnputil, visible) y después la
+// creación de la tarjeta (NicCreate verificado con NicList). El
+// registro acumulado se guarda de una vez junto a la app.
+procedure PrepararTarjetaVirtualSoftEther();
+begin
+  LogNic := 'Antivirus Hogar PC v1.0.9 - preparacion de la tarjeta ' +
+    'virtual de SoftEther durante la instalacion.' + #13#10 + #13#10;
+  if VpncmdPath() = '' then
+    AgregarLogNic('vpncmd no encontrado en la carpeta de SoftEther: ' +
+      'este instalador no traia el paquete y la tarjeta virtual NO ' +
+      'se pudo preparar.' + #13#10)
+  else
+  begin
+    InstalarControladorTarjetaVirtual();
+    CrearTarjetaVirtualSoftEther();
   end;
   SaveStringToFile(ExpandConstant('{app}\softether-nic-instalacion.txt'),
-    Log, False);
+    LogNic, False);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -338,9 +435,17 @@ var
 begin
   Lineas := '["AntivirusHogarPC.exe", "icono.ico", "exclusion_defender.ps1"';
   if SoftEtherExePath() <> '' then
+  begin
     Lineas := Lineas + ', "softether\vpnclient_x64.exe", ' +
       '"softether\vpncmd_x64.exe", "softether\vpncmgr_x64.exe", ' +
       '"softether\hamcore.se2"';
+    { v1.0.9: el paquete del controlador de la tarjeta virtual. }
+    if FileExists(ExpandConstant(
+        '{app}\softether\driver\Neo6_x64_VPN.inf')) then
+      Lineas := Lineas + ', "softether\driver\Neo6_x64_VPN.inf", ' +
+        '"softether\driver\Neo6_x64_VPN.sys", ' +
+        '"softether\driver\Neo6_x64_VPN.cat"';
+  end;
   Lineas := Lineas + ']';
   SaveStringToFile(ExpandConstant('{app}\componentes.json'),
     Lineas, False);
@@ -352,7 +457,7 @@ begin
   begin
     SHChangeNotify($08000000, $0000, 0, 0); { SHCNE_ASSOCCHANGED }
     RegistrarServicioSoftEther();
-    CrearTarjetaVirtualSoftEther();
+    PrepararTarjetaVirtualSoftEther();
     AplicarExclusionDefender();
     EscribirManifiestoComponentes();
   end;

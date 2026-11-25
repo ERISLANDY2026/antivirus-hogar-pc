@@ -28,10 +28,32 @@ El instalador oficial de SoftEther es un instalador propio
 oficial). La vía soportada por la práctica de su comunidad es:
 copiar la carpeta del cliente y registrar el servicio
 (`sc create SEVPNCLIENT binPath="…\vpnclient_x64.exe /service"`).
-El driver de la tarjeta virtual lo instala el propio cliente la
-primera vez que la app ejecuta `NicCreate` por vpncmd, dentro de la
-sesión del usuario (desde un servicio en contexto SYSTEM falla:
-por eso lo crea la app y no el instalador).
+
+## El controlador de la tarjeta virtual (v1.0.9 — el «Error 31»)
+
+La 1.0.7/1.0.8 creían que el driver de la tarjeta virtual «lo
+instala el propio cliente al ejecutar NicCreate». **Era falso, y la
+prueba la dio la PC del usuario**: en la 1.0.8 el instalador creó
+la tarjeta ya elevado y NicCreate devolvió «Error code: 31 —
+Installation of the Virtual Network Adapter device driver
+failed», con NicList vacío. Causa raíz: el paquete del controlador
+(Neo6 x64) **nunca quedaba almacenado en el DriverStore de
+Windows**; NicCreate lo ejecuta el servicio SEVPNCLIENT (SYSTEM,
+sesión 0), que no puede mostrar el aviso de confianza del editor
+para un controlador aún no almacenado, y la instalación del driver
+moría siempre. El instalador oficial de SoftEther sí deja ese
+controlador almacenado durante su instalación.
+
+Desde la 1.0.9 el paquete viaja con la app en `client\driver\`
+(`Neo6_x64_VPN.inf/.sys/.cat`: el paquete de Windows 10 x64 para
+el adaptador «VPN», hardware `NeoAdapter_VPN`, DriverVer
+4.25.0.9658, con su catálogo firmado por SoftEther Corporation) y
+**el instalador lo almacena con `pnputil /add-driver … /install`,
+a la vista y ANTES de NicCreate**, verificando con
+`pnputil /enum-drivers` que quedó guardado. Todo el proceso queda
+escrito en `{app}\softether-nic-instalacion.txt`. Si la tarjeta
+faltara al conectar, la app repite la receta en un paso elevado
+INTERACTIVO (sin `-NonInteractive`) y guarda la salida real.
 
 ## Cómo llega el paquete a `client\`
 
@@ -62,8 +84,21 @@ decenas de MB de binario). La compilación en la nube
    incorporado arrancó en el runner, imprimió su banner oficial
    «Version 4.44 Build 9807» y solo falló al conectar (no hay
    servicio de cliente en el runner: es el resultado correcto).
-4. Si algo falta, la compilación **falla**: la 1.0.7 no sale sin
-   SoftEther.
+4. **El controlador de la tarjeta virtual (v1.0.9):** vive DENTRO
+   de `hamcore.se2`, en `DriverPackages\Neo6_Win10\x64\`. La
+   compilación intenta extraerlo de ahí con 7-Zip y exige que las
+   huellas SHA-256 de los tres archivos coincidan con las del
+   árbol oficial de fuentes de la misma etiqueta
+   (`SoftEtherVPN_Stable v4.44-9807-rtm`, `src/bin/hamcore/…`),
+   que es la vía de respaldo si 7-Zip no abre el `.se2`:
+   `Neo6_x64_VPN.inf` 3.499 B · `8f049a53…f9c175b8`;
+   `Neo6_x64_VPN.sys` 37.824 B · `54e74a79…5e55a237`;
+   `Neo6_x64_VPN.cat` 19.633 B · `162c5660…a8c45aed`.
+   Quedan en `client\driver\` y anotados en `SOFTETHER-CLIENT.txt`
+   con su origen. Si falta alguno o la huella no coincide, la
+   compilación **falla**.
+5. Si algo falta, la compilación **falla**: la app no sale sin
+   SoftEther ni, desde la 1.0.9, sin su controlador.
 
 Para una compilación local con SoftEther: repetir los pasos 1–3 a
 mano y después compilar el instalador como siempre. Sin la carpeta

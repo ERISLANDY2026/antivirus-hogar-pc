@@ -262,16 +262,42 @@ def _linea_error_vpncmd(salida: str) -> str:
     return (salida or "").strip()[-300:]
 
 
-def crear_nic_elevada() -> dict:
-    """Crea la tarjeta virtual ELEVADO y VISIBLE (v1.0.8).
+def ruta_controlador_nic() -> str:
+    """Ruta del .inf del controlador de la tarjeta virtual, o "".
 
-    Crear la tarjeta instala su driver: es operación de
-    administrador con posible diálogo de Windows (manual oficial de
-    SoftEther). Hasta la 1.0.7 la app lo intentaba sin elevar y
-    OCULTO (CREATE_NO_WINDOW) y fallaba siempre. Aquí ese único paso
-    se eleva con el ayudante de siempre (ejecutar_elevado: UAC del
-    sistema y ventana de PowerShell A LA VISTA, sin WindowStyle
-    Hidden) y el resultado se VERIFICA con NicList, no se finge.
+    v1.0.9: el paquete del controlador (Neo6_x64_VPN.inf/.sys/.cat,
+    el de Windows 10 x64 del hamcore oficial de SoftEther) viaja con
+    la app en «softether\\driver» y el INSTALADOR lo almacena en el
+    DriverStore con pnputil antes de crear la tarjeta. Aquí solo se
+    usa como respaldo: si al conectar la tarjeta falta, el paso
+    elevado lo vuelve a almacenar antes de NicCreate.
+    """
+    carpeta = carpeta_softether()
+    if not carpeta:
+        return ""
+    ruta = os.path.join(carpeta, "driver", "Neo6_x64_VPN.inf")
+    return ruta if os.path.isfile(ruta) else ""
+
+
+def crear_nic_elevada() -> dict:
+    """Crea la tarjeta virtual ELEVADO e INTERACTIVO (v1.0.9).
+
+    Historia: hasta la 1.0.7 la app lo intentaba sin elevar y OCULTO
+    y fallaba siempre; la 1.0.8 lo elevó pero el controlador de la
+    tarjeta NUNCA quedaba almacenado en el DriverStore de Windows y
+    NicCreate devolvía «Error code: 31 — Installation of the Virtual
+    Network Adapter device driver failed» incluso durante la
+    instalación. Desde la 1.0.9 el instalador almacena el
+    controlador con pnputil ANTES de NicCreate; este paso queda como
+    RESPALDO al conectar: si la tarjeta falta, se repite la receta
+    completa — pnputil /add-driver /install (si el paquete viaja con
+    la app) y NicCreate — en un PowerShell elevado INTERACTIVO (sin
+    -NonInteractive, en la sesión del usuario), para que el aviso de
+    confianza de Windows pueda aparecer y aceptarse.
+
+    La salida REAL de pnputil y de vpncmd se guarda en
+    «vpn\\salida-crear-nic.txt» (carpeta de datos) y su línea de
+    error va en el detalle: nada se descarta en silencio.
 
     Devuelve {"ok", "detalle"}: ok solo si NicList trae la tarjeta
     tras el intento elevado.
@@ -279,29 +305,54 @@ def crear_nic_elevada() -> dict:
     ruta = ruta_vpncmd()
     if not ruta:
         return {"ok": False, "detalle": "vpncmd no encontrado."}
-    from .powershell import ejecutar_elevado
+    from .powershell import ejecutar_elevado_interactivo
 
-    script = (f'& "{ruta}" localhost /CLIENT /CMD NicCreate '
-              f'{NIC_VPNGATE}; exit $LASTEXITCODE')
+    inf = ruta_controlador_nic()
+    carpeta_salida = carpeta_perfiles_vpn()
+    ruta_salida = os.path.join(carpeta_salida, "salida-crear-nic.txt")
     try:
-        lanzado = ejecutar_elevado(script, timeout=240)
+        os.remove(ruta_salida)  # nunca leer la salida de un intento viejo
+    except OSError:
+        pass
+    partes = ["$partes = @()"]
+    if inf:
+        partes.append(
+            f"$partes += (& pnputil.exe /add-driver \"{inf}\" /install "
+            "2>&1 | Out-String)")
+    partes.append(
+        f"$partes += (& \"{ruta}\" localhost /CLIENT /CMD NicCreate "
+        f"{NIC_VPNGATE} 2>&1 | Out-String)")
+    partes.append(
+        f"Set-Content -Path \"{ruta_salida}\" -Encoding UTF8 "
+        "-Value ($partes -join \"`r`n\")")
+    script = "\n".join(partes)
+    try:
+        lanzado = ejecutar_elevado_interactivo(script, timeout=240)
     except Exception as exc:  # p. ej. el usuario canceló el aviso UAC
         return {"ok": False,
                 "detalle": f"No se pudo elevar la creación de la "
                            f"tarjeta: {exc}"}
+    salida_real = ""
+    try:
+        with open(ruta_salida, "r", encoding="utf-8",
+                  errors="replace") as f:
+            salida_real = f.read()
+    except OSError:
+        pass
     codigo, salida = _ejecutar_vpncmd(["NicList"], timeout=30)
     presente = _vpncmd_ok(codigo, salida) and NIC_VPNGATE.lower() in [
         n.lower() for n in _nombres_nic(salida)]
     if presente:
         return {"ok": True,
-                "detalle": "Tarjeta creada con el paso elevado y "
-                           "confirmada por NicList."}
+                "detalle": "Tarjeta creada con el paso elevado "
+                           "interactivo y confirmada por NicList."}
+    detalle_real = _linea_error_vpncmd(salida_real) if salida_real \
+        else _linea_error_vpncmd(salida)
     return {"ok": False,
-            "detalle": (f"El paso elevado "
+            "detalle": (f"El paso elevado interactivo "
                         f"{'terminó' if lanzado else 'no terminó bien'} "
                         f"y NicList sigue sin traer la tarjeta. "
-                        f"Detalle de NicList: "
-                        f"{_linea_error_vpncmd(salida)}")}
+                        f"Salida real del paso elevado: {detalle_real}")}
 
 
 def interpretar_estado_cuenta(salida: str) -> bool:
@@ -411,11 +462,12 @@ def conectar_softether(hostname: str, puerto: int = PUERTO_VPNGATE,
         if not res_nic.get("ok"):
             return {"ok": False,
                     "mensaje": ("No se pudo crear la tarjeta virtual "
-                                "de red de SoftEther: Windows pide "
-                                "permiso de administrador para instalar "
-                                "su controlador. Acepta el aviso de "
-                                "Windows cuando aparezca e inténtalo "
-                                "de nuevo."),
+                                "de red de SoftEther. Se abrió el paso "
+                                "de administrador en tu sesión para "
+                                "almacenar su controlador y crearla, "
+                                "pero Windows no la dejó lista: acepta "
+                                "el aviso de Windows cuando aparezca "
+                                "e inténtalo de nuevo."),
                     "detalle": res_nic.get("detalle", ""), "datos": {}}
     # 2. Cuenta: se recrea para apuntar al servidor elegido.
     codigo, salida = _ejecutar_vpncmd(["AccountList"], timeout=30)

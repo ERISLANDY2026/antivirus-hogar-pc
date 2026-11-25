@@ -97,6 +97,12 @@ jobs:
           if (-not $datafile) { throw "No apareció la carpeta DATAFILE del instalador oficial" }
           Write-Host "DATAFILE del instalador oficial:"
           Get-ChildItem $datafile.FullName -File | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length))" }
+          # v1.0.9 (forense del controlador): enumeración COMPLETA de
+          # los recursos del instalador oficial (todos los DATAFILE y
+          # todo lo demás que 7-Zip ve), no solo el primer directorio:
+          # queda en el registro de la corrida como evidencia.
+          Write-Host "Recursos COMPLETOS del instalador oficial:"
+          Get-ChildItem -Recurse se-extract -File | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path 'se-extract').Path.Length)) ($($_.Length))" }
           $destino = "packaging\softether\client"
           New-Item -ItemType Directory -Force -Path $destino | Out-Null
           $mapa = @{
@@ -199,7 +205,61 @@ jobs:
           } catch {
             Write-Host "vpncmd (humo) no arrancó en el runner: $($_.Exception.Message)"
           }
-          "SoftEther VPN Client 4.44 Build 9807 RTM (2025-04-16)`r`nInstalador oficial: $url`r`nTamano: 56249368 bytes`r`nSHA-256: $hash" | Out-File -FilePath (Join-Path $destino "SOFTETHER-CLIENT.txt") -Encoding ascii
+          # v1.0.9: EL CONTROLADOR DE LA TARJETA VIRTUAL (la solución
+          # del «Error 31»). El paquete Neo6 para Windows 10 x64 vive
+          # DENTRO de hamcore.se2, en DriverPackages\Neo6_Win10\x64\
+          # (árbol de fuentes oficial, src/bin/hamcore): se intenta
+          # extraer de ahí con 7-Zip; las huellas deben coincidir con
+          # las fijadas abajo, tomadas del árbol oficial de la misma
+          # etiqueta (v4.44-9807-rtm), que es además la vía de
+          # respaldo si 7-Zip no abre el .se2. Si ninguna vía entrega
+          # los 3 archivos con la huella exacta, la compilación
+          # FALLA: la 1.0.9 no sale sin el controlador.
+          $drvDir = Join-Path $destino "driver"
+          New-Item -ItemType Directory -Force -Path $drvDir | Out-Null
+          $huellasDriver = @{
+            "Neo6_x64_VPN.inf" = "8F049A53BAB3F1A16F118C91C15569CCEEF4B2955905C8F7C70F7952F9C175B8"
+            "Neo6_x64_VPN.sys" = "54E74A7906AF47C2B07F0EA171973D6ABB123549A1C66CF0CC6F24EC5E55A237"
+            "Neo6_x64_VPN.cat" = "162C56608532EF7C699520194FD2231550BAB6D0A32C1BBB6866F22DA8C45AED"
+          }
+          Write-Host "Listado de hamcore.se2 según 7-Zip (forense v1.0.9):"
+          & $7z l (Join-Path $destino "hamcore.se2") | Out-String | Write-Host
+          $origenDriver = ""
+          Remove-Item -Recurse -Force se-hamcore -ErrorAction SilentlyContinue
+          $eapAntes = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          & $7z x (Join-Path $destino "hamcore.se2") -ose-hamcore -y | Out-Null
+          $ErrorActionPreference = $eapAntes
+          $desdeHamcore = 0
+          foreach ($nombreD in $huellasDriver.Keys) {
+            $hallado = Get-ChildItem -Recurse se-hamcore -Filter $nombreD -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "Neo6_Win10" } | Select-Object -First 1
+            if ($hallado) {
+              Copy-Item $hallado.FullName (Join-Path $drvDir $nombreD) -Force
+              $desdeHamcore++
+            }
+          }
+          if ($desdeHamcore -eq 3) {
+            $origenDriver = "hamcore.se2 del instalador oficial (DriverPackages\Neo6_Win10\x64)"
+          } else {
+            Write-Host "7-Zip no sacó el controlador completo del hamcore ($desdeHamcore/3): se usa el árbol oficial de fuentes de la etiqueta v4.44-9807-rtm."
+            $baseTag = "https://raw.githubusercontent.com/SoftEtherVPN/SoftEtherVPN_Stable/v4.44-9807-rtm/src/bin/hamcore/DriverPackages/Neo6_Win10/x64"
+            foreach ($nombreD in $huellasDriver.Keys) {
+              Invoke-WebRequest -Uri "$baseTag/$nombreD" -OutFile (Join-Path $drvDir $nombreD)
+            }
+            $origenDriver = "arbol oficial de fuentes SoftEtherVPN_Stable v4.44-9807-rtm (src/bin/hamcore/DriverPackages/Neo6_Win10/x64)"
+          }
+          $lineasDriver = @()
+          foreach ($nombreD in $huellasDriver.Keys) {
+            $rutaD = Join-Path $drvDir $nombreD
+            if (-not (Test-Path $rutaD)) { throw "Falta el archivo del controlador: $nombreD" }
+            $hD = (Get-FileHash $rutaD -Algorithm SHA256).Hash
+            if ($hD -ne $huellasDriver[$nombreD]) { throw "La huella de $nombreD no coincide con la oficial: $hD" }
+            $lineasDriver += "$nombreD`: $((Get-Item $rutaD).Length) bytes, SHA-256 $hD"
+            Write-Host "Controlador $nombreD`: huella verificada ($hD)"
+          }
+          Write-Host "Controlador de la tarjeta virtual: origen = $origenDriver"
+          $txtCliente = "SoftEther VPN Client 4.44 Build 9807 RTM (2025-04-16)`r`nInstalador oficial: $url`r`nTamano: 56249368 bytes`r`nSHA-256: $hash`r`n`r`nControlador de la tarjeta virtual (v1.0.9, carpeta driver):`r`nOrigen: $origenDriver`r`n" + ($lineasDriver -join "`r`n")
+          $txtCliente | Out-File -FilePath (Join-Path $destino "SOFTETHER-CLIENT.txt") -Encoding ascii
           Write-Host "Archivos del cliente incorporado:"
           Get-ChildItem -Recurse $destino | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path $destino).Path.Length)) ($($_.Length))" }
           # El humo deja $LASTEXITCODE=1 (vpncmd sin servicio: su

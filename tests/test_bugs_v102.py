@@ -147,8 +147,10 @@ def test_pagina_vpn_puebla_combo_tabla_y_botones():
     assert tabla.item(0, 1).text() == "vpn123456789.opengw.net"
     assert tabla.item(0, 3).text() == "18 ms"
     for fila in range(2):
-        boton = tabla.cellWidget(fila, 5)
-        assert isinstance(boton, QPushButton) and boton.text() == "Conectar"
+        # v1.0.9: la celda de acción es un contenedor con los botones.
+        celda = tabla.cellWidget(fila, 5)
+        botones = celda.findChildren(QPushButton)
+        assert len(botones) == 1 and botones[0].text() == "Conectar"
     pagina.deleteLater()
     app.processEvents()
 

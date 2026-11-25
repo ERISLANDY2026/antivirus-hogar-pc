@@ -736,7 +736,9 @@ class _PaginaRed(QWidget):
         lay_v.addWidget(etiqueta(
             "Con SoftEther (incluido con la app) la conexión se hace desde "
             "aquí: pulsa «Conectar» en un servidor y el túnel sube en "
-            "segundo plano; el botón se pone verde y dice «Conectado». "
+            "segundo plano; el botón de esa fila se pone verde y dice "
+            "«Conectado», y a su lado aparece el botón rojo «Desconectar» "
+            "para bajar el túnel desde la misma fila. "
             "Sin SoftEther, la app genera el perfil .ovpn y se lo entrega "
             "a tu cliente VPN."))
         fila_ip = QHBoxLayout()
@@ -1001,18 +1003,42 @@ class _PaginaRed(QWidget):
             tabla.setItem(i, 2, QTableWidgetItem(f"{s.velocidad_mbps:.0f} Mbps"))
             tabla.setItem(i, 3, QTableWidgetItem(f"{s.ping_ms} ms"))
             tabla.setItem(i, 4, QTableWidgetItem(str(s.sesiones)))
+            # Celda de acción (v1.0.9, cambio pedido por el usuario):
+            # un contenedor por fila. Sin conexión: solo «Conectar».
+            # Con el túnel arriba en ESE servidor: su botón se pone
+            # VERDE y dice «Conectado» y A SU DERECHA, en la misma
+            # fila, aparece el botón ROJO «Desconectar».
+            celda = QWidget()
+            fila_botones = QHBoxLayout(celda)
+            fila_botones.setContentsMargins(2, 2, 2, 2)
+            fila_botones.setSpacing(6)
             boton = QPushButton("Conectar")
             if s.hostname == self._servidor_conectado:
-                # v1.0.7 (pedido del usuario): el servidor con el túnel
-                # arriba se ve VERDE y dice «Conectado».
                 boton.setText("Conectado")
                 boton.setObjectName("verde")
+                boton.setEnabled(False)
                 boton.setStyleSheet(
                     f"background-color: {theme.VERDE_BOTON}; color: white; "
                     "font-weight: 700; border-radius: 8px; padding: 6px 12px;")
-            boton.clicked.connect(lambda _=False, serv=s: self._conectar(serv))
-            tabla.setCellWidget(i, 5, boton)
+                fila_botones.addWidget(boton)
+                boton_desc = QPushButton("Desconectar")
+                boton_desc.setObjectName("peligro")
+                boton_desc.setStyleSheet(
+                    f"background-color: {theme.ROJO_BOTON}; color: white; "
+                    "font-weight: 700; border-radius: 8px; padding: 6px 12px;")
+                boton_desc.clicked.connect(
+                    lambda _=False: self._desconectar_vpn())
+                fila_botones.addWidget(boton_desc)
+            else:
+                boton.clicked.connect(
+                    lambda _=False, serv=s: self._conectar(serv))
+                fila_botones.addWidget(boton)
+            tabla.setCellWidget(i, 5, celda)
         tabla.resizeColumnsToContents()
+        if self._servidor_conectado:
+            # v1.0.9: con dos botones en la fila conectada, la columna
+            # de acción no debe quedarse estrecha y apretarlos.
+            tabla.setColumnWidth(5, max(tabla.columnWidth(5), 250))
 
     def _conectar(self, servidor) -> None:
         self._lbl_vpn.setStyleSheet("")

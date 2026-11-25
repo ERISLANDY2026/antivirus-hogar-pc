@@ -25,14 +25,16 @@ def test_notas_y_version_107():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core import notas_version
 
-    # v1.0.8 (vía rápida): la versión vigente sube; las notas de la
+    # v1.0.9: la versión vigente sube; las notas de la 1.0.8 y la
     # 1.0.7 quedan en el historial.
-    assert config.VERSION == "1.0.8"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.8"
-    notas = notas_version.notas_de("1.0.8")
+    assert config.VERSION == "1.0.9"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.9"
+    notas = notas_version.notas_de("1.0.9")
     assert notas is not None and len(notas["novedades"]) >= 3
     texto = " ".join(notas["novedades"])
     assert "SoftEther" in texto and "tarjeta virtual" in texto
+    notas108 = notas_version.notas_de("1.0.8")
+    assert notas108 is not None and len(notas108["novedades"]) >= 3
     notas107 = notas_version.notas_de("1.0.7")
     assert notas107 is not None
     assert "Optimización finalizada" in " ".join(notas107["novedades"])
@@ -45,7 +47,7 @@ def test_instalador_lleva_softether_incorporado():
     with open(os.path.join(raiz, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
         iss = f.read()
-    assert '#define AppVersion "1.0.8"' in iss
+    assert '#define AppVersion "1.0.9"' in iss
     assert "softether\\client\\*" in iss          # el payload, a {app}\softether
     assert "SEVPNCLIENT" in iss                  # registra el servicio
     assert "SoftEtherServicioPropio" in iss      # marca: solo retira el suyo
@@ -347,12 +349,18 @@ def test_pagina_boton_se_pone_verde_conectado(monkeypatch):
             "conectada": True, "servidor": hostname, "pais": "Japan",
             "clientes": [], "ip": ""}))
 
-    boton = pagina._tabla_vpn.cellWidget(0, 5)
-    assert boton.text() == "Conectar"
-    boton.click()
+    # v1.0.9: la celda de acción es un contenedor; la fila conectada
+    # lleva «Conectado» (verde) y «Desconectar» (rojo) lado a lado.
+    from PySide6.QtWidgets import QPushButton
+
+    celda = pagina._tabla_vpn.cellWidget(0, 5)
+    botones = {b.text(): b for b in celda.findChildren(QPushButton)}
+    assert set(botones) == {"Conectar"}
+    botones["Conectar"].click()
     _esperar(900)
-    boton_nuevo = pagina._tabla_vpn.cellWidget(0, 5)
-    assert boton_nuevo.text() == "Conectado"
+    celda = pagina._tabla_vpn.cellWidget(0, 5)
+    botones = {b.text(): b for b in celda.findChildren(QPushButton)}
+    assert set(botones) == {"Conectado", "Desconectar"}
     assert "Conectado" in pagina._lbl_vpn.text()
     assert pagina._servidor_conectado == hostname
 
