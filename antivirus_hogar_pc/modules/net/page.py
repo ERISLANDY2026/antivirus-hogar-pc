@@ -5,6 +5,7 @@ Todo el trabajo lento (red, winget, Windows Update) corre en un hilo
 pinta el mensaje y los datos, nunca recibe excepciones.
 """
 import math
+import threading
 import time
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, Signal
@@ -724,6 +725,16 @@ class _PaginaRed(QWidget):
         self._btn_servidores = boton_principal(t("Actualizar lista de servidores"), "primario")
         self._btn_servidores.clicked.connect(self._cargar_servidores)
         fila_ctrl.addWidget(self._btn_servidores)
+        # v1.0.15 (idea del usuario en llamada): «Verificar
+        # servidores» — barrido completo con la sonda real; cada
+        # fila recibe su ✓/✗ en cuanto cae su resultado, con
+        # barra, conteo y porcentaje subiendo. Pulsarlo otra vez
+        # lo detiene.
+        self._btn_verificar = QPushButton(t("Verificar servidores"))
+        self._btn_verificar.clicked.connect(self._verificar_servidores)
+        fila_ctrl.addWidget(self._btn_verificar)
+        self._verificando = False
+        self._cancelar_verificacion = threading.Event()
         fila_ctrl.addStretch(1)
         lay_v.addLayout(fila_ctrl)
 
@@ -741,6 +752,9 @@ class _PaginaRed(QWidget):
         self._barra_vpn = BarraProgreso()
         self._barra_vpn.setVisible(False)
         lay_v.addWidget(self._barra_vpn)
+        self._lbl_verificacion = etiqueta("", suave=True)
+        self._lbl_verificacion.setVisible(False)
+        lay_v.addWidget(self._lbl_verificacion)
         # v1.0.14: 8 columnas — la lista UNIFICADA enseña la
         # FUENTE de cada servidor y su sello de VERIFICACIÓN con
         # la hora del autoanálisis: [País, Servidor, Fuente,
@@ -918,6 +932,78 @@ class _PaginaRed(QWidget):
             "Redes guardadas en este PC: " + (", ".join(perfiles) if perfiles else "ninguna"))
 
     # -- VPN Gate ---------------------------------------------------------------------
+    # --- Verificar servidores (v1.0.15) ---------------------------------
+    def _verificar_servidores(self) -> None:
+        if self._verificando:
+            self._cancelar_verificacion.set()
+            self._lbl_verificacion.setText(
+                t("Deteniendo la verificación…"))
+            return
+        if not self._servidores:
+            self._lbl_vpn.setText(
+                t("Primero actualiza la lista de servidores."))
+            return
+        self._verificando = True
+        self._cancelar_verificacion = threading.Event()
+        self._btn_verificar.setText(t("Detener verificación"))
+        self._barra_vpn.setVisible(True)
+        self._barra_vpn.fijar(0, len(self._servidores))
+        self._lbl_verificacion.setVisible(True)
+        self._lbl_verificacion.setText(t(
+            "Verificando servidores: {pct} % — comprobados {h} de "
+            "{t} · ✓ {ok} · ✗ {mal}",
+            pct=0, h=0, t=len(self._servidores), ok=0, mal=0))
+        cancelar = self._cancelar_verificacion
+
+        def trabajo(progreso):
+            return srv.verificar_todos_los_servidores(
+                al_progreso=lambda *v: progreso(*v), cancelar=cancelar)
+
+        _lanzar_vivo(self, trabajo, self._progreso_verificacion,
+                     self._fin_verificacion)
+
+    def _progreso_verificacion(self, hechos, total, verificados,
+                               fallidos, hostname, fase) -> None:
+        pct = int(hechos * 100 / total) if total else 100
+        self._barra_vpn.fijar(hechos, total)
+        if fase == "pausa":
+            self._lbl_verificacion.setText(t(
+                "Verificación en pausa (hay una conexión VPN en "
+                "curso): {pct} % — comprobados {h} de {t} · "
+                "✓ {ok} · ✗ {mal}",
+                pct=pct, h=hechos, t=total, ok=verificados,
+                mal=fallidos))
+        else:
+            self._lbl_verificacion.setText(t(
+                "Verificando servidores: {pct} % — comprobados "
+                "{h} de {t} · ✓ {ok} · ✗ {mal}",
+                pct=pct, h=hechos, t=total, ok=verificados,
+                mal=fallidos))
+        # El sello de la fila cae en cuanto llega su veredicto:
+        # se relee el registro compartido y se repinta la tabla
+        # (el orden «Recomendado» ya pone los verificados
+        # primero, como en el autoanálisis).
+        barra = self._tabla_vpn.verticalScrollBar()
+        posicion = barra.value() if barra is not None else 0
+        self._veredictos = srv.veredictos_actuales()
+        self._repintar_servidores()
+        if barra is not None:
+            barra.setValue(posicion)
+
+    def _fin_verificacion(self, resultado) -> None:
+        self._verificando = False
+        self._btn_verificar.setText(t("Verificar servidores"))
+        datos = resultado.datos or {}
+        if datos.get("veredictos"):
+            self._veredictos = datos["veredictos"]
+            self._repintar_servidores()
+        total = int(datos.get("total") or 0)
+        hechos = int(datos.get("comprobados") or 0)
+        if total:
+            self._barra_vpn.fijar(hechos, total)
+        self._lbl_vpn.setText(resultado.mensaje)
+        self._lbl_verificacion.setText(resultado.mensaje)
+
     def _cargar_servidores(self) -> None:
         self._tarjeta_vpn.fijar_activa(True)
         # Barrita temporal: aparece mientras se actualiza (v1.0.5).

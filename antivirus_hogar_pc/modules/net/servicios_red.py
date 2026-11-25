@@ -580,6 +580,40 @@ def _ocupado_vpn() -> bool:
         return False
 
 
+def _sondear_uno(servidor: ServidorVPN) -> str | None:
+    """La sonda de UN servidor (etapas del autoanálisis): primero
+    alcanzabilidad TCP (solo perfiles TCP; filtra muertos
+    evidentes) y después la sonda REAL — OpenVPN hasta la
+    aceptación (PUSH_REPLY / CONNECTED,SUCCESS) con las
+    credenciales de su fuente y perfil route-nopull. Anota el
+    veredicto en el registro compartido y lo devuelve
+    («verificado»/«auth_failed»/«inaccesible») o None si el
+    desenlace no es clasificable del lado servidor."""
+    remoto = None
+    try:
+        remoto = extraer_remoto(servidor.generar_ovpn())
+    except Exception:
+        remoto = None
+    if remoto and remoto["proto"] == "tcp":
+        if not _alcanzable_tcp(remoto["host"], remoto["puerto"]):
+            _anotar_veredicto(servidor, "inaccesible")
+            return "inaccesible"
+    usuario, clave = fuentes.credenciales_de(servidor, _CLAVE_VPNBOOK)
+    res = seguro(vpn_win.conectar_openvpn,
+                 servidor.generar_ovpn(), servidor.hostname,
+                 espera=20, usuario=usuario, clave=clave, sonda=True)
+    datos_ov = res.datos if res.ok and isinstance(res.datos, dict) else {}
+    if datos_ov.get("ok"):
+        _anotar_veredicto(servidor, "verificado")
+        return "verificado"
+    familia = str((datos_ov.get("datos") or {}).get("familia") or "")
+    veredicto = fuentes.VEREDICTO_POR_FAMILIA.get(familia)
+    if veredicto:
+        _anotar_veredicto(servidor, veredicto)
+        return veredicto
+    return None
+
+
 def _sondear_plan(plan: list[ServidorVPN],
                   presupuesto_s: float = 180.0) -> int:
     """Ejecuta las sondas del plan, UNA a una, con presupuesto.
@@ -598,31 +632,121 @@ def _sondear_plan(plan: list[ServidorVPN],
             break
         if _ocupado_vpn():
             break
-        remoto = None
-        try:
-            remoto = extraer_remoto(servidor.generar_ovpn())
-        except Exception:
-            remoto = None
-        if remoto and remoto["proto"] == "tcp":
-            if not _alcanzable_tcp(remoto["host"], remoto["puerto"]):
-                _anotar_veredicto(servidor, "inaccesible")
-                hechas += 1
-                continue
-        usuario, clave = fuentes.credenciales_de(servidor, _CLAVE_VPNBOOK)
-        res = seguro(vpn_win.conectar_openvpn,
-                     servidor.generar_ovpn(), servidor.hostname,
-                     espera=20, usuario=usuario, clave=clave, sonda=True)
-        datos_ov = res.datos if res.ok and isinstance(res.datos, dict) else {}
-        if datos_ov.get("ok"):
-            _anotar_veredicto(servidor, "verificado")
-        else:
-            familia = str((datos_ov.get("datos") or {}).get("familia")
-                          or "")
-            veredicto = fuentes.VEREDICTO_POR_FAMILIA.get(familia)
-            if veredicto:
-                _anotar_veredicto(servidor, veredicto)
+        _sondear_uno(servidor)
         hechas += 1
     return hechas
+
+
+def veredictos_actuales() -> dict:
+    """Copia del registro de veredictos compartido (la UI lo lee
+    para repintar los sellos sin tocar el registro)."""
+    _cargar_estado_fuentes()
+    return dict(_VEREDICTOS)
+
+
+def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
+                                   pausa_max_s: float = 600.0
+                                   ) -> ResultadoModulo:
+    """Barrido manual COMPLETO de la lista (v1.0.15, idea del
+    usuario en llamada del 2026-11-25): el botón «Verificar
+    servidores» de Red y VPN.
+
+    Recorre TODOS los servidores de la lista vigente en el orden
+    «Recomendado» y deja en cada uno su veredicto del registro
+    compartido: ✓ SOLO si la sonda real lo acepta (el mismo
+    motor del autoanálisis: PUSH_REPLY / CONNECTED,SUCCESS con
+    las credenciales de su fuente, route-nopull, sin tocar el
+    tráfico del usuario); ✗ con su causa clasificada
+    (auth_failed/inaccesible). Los que ya tienen veredicto
+    VIGENTE no se re-sondean: cuentan como comprobados con su
+    veredicto. Las sondas son SECUENCIALES (una sola TAP) y el
+    barrido se PAUSA mientras haya un túnel o un intento del
+    usuario en curso (hasta pausa_max_s; después se difiere).
+    al_progreso(hechos, total, verificados, fallidos, hostname,
+    fase) con fase «hecho»/«pausa» alimenta la barra, el conteo
+    y el porcentaje de la UI. Los veredictos alimentan el mismo
+    orden de la lista y el failover, como los del autoanálisis.
+    """
+    _cargar_estado_fuentes()
+    lista = fuentes.ordenar_candidatos(list(_ULTIMA_LISTA),
+                                       _VEREDICTOS)
+    total = len(lista)
+    hechos = verificados = fallidos = sin_clasificar = 0
+    cancelado = diferido = False
+
+    def _emitir(hostname: str, fase: str) -> None:
+        if al_progreso is not None:
+            try:
+                al_progreso(hechos, total, verificados, fallidos,
+                            hostname, fase)
+            except Exception:
+                pass
+
+    for servidor in lista:
+        if cancelar is not None and cancelar.is_set():
+            cancelado = True
+            break
+        espera = 0.0
+        while _ocupado_vpn():
+            if cancelar is not None and cancelar.is_set():
+                cancelado = True
+                break
+            _emitir(servidor.hostname, "pausa")
+            time.sleep(2.0)
+            espera += 2.0
+            if espera >= pausa_max_s:
+                diferido = True
+                break
+        if cancelado or diferido:
+            break
+        estado, _cuando = fuentes.veredicto_de(_VEREDICTOS, servidor)
+        if estado == "verificado":
+            verificados += 1
+            hechos += 1
+        elif estado in ("auth_failed", "inaccesible"):
+            fallidos += 1
+            hechos += 1
+        else:
+            veredicto = _sondear_uno(servidor)
+            hechos += 1
+            if veredicto == "verificado":
+                verificados += 1
+            elif veredicto in ("auth_failed", "inaccesible"):
+                fallidos += 1
+            else:
+                sin_clasificar += 1
+        _emitir(servidor.hostname, "hecho")
+    datos = {"veredictos": dict(_VEREDICTOS),
+             "comprobados": hechos, "total": total,
+             "verificados": verificados, "fallidos": fallidos,
+             "sin_clasificar": sin_clasificar,
+             "cancelado": cancelado, "diferido": diferido}
+    if total == 0:
+        return ResultadoModulo(
+            ok=False,
+            mensaje=t("No hay servidores en la lista: primero "
+                      "actualiza la lista de servidores."),
+            datos=datos)
+    if cancelado:
+        mensaje = t("Verificación detenida: {h} de {t} comprobados "
+                    "({ok} verificados, {mal} fallidos). Los "
+                    "veredictos ya obtenidos quedan guardados.",
+                    h=hechos, t=total, ok=verificados, mal=fallidos)
+    elif diferido:
+        mensaje = t("Verificación diferida: hay una conexión VPN "
+                    "en curso y la comprobación se pausó demasiado. "
+                    "Llevaba {h} de {t} comprobados ({ok} "
+                    "verificados, {mal} fallidos).",
+                    h=hechos, t=total, ok=verificados, mal=fallidos)
+    else:
+        mensaje = t("Verificación terminada: {ok} verificados y "
+                    "{mal} fallidos de {t} servidores comprobados.",
+                    ok=verificados, mal=fallidos, t=total)
+        if sin_clasificar:
+            mensaje += t(" {n} no se pudieron clasificar (fallo "
+                         "local de la sonda, no del servidor).",
+                         n=sin_clasificar)
+    return ResultadoModulo(ok=True, mensaje=mensaje, datos=datos)
 
 
 def refresco_y_sondas_en_fondo(registrar=None) -> dict:

@@ -154,6 +154,79 @@ def test_pixmap_nav_usa_el_recurso_3d():
         opacos = sum(
             1 for y in range(img.height()) for x in range(img.width())
             if img.pixelColor(x, y).alpha() > 200)
-        # Hay gráfico de verdad (el centro del CD es su agujero:
-        # no se exige opacidad en un punto concreto).
-        assert opacos > (img.width() * img.height()) // 5, nombre
+        # Hay gráfico de verdad (el centro del CD es su agujero
+        # y la escoba es fina y diagonal: no se exige opacidad en
+        # un punto concreto ni una fracción alta; la fracción de
+        # los recursos reales va del 19 % al 70 %).
+        assert opacos > (img.width() * img.height()) // 10, nombre
+
+
+# --- Botón «Verificar servidores» (idea del usuario, 2026-11-25) ----
+
+def _servidor(host, sesiones=10):
+    from antivirus_hogar_pc.core.vpngate import ServidorVPN
+    return ServidorVPN(
+        hostname=host, ip="1.2.3.4", puntuacion=0, ping_ms=50,
+        velocidad_bps=1000000, pais="Japan", pais_corto="JP",
+        sesiones=sesiones, uptime=9999, total_usuarios=0,
+        operador="op", mensaje="", ovpn_base64="eA==")
+
+
+def test_barrido_cuenta_y_progreso(monkeypatch):
+    import threading
+
+    from antivirus_hogar_pc.modules.net import servicios_red as srv
+
+    lista = [_servidor("a.jp"), _servidor("b.jp"), _servidor("c.jp")]
+    monkeypatch.setattr(srv, "_ULTIMA_LISTA", lista)
+    monkeypatch.setattr(srv, "_VEREDICTOS", {})
+    monkeypatch.setattr(srv, "_cargar_estado_fuentes", lambda: None)
+    monkeypatch.setattr(srv, "_ocupado_vpn", lambda: False)
+    veredictos = {"a.jp": "verificado", "b.jp": "auth_failed",
+                  "c.jp": None}
+    monkeypatch.setattr(
+        srv, "_sondear_uno", lambda s: veredictos[s.hostname])
+    eventos = []
+    res = srv.verificar_todos_los_servidores(
+        al_progreso=lambda *v: eventos.append(v),
+        cancelar=threading.Event())
+    datos = res.datos
+    assert datos["comprobados"] == 3 and datos["total"] == 3
+    assert datos["verificados"] == 1 and datos["fallidos"] == 1
+    assert datos["sin_clasificar"] == 1
+    hechos = [e[0] for e in eventos if e[5] == "hecho"]
+    assert hechos == sorted(hechos) and hechos[-1] == 3
+    pcts = [int(e[0] * 100 / e[1]) for e in eventos if e[5] == "hecho"]
+    assert pcts[-1] == 100  # el porcentaje llega al 100 %
+    assert "Verificación terminada" in res.mensaje
+
+
+def test_barrido_respeta_veredicto_vigente_y_cancela(monkeypatch):
+    import threading
+
+    from antivirus_hogar_pc.core import fuentes_vpn as fuentes
+    from antivirus_hogar_pc.modules.net import servicios_red as srv
+
+    lista = [_servidor("a.jp"), _servidor("b.jp"), _servidor("c.jp")]
+    monkeypatch.setattr(srv, "_ULTIMA_LISTA", lista)
+    registro: dict = {}
+    fuentes.registrar_veredicto(registro, lista[0], "verificado")
+    monkeypatch.setattr(srv, "_VEREDICTOS", registro)
+    monkeypatch.setattr(srv, "_cargar_estado_fuentes", lambda: None)
+    monkeypatch.setattr(srv, "_ocupado_vpn", lambda: False)
+    sondeados = []
+    cancelar = threading.Event()
+
+    def _sonda(s):
+        sondeados.append(s.hostname)
+        cancelar.set()  # el usuario detiene tras la primera sonda
+        return "verificado"
+
+    monkeypatch.setattr(srv, "_sondear_uno", _sonda)
+    res = srv.verificar_todos_los_servidores(cancelar=cancelar)
+    # a.jp NO se re-sondea (veredicto vigente) y cuenta
+    # verificado; c.jp nunca se sondea (cancelación en b.jp)
+    assert sondeados == ["b.jp"]
+    assert res.datos["verificados"] == 2
+    assert res.datos["comprobados"] == 2
+    assert res.datos["cancelado"] is True
