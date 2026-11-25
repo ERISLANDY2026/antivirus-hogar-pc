@@ -2,7 +2,7 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.7.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.8.exe
 ;
 ; v1.0.7: el instalador lleva INCORPORADO SoftEther VPN Client
 ; (archivos oficiales en packaging\softether\client\, ver su
@@ -18,7 +18,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.7"
+#define AppVersion "1.0.8"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 
@@ -112,9 +112,11 @@ procedure SHChangeNotify(wEventId: Cardinal; uFlags: Cardinal;
   propio sin parámetros desatendidos documentados), así que la vía
   es la de su comunidad oficial: copiar los archivos del cliente y
   registrar su servicio de Windows (SEVPNCLIENT, binario
-  «vpnclient_x64.exe /service»). El driver de la tarjeta virtual lo
-  instala el propio cliente la primera vez que la app crea la
-  tarjeta por vpncmd (NicCreate), en la sesión del usuario.
+  «vpnclient_x64.exe /service»). La tarjeta virtual la crea ESTE
+  instalador al terminar (v1.0.8: ver CrearTarjetaVirtualSoftEther),
+  elevado e interactivo, que es el contexto que Windows exige para
+  instalar su driver; en la 1.0.7 ese paso quedaba para el primer
+  «Conectar» de la app, sin elevar y en oculto, y fallaba siempre.
   Si el equipo YA tiene un servicio SEVPNCLIENT (SoftEther propio
   del usuario), no se toca nada. Si lo registramos nosotros, se
   deja una marca en el registro para que el desinstalador solo
@@ -155,6 +157,132 @@ begin
     Exec(ExpandConstant('{sys}\net.exe'), 'start SEVPNCLIENT', '',
       SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
+end;
+
+// v1.0.8: ruta del vpncmd INCORPORADO (para crear la tarjeta
+// virtual durante la instalacion, ver CrearTarjetaVirtualSoftEther).
+function VpncmdPath(): String;
+begin
+  if FileExists(ExpandConstant('{app}\softether\vpncmd_x64.exe')) then
+    Result := ExpandConstant('{app}\softether\vpncmd_x64.exe')
+  else if FileExists(ExpandConstant('{app}\softether\vpncmd.exe')) then
+    Result := ExpandConstant('{app}\softether\vpncmd.exe')
+  else
+    Result := '';
+end;
+
+// Lee un archivo de texto capturado y lo devuelve como un bloque.
+function LeerCaptura(Ruta: String): String;
+var
+  Lineas: TArrayOfString;
+  i: Integer;
+begin
+  Result := '';
+  if LoadStringsFromFile(Ruta, Lineas) then
+    for i := 0 to GetArrayLength(Lineas) - 1 do
+      Result := Result + Lineas[i] + #13#10;
+end;
+
+// Trae la captura de NicList la tarjeta «VPN»? Las tablas de vpncmd
+// ponen el nombre del adaptador como primera celda de su fila (la
+// fila lleva «|»); el prompt «VPN Client>» no lleva «|» y se descarta.
+function NicListTraeVPN(RutaCaptura: String): Boolean;
+var
+  Lineas: TArrayOfString;
+  i: Integer;
+  L: String;
+begin
+  Result := False;
+  if not LoadStringsFromFile(RutaCaptura, Lineas) then
+    Exit;
+  for i := 0 to GetArrayLength(Lineas) - 1 do
+  begin
+    L := Trim(Lineas[i]);
+    if (Length(L) >= 3) and (Copy(L, 1, 3) = 'VPN') and
+        (Pos('|', L) > 0) then
+      if (Length(L) = 3) or (Copy(L, 4, 1) = ' ') or
+          (Copy(L, 4, 1) = '|') then
+      begin
+        Result := True;
+        Exit;
+      end;
+  end;
+end;
+
+// v1.0.8: LA TARJETA VIRTUAL SE CREA EN LA INSTALACION.
+// Causa raiz del fallo de VPN Gate en la 1.0.7: el instalador nunca
+// instalaba el driver de la tarjeta virtual y la app intentaba
+// crearla despues, sin elevar y en oculto; crear esa tarjeta es
+// operacion de administrador con posible dialogo de Windows. El
+// instalador SI corre elevado e interactivo: aqui se asegura el
+// servicio en marcha, se ejecuta NicCreate con el vpncmd incorporado
+// y se verifica con NicList. TODO queda escrito, con la salida
+// exacta de vpncmd, en softether-nic-instalacion.txt junto a la app.
+// Si algo falla NO se aborta la instalacion: queda registrado para
+// que el usuario pueda reportarlo.
+procedure CrearTarjetaVirtualSoftEther();
+var
+  ResultCode: Integer;
+  Cmd: String;
+  Log: String;
+  CapAntes: String;
+  CapCreate: String;
+  CapDespues: String;
+  Orden: String;
+begin
+  Cmd := VpncmdPath();
+  if Cmd = '' then
+  begin
+    SaveStringToFile(ExpandConstant('{app}\softether-nic-instalacion.txt'),
+      'v1.0.8: vpncmd no encontrado en la carpeta de SoftEther: este ' +
+      'instalador no traia el paquete y la tarjeta virtual NO se ' +
+      'pudo crear.' + #13#10, False);
+    Exit;
+  end;
+  CapAntes := ExpandConstant('{tmp}\ahpc-niclist-antes.txt');
+  CapCreate := ExpandConstant('{tmp}\ahpc-niccreate.txt');
+  CapDespues := ExpandConstant('{tmp}\ahpc-niclist-despues.txt');
+  // El servicio debe estar en marcha para que vpncmd le hable; si ya
+  // corria, este «net start» devuelve error sin ninguna importancia.
+  Exec(ExpandConstant('{sys}\net.exe'), 'start SEVPNCLIENT', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(2000);
+  Orden := '/C ""' + Cmd + '" localhost /CLIENT /CMD NicList > "' +
+    CapAntes + '" 2>&1"';
+  Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+  if NicListTraeVPN(CapAntes) then
+  begin
+    Log := 'v1.0.8: la tarjeta virtual (VPN) YA existia: NicList la ' +
+      'trae y no hizo falta crearla.' + #13#10;
+  end
+  else
+  begin
+    Orden := '/C ""' + Cmd + '" localhost /CLIENT /CMD NicCreate VPN' +
+      ' > "' + CapCreate + '" 2>&1"';
+    Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Log := 'v1.0.8: NicCreate ejecutado durante la instalacion ' +
+      '(codigo del proceso: ' + IntToStr(ResultCode) + ').' + #13#10;
+    Sleep(2000);
+    Orden := '/C ""' + Cmd + '" localhost /CLIENT /CMD NicList > "' +
+      CapDespues + '" 2>&1"';
+    Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    if NicListTraeVPN(CapDespues) then
+      Log := Log + 'Verificacion: NicList trae la tarjeta (VPN): ' +
+        'tarjeta creada y presente.' + #13#10
+    else
+      Log := Log + 'Verificacion: NicList sigue SIN traer la tarjeta ' +
+        '(VPN): la creacion fallo; la salida exacta de vpncmd va ' +
+        'debajo para poder reportarla.' + #13#10;
+    Log := Log + #13#10 + '--- Salida de NicCreate ---' + #13#10 +
+      LeerCaptura(CapCreate) + #13#10 +
+      '--- Salida de NicList (despues) ---' + #13#10 +
+      LeerCaptura(CapDespues);
+  end;
+  SaveStringToFile(ExpandConstant('{app}\softether-nic-instalacion.txt'),
+    Log, False);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -224,6 +352,7 @@ begin
   begin
     SHChangeNotify($08000000, $0000, 0, 0); { SHCNE_ASSOCCHANGED }
     RegistrarServicioSoftEther();
+    CrearTarjetaVirtualSoftEther();
     AplicarExclusionDefender();
     EscribirManifiestoComponentes();
   end;

@@ -147,6 +147,23 @@ def lista_paises() -> ResultadoModulo:
         ok=True, datos=paises_disponibles(_servidores_de(completo.datos)))
 
 
+def _registrar_intento_vpn(detalle: str) -> None:
+    """Anota el intento de conexión VPN en actividad.jsonl (v1.0.8).
+
+    Hasta la 1.0.7 la línea real de error de vpncmd viajaba en el
+    detalle del resultado y se PERDÍA: nadie la escribía en el
+    registro. Desde la 1.0.8 cada intento (conectado o fallido) deja
+    su mensaje y su detalle técnico en el registro de actividad.
+    """
+    try:
+        from antivirus_hogar_pc.core.actividad import RegistroActividad
+
+        RegistroActividad(config.ruta_actividad()).registrar(
+            "red", detalle)
+    except Exception:
+        pass  # el registro nunca debe romper la conexión que anota
+
+
 def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:
     """Conecta con el servidor elegido de VPN Gate.
 
@@ -167,6 +184,9 @@ def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:
         datos_se = res.datos if res.ok and isinstance(res.datos, dict) else {}
         if datos_se.get("ok"):
             _guardar_estado_vpn(servidor, via="softether")
+            _registrar_intento_vpn(
+                f"VPN Gate: conectado a {servidor.hostname} "
+                f"({servidor.pais}) con SoftEther.")
             return ResultadoModulo(
                 ok=True,
                 mensaje=(f"Conectado a {servidor.hostname} "
@@ -176,11 +196,18 @@ def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:
                 datos={"via": "softether", "conectado": True,
                        "hostname": servidor.hostname},
             )
+        mensaje_fallo = (datos_se.get("mensaje") or
+                         "No se pudo conectar con SoftEther.")
+        detalle_fallo = datos_se.get("detalle") or res.mensaje or ""
+        _registrar_intento_vpn(
+            f"VPN Gate: no se pudo conectar a {servidor.hostname} "
+            f"({servidor.pais}): {mensaje_fallo}"
+            + (f" Detalle técnico: {detalle_fallo}"
+               if detalle_fallo else ""))
         return ResultadoModulo(
             ok=False,
-            mensaje=(datos_se.get("mensaje") or
-                     "No se pudo conectar con SoftEther."),
-            detalle_tecnico=datos_se.get("detalle") or res.mensaje or "",
+            mensaje=mensaje_fallo,
+            detalle_tecnico=detalle_fallo,
         )
     res_clientes = seguro(vpn_win.clientes_vpn_instalados)
     clientes = res_clientes.datos if res_clientes.ok else []

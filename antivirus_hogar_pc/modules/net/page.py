@@ -4,9 +4,17 @@ Todo el trabajo lento (red, winget, Windows Update) corre en un hilo
 (_Trabajo) y llega a la UI como contracts.ResultadoModulo: la página solo
 pinta el mensaje y los datos, nunca recibe excepciones.
 """
+import math
 import time
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import (
+    QColor,
+    QPainter,
+    QPainterPath,
+    QPolygonF,
+    QRadialGradient,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -415,6 +423,159 @@ def crear_pagina_actualizaciones(ctx: ContextoModulo):
 # =====================================================================================
 # Red y VPN
 # =====================================================================================
+class GloboEsquina(QWidget):
+    """Esfera de la Tierra girando en la esquina de la tabla de VPN Gate.
+
+    Pedido del usuario (2026-11-25, con foto): la celda de esquina de
+    la tabla de servidores (arriba a la izquierda, sobre la columna
+    de números) se veía como un cuadro blanco vacío. Este widget se
+    coloca ENCIMA de esa esquina y dibuja el planeta por código
+    (QPainter, sin imágenes): océano con degradado radial y luz
+    arriba a la izquierda, continentes simplificados en verde y
+    borde cian del tema vidrio, sobre el mismo fondo oscuro de la
+    cabecera de la tabla.
+
+    Gira a UNA VUELTA POR SEGUNDO (fijado por el usuario tras ver las
+    muestras de 6 s y de 3 s por vuelta), colgando del RELOJ
+    compartido de 50 ms de la app y de la puerta global de
+    animaciones (interruptor `fondo_animado` de Ajustes): apagadas
+    las animaciones, el globo se queda quieto. Los clics lo atraviesan
+    (la esquina sigue siendo el botón de la tabla).
+    """
+
+    # Siluetas MUY simplificadas (longitud, latitud): a ~44x28 px
+    # solo tienen que sugerir los continentes.
+    _CONTINENTES = (
+        # América del Norte
+        ((-165, 68), (-140, 70), (-125, 71), (-110, 68), (-95, 79),
+         (-85, 69), (-76, 62), (-65, 60), (-55, 52), (-64, 44),
+         (-70, 42), (-74, 39), (-76, 35), (-80, 32), (-81, 26),
+         (-84, 30), (-90, 29), (-97, 26), (-97, 22), (-94, 18),
+         (-90, 21), (-86, 13), (-79, 9), (-85, 11), (-92, 15),
+         (-104, 19), (-110, 24), (-114, 29), (-118, 33), (-122, 37),
+         (-124, 46), (-130, 54), (-147, 60), (-162, 58)),
+        # América del Sur
+        ((-77, 7), (-71, 12), (-64, 10), (-55, 6), (-50, 0),
+         (-44, -3), (-35, -8), (-39, -13), (-40, -20), (-46, -24),
+         (-52, -32), (-57, -38), (-62, -41), (-65, -45), (-68, -54),
+         (-71, -54), (-73, -50), (-74, -44), (-73, -37), (-72, -30),
+         (-70, -18), (-75, -15), (-79, -7), (-80, -4), (-78, 0),
+         (-80, 3)),
+        # África
+        ((-6, 35), (3, 37), (10, 37), (20, 32), (30, 31), (33, 27),
+         (37, 22), (43, 12), (48, 11), (51, 12), (44, 5), (41, -2),
+         (40, -11), (37, -18), (35, -23), (32, -29), (26, -34),
+         (19, -35), (17, -32), (14, -23), (13, -18), (12, -15),
+         (9, -1), (9, 4), (-8, 5), (-13, 8), (-17, 15), (-17, 21),
+         (-16, 27), (-9, 31)),
+        # Eurasia
+        ((-10, 36), (-9, 43), (-2, 44), (-5, 48), (-1, 50), (5, 53),
+         (8, 57), (5, 60), (11, 59), (18, 56), (24, 56), (28, 60),
+         (30, 62), (40, 64), (55, 68), (80, 73), (110, 74),
+         (140, 72), (170, 66), (178, 65), (162, 60), (157, 52),
+         (142, 50), (140, 45), (135, 35), (126, 38), (122, 38),
+         (121, 31), (115, 23), (109, 19), (109, 13), (103, 7),
+         (98, 10), (93, 17), (88, 22), (80, 15), (77, 8), (72, 19),
+         (66, 25), (57, 26), (52, 29), (48, 29), (44, 29), (43, 33),
+         (36, 36), (30, 36), (27, 37), (23, 36), (19, 40), (15, 38),
+         (12, 44), (7, 44), (3, 43), (0, 39), (-2, 37)),
+        # Australia
+        ((113, -22), (114, -28), (115, -34), (124, -33), (132, -32),
+         (135, -35), (140, -38), (145, -38), (150, -37), (153, -31),
+         (151, -24), (146, -19), (142, -11), (140, -18), (136, -15),
+         (132, -11), (126, -14), (118, -20)),
+    )
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._angulo = 20.0  # posición estática bonita si no hay animación
+        self._suscrito = False
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                          True)
+
+    def showEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        super().showEvent(evento)
+        self._sincronizar_suscripcion()
+
+    def hideEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        self._desuscribir()
+        super().hideEvent(evento)
+
+    def _sincronizar_suscripcion(self) -> None:
+        from antivirus_hogar_pc.ui.animacion import RELOJ, animaciones_activas
+
+        if animaciones_activas() and not self._suscrito:
+            RELOJ.tic.connect(self._al_tic)
+            RELOJ.suscribir()
+            self._suscrito = True
+
+    def _desuscribir(self) -> None:
+        if self._suscrito:
+            from antivirus_hogar_pc.ui.animacion import RELOJ
+
+            RELOJ.tic.disconnect(self._al_tic)
+            RELOJ.desuscribir()
+            self._suscrito = False
+
+    def _al_tic(self, t: float) -> None:
+        # Una vuelta por segundo: el reloj emite el tiempo acumulado.
+        self._angulo = (t * 360.0) % 360.0
+        self.update()
+
+    def paintEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Fondo: el vidrio oscuro de la cabecera de la tabla (nada blanco).
+        pintor.fillRect(self.rect(), QColor(16, 24, 39))
+        ancho, alto = self.width(), self.height()
+        if ancho < 8 or alto < 8:
+            return
+        radio = min(ancho, alto) / 2.0 - 1.5
+        cx, cy = ancho / 2.0, alto / 2.0
+        circulo = QRectF(cx - radio, cy - radio, radio * 2, radio * 2)
+        # Océano: degradado radial con la luz arriba a la izquierda.
+        oceano = QRadialGradient(cx - radio * 0.4, cy - radio * 0.4,
+                                 radio * 1.7)
+        oceano.setColorAt(0.0, QColor(125, 211, 252))
+        oceano.setColorAt(0.55, QColor(37, 99, 235))
+        oceano.setColorAt(1.0, QColor(23, 37, 84))
+        pintor.setPen(Qt.PenStyle.NoPen)
+        pintor.setBrush(oceano)
+        pintor.drawEllipse(circulo)
+        # Continentes: proyección ortográfica con el giro actual; al
+        # acercarse al borde del disco se comprimen (rotación real).
+        pintor.save()
+        recorte = QPainterPath()
+        recorte.addEllipse(circulo)
+        pintor.setClipPath(recorte)
+        tierra = QColor(52, 211, 153, 235)
+        pintor.setBrush(tierra)
+        for continente in self._CONTINENTES:
+            puntos = QPolygonF()
+            for lon, lat in continente:
+                delta = math.radians(lon - self._angulo)
+                coseno = math.cos(delta)
+                if coseno <= 0.02:
+                    continue  # cara oculta del planeta
+                x = cx + radio * math.cos(math.radians(lat)) \
+                    * math.sin(delta)
+                y = cy - radio * math.sin(math.radians(lat))
+                puntos.append(QPointF(x, y))
+            if puntos.size() >= 3:
+                pintor.drawPolygon(puntos)
+        pintor.restore()
+        # Brillo especular suave y borde cian eléctrico del tema.
+        brillo = QRadialGradient(cx - radio * 0.45, cy - radio * 0.45,
+                                 radio * 0.9)
+        brillo.setColorAt(0.0, QColor(255, 255, 255, 70))
+        brillo.setColorAt(1.0, QColor(255, 255, 255, 0))
+        pintor.setBrush(brillo)
+        pintor.drawEllipse(circulo)
+        pintor.setBrush(Qt.BrushStyle.NoBrush)
+        pintor.setPen(QColor(34, 211, 238, 200))
+        pintor.drawEllipse(circulo)
+
+
 class _PaginaRed(QWidget):
     def __init__(self, ctx: ContextoModulo):
         super().__init__()
@@ -563,6 +724,15 @@ class _PaginaRed(QWidget):
         self._tabla_vpn.setHorizontalHeaderLabels(
             ["País", "Servidor", "Velocidad", "Ping", "Sesiones", "Acción"])
         lay_v.addWidget(self._tabla_vpn)
+        # Globo terráqueo girando sobre la celda de esquina de la
+        # tabla (v1.0.8, pedido del usuario): tapa el cuadro blanco
+        # de la esquina sin tocar columnas ni datos.
+        self._globo_vpn = GloboEsquina(self._tabla_vpn)
+        self._situar_globo_vpn()
+        self._tabla_vpn.horizontalHeader().sectionResized.connect(
+            lambda *_: self._situar_globo_vpn())
+        self._tabla_vpn.verticalHeader().sectionResized.connect(
+            lambda *_: self._situar_globo_vpn())
         lay_v.addWidget(etiqueta(
             "Con SoftEther (incluido con la app) la conexión se hace desde "
             "aquí: pulsa «Conectar» en un servidor y el túnel sube en "
@@ -589,6 +759,16 @@ class _PaginaRed(QWidget):
 
     def widget(self) -> QWidget:
         return self._scroll
+
+    def _situar_globo_vpn(self) -> None:
+        """Coloca el globo sobre la esquina de la tabla de VPN Gate:
+        ancho = el de la cabecera vertical (la columna de números) y
+        alto = el de la cabecera horizontal."""
+        tabla = self._tabla_vpn
+        ancho = tabla.verticalHeader().width()
+        alto = tabla.horizontalHeader().height()
+        self._globo_vpn.setGeometry(0, 0, max(0, ancho), max(0, alto))
+        self._globo_vpn.raise_()
 
     # -- Wi-Fi ----------------------------------------------------------------------
     def _cargar_wifi(self) -> None:

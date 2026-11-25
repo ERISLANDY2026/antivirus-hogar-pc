@@ -29,6 +29,16 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.8",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "VPN Gate reparada de raíz: la tarjeta virtual de red de SoftEther ahora se crea DURANTE la instalación (con permisos de administrador y a la vista, que es como Windows lo exige), no al darle a «Conectar» sin permisos y en oculto, que era por lo que fallaba con todos los servidores. El instalador deja el resultado en «softether-nic-instalacion.txt», junto a la app, por si hay que revisarlo.",
+            "Si la tarjeta faltara al conectar, la app la crea pidiendo permiso de administrador y a la vista, solo para ese paso.",
+            "Cada intento de conexión de VPN Gate queda anotado en el registro de actividad con su mensaje y el detalle técnico real de SoftEther (antes ese detalle se perdía).",
+            "Globo terráqueo girando en la esquina de la tabla de servidores de VPN Gate (una vuelta por segundo), gobernado por el mismo interruptor de animaciones de Ajustes que el resto de la app.",
+        ],
+    },
+    {
         "version": "1.0.7",
         "fecha": "24/11/2026",
         "novedades": [
