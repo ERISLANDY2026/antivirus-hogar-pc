@@ -279,8 +279,8 @@ begin
   Exec(ExpandConstant('{cmd}'), Orden, '', SW_SHOW,
     ewWaitUntilTerminated, ResultCode);
   AgregarLogNic('--- pnputil /add-driver "' + Inf + '" /install ' +
-    '(codigo del proceso: ' + IntToStr(ResultCode) + ') ---' +
-    #13#10 + LeerCaptura(CapAdd) + #13#10);
+    '(codigo del proceso: ' + IntToStr(ResultCode) + ') ---' + #13#10 +
+    LeerCaptura(CapAdd) + #13#10);
   Orden := '/C ""' + Pnp + '" /enum-drivers > "' + CapEnum + '" 2>&1"';
   Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
     ewWaitUntilTerminated, ResultCode);

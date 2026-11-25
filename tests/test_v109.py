@@ -54,6 +54,13 @@ def test_instalador_109_almacena_el_controlador_antes_de_crear():
     # El registro es ACUMULADO (las dos secciones en un solo archivo).
     assert "AgregarLogNic" in iss
     assert "softether-nic-instalacion.txt" in iss
+    # Guarda ISPP: ninguna línea puede EMPEZAR por «#» (salvo las
+    # directivas legítimas, que van en columna 0): una continuación
+    # «#13#10 + …» al inicio de línea rompió ISCC en la corrida
+    # 45613046882 («Unknown preprocessor directive», línea 283).
+    for linea in iss.splitlines():
+        assert not linea.startswith((" ", "\t")) or \
+            not linea.lstrip().startswith("#"), linea
 
 
 def test_workflow_109_extrae_y_verifica_el_controlador():
