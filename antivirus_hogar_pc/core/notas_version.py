@@ -29,6 +29,17 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.11",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "VPN Gate REPARADA: en la 1.0.10 conectar fallaba con TODOS los servidores. La causa, probada en la PC real y en el código fuente de OpenVPN: la ruta del archivo de credenciales que la app escribe dentro del perfil de conexión iba con las barras normales de Windows, y OpenVPN las rechaza como error grave («Bad backslash») y se cierra antes de intentar conectar — con cualquier servidor. Ahora la ruta va escrita como manda la documentación oficial de OpenVPN y el perfil pasa entero.",
+            "Estado VPN honesto: la app solo dice «CONECTADA» cuando el túnel está confirmado de verdad por OpenVPN. Antes podía decir «conectada» sin haber conectado nunca, porque contaba como túnel los programas residentes de OpenVPN (su ventana y su servicio).",
+            "Si una conexión falla, la causa REAL se ve en la propia pantalla de «Red y VPN», bajo el mensaje (detalle técnico), y queda guardada en el registro de actividad con las últimas líneas del registro de OpenVPN. El aviso de «servidor apagado o saturado» ahora solo sale cuando el fallo es de verdad del servidor o de la red.",
+            "El registro de cada intento de conexión ya no se borra al intentar de nuevo: se guarda con fecha y hora (los últimos 5), para poder revisar qué pasó en cada intento.",
+            "Si OpenVPN no confirma la conexión a tiempo, la app cierra ese intento del todo: ya no queda ningún túnel «fantasma» reintentando en segundo plano después de un fallo.",
+        ],
+    },
+    {
         "version": "1.0.10",
         "fecha": "25/11/2026",
         "novedades": [

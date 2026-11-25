@@ -133,6 +133,63 @@ jobs:
           python ovpn-probar-verificacion.py
           if ($LASTEXITCODE -ne 0) { throw "La verificacion del auto-actualizador de OpenVPN fallo contra el instalador oficial" }
 
+      # v1.0.11: LA PUERTA QUE FALTÓ EN LA 1.0.10. El fallo real
+      # en la PC del usuario fue de PARSEO: la ruta de credenciales
+      # con barras simples dentro del .ovpn («Bad backslash») mata
+      # a openvpn.exe antes de abrir su registro, y la suite no lo
+      # vio porque su test EXIGÍA las barras simples. Aquí el
+      # openvpn.exe REAL (extraído del MSI oficial por instalación
+      # administrativa, sin tocar el sistema) parsea el perfil que
+      # genera LA PROPIA APP desde su lista semilla, con la ruta de
+      # credenciales en una carpeta CON ESPACIO («NEW USER», como
+      # la del usuario). Si la salida trae «Bad backslash»,
+      # «Options error» o «Use --help», la compilación FALLA. Lo
+      # que NO prueba esta puerta: el túnel (no hay TAP instalada
+      # ni se instala nada): basta con que el proceso SUPERE el
+      # parseo y llegue a la fase de red/dispositivo.
+      - name: Verificar el parseo del perfil con el OpenVPN real (v1.0.11)
+        shell: pwsh
+        run: |
+          $destino = Join-Path $env:RUNNER_TEMP "ovpn-admin"
+          Start-Process msiexec -ArgumentList "/a","packaging\openvpn\OpenVPN-2.7.9-I002-amd64.msi","/qn","TARGETDIR=$destino" -Wait -NoNewWindow
+          $exe = Get-ChildItem -Recurse -Filter "openvpn.exe" $destino | Select-Object -First 1
+          if (-not $exe) { throw "La instalacion administrativa del MSI no dejo openvpn.exe" }
+          Write-Host "openvpn.exe real: $($exe.FullName)"
+          @'
+          import os, sys
+          sys.path.insert(0, ".")
+          from antivirus_hogar_pc import config
+          from antivirus_hogar_pc.core import vpngate
+          from antivirus_hogar_pc.winapi.vpn_win import preparar_perfil_vpngate
+          servidores, _f = vpngate.leer_semilla_vpngate(config.carpeta_activos())
+          assert servidores, "sin semilla no hay perfil que verificar"
+          base = os.path.join(os.environ["RUNNER_TEMP"], "NEW USER", "vpn")
+          os.makedirs(base, exist_ok=True)
+          cred = os.path.join(base, "vpngate-credenciales.txt")
+          with open(cred, "w", encoding="utf-8", newline="\n") as f:
+              f.write("vpn\nvpn\n")
+          perfil = preparar_perfil_vpngate(servidores[0].generar_ovpn(), cred)
+          ruta = os.path.join(base, "vpngate-activo.ovpn")
+          with open(ruta, "w", encoding="utf-8", newline="\n") as f:
+              f.write(perfil)
+          print("Perfil generado:", ruta)
+          print("auth-user-pass:", [l for l in perfil.splitlines()
+                                    if "auth-user-pass" in l])
+          '@ | Set-Content -Path "ovpn-generar-perfil.py" -Encoding ascii
+          python ovpn-generar-perfil.py
+          if ($LASTEXITCODE -ne 0) { throw "No se pudo generar el perfil de prueba" }
+          $perfil = Join-Path $env:RUNNER_TEMP "NEW USER\vpn\vpngate-activo.ovpn"
+          $salida = Join-Path $env:RUNNER_TEMP "ovpn-parseo.txt"
+          $proc = Start-Process -FilePath $exe.FullName -ArgumentList "--config","`"$perfil`"" -RedirectStandardOutput $salida -RedirectStandardError "$salida.err" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 20
+          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          $texto = (Get-Content $salida -Raw -ErrorAction SilentlyContinue) + (Get-Content "$salida.err" -Raw -ErrorAction SilentlyContinue)
+          Write-Host "Salida del OpenVPN real (primeras lineas):"
+          ($texto -split "`n" | Select-Object -First 12) | ForEach-Object { Write-Host "  $_" }
+          if ($texto -match "Bad backslash|Options error|Use --help") { throw "El perfil generado NO pasa el parseo del OpenVPN real (el fallo de la 1.0.10)" }
+          if ($texto -notmatch "TCP|UDP|TLS|TUN|TAP|link local|Attempting|RESOLVE|Connect") { throw "La salida no muestra que el proceso superara el parseo (sin fase de red/dispositivo)" }
+          Write-Host "Parseo del perfil OK con el OpenVPN real: el fallo de la 1.0.10 no vuelve."
+
       - name: Crear el instalador con Inno Setup
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\instalador.iss'
 

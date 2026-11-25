@@ -200,11 +200,19 @@ def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:
         mensaje_fallo = (datos_ov.get("mensaje") or
                          "No se pudo conectar con OpenVPN.")
         detalle_fallo = datos_ov.get("detalle") or res.mensaje or ""
+        # v1.0.11: las últimas líneas COMPLETAS del registro de
+        # OpenVPN (o de su salida de arranque si murió antes de
+        # abrirlo) quedan volcadas en el registro de actividad,
+        # no solo la línea elegida como detalle.
+        datos_motor = datos_ov.get("datos") or {}
+        ultimas = str(datos_motor.get("ultimas_lineas") or "")
         _registrar_intento_vpn(
             f"VPN Gate: no se pudo conectar a {servidor.hostname} "
             f"({servidor.pais}): {mensaje_fallo}"
             + (f" Detalle técnico: {detalle_fallo}"
-               if detalle_fallo else ""))
+               if detalle_fallo else "")
+            + (f" Últimas líneas del registro de OpenVPN:\n{ultimas}"
+               if ultimas and ultimas not in detalle_fallo else ""))
         return ResultadoModulo(
             ok=False,
             mensaje=mensaje_fallo,
@@ -347,9 +355,13 @@ def estado_vpn() -> ResultadoModulo:
     """Estado de la VPN: clientes, IP pública y si hay túnel vivo.
 
     datos = {"clientes": [nombres], "ip": str, "conectada": bool,
-             "servidor": str, "pais": str}. «conectada» es REAL: hay un
-    proceso openvpn en marcha (el túnel lo crea el cliente, no la app);
-    el servidor/país salen del último perfil que la app entregó.
+             "servidor": str, "pais": str}. «conectada» es REAL
+    (v1.0.11): SOLO si la interfaz de gestión del motor OpenVPN
+    confirma el túnel (CONNECTED,SUCCESS). La 1.0.10 también la
+    daba por buena si había «un proceso openvpn» — y contaba la
+    GUI y el servicio residente: de ahí el falso «CONECTADA a un
+    servidor» de la foto del usuario sin haber conectado nunca.
+    El servidor/país salen del último estado guardado.
     """
     res_clientes = seguro(vpn_win.clientes_vpn_instalados)
     clientes_raw = res_clientes.datos if res_clientes.ok else []
@@ -362,16 +374,15 @@ def estado_vpn() -> ResultadoModulo:
     res_ip = seguro(vpn_win.ip_publica_actual)
     ip = str(res_ip.datos) if res_ip.ok and res_ip.datos else ""
     guardado = _leer_estado_vpn()
-    conectada = bool(seguro(vpn_win.hay_tunel_openvpn).datos)
-    # v1.0.10: el túnel del motor OpenVPN (incorporado) también es
-    # conexión viva, y su estado lo confirma su interfaz de gestión,
-    # no solo que haya un proceso openvpn en marcha.
+    # v1.0.11: «conectada» SOLO con la confirmación real del motor
+    # (CONNECTED,SUCCESS por su interfaz de gestión). Nada de
+    # procesos: ni la GUI ni el servicio residente son un túnel.
     res_estado_ov = seguro(vpn_win.estado_openvpn)
     estado_ov = (res_estado_ov.datos
                  if res_estado_ov.ok and isinstance(res_estado_ov.datos, dict)
                  else {})
     conectada_ov = bool(estado_ov.get("conectado"))
-    conectada = conectada or conectada_ov
+    conectada = conectada_ov
     if conectada:
         via = " con OpenVPN" if conectada_ov else ""
         mensaje = (f"VPN CONECTADA a {guardado.get('hostname') or 'un servidor'}"

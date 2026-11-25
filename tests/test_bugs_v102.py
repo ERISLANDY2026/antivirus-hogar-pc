@@ -194,6 +194,13 @@ def test_estado_vpn_conectada_y_desconexion(monkeypatch, tmp_path):
     monkeypatch.setattr(srv.vpn_win, "clientes_vpn_instalados", lambda: [])
     monkeypatch.setattr(srv.vpn_win, "ip_publica_actual", lambda timeout=15: "1.2.3.4")
     monkeypatch.setattr(srv.vpn_win, "hay_tunel_openvpn", lambda: True)
+    # v1.0.11: «conectada» SOLO la confirma la interfaz de gestión
+    # del motor (CONNECTED,SUCCESS); un proceso openvpn vivo ya no
+    # basta (era el falso «CONECTADA» de la 1.0.10).
+    monkeypatch.setattr(
+        srv.vpn_win, "estado_openvpn",
+        lambda: {"instalado": True, "conectado": True,
+                 "hostname": "vpn123456789.opengw.net"})
     cerrados = {"n": 0}
 
     def _terminar():
@@ -213,6 +220,9 @@ def test_estado_vpn_conectada_y_desconexion(monkeypatch, tmp_path):
     assert srv._leer_estado_vpn() == {}  # el estado quedó limpio
 
     monkeypatch.setattr(srv.vpn_win, "hay_tunel_openvpn", lambda: False)
+    monkeypatch.setattr(
+        srv.vpn_win, "estado_openvpn",
+        lambda: {"instalado": True, "conectado": False, "hostname": ""})
     estado2 = srv.estado_vpn()
     assert estado2.datos["conectada"] is False
 

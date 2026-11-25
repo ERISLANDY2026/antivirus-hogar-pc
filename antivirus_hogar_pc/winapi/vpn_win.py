@@ -19,6 +19,28 @@ servicio interactivo de OpenVPN está presente, openvpn.exe le
 delega las operaciones con privilegios (rutas y tarjeta) sin pedir
 UAC al usuario. El túnel se confirma leyendo el estado real de la
 interfaz de gestión («CONNECTED,SUCCESS»), no suponiéndolo.
+
+v1.0.11 — LA CAUSA DEL FALLO DE LA 1.0.10, confirmada en la
+Toughbook del usuario (INVESTIGACION-VPN-V1010.md, cierre): la
+línea `auth-user-pass` con la ruta de credenciales de Windows
+que la app añadía al perfil iba con barras SIMPLES, y OpenVPN
+2.7.9 las trata dentro de un
+parámetro entrecomillado como escapes: al llegar a esa línea (la
+221 del perfil) imprime «Bad backslash usage» y TERMINA con error
+de uso — antes de abrir su --log-append y antes de cualquier red.
+Resultado en la 1.0.10: muerte instantánea con TODOS los
+servidores, sin registro, sin detalle técnico, y la app caía en
+su mensaje genérico de «servidor apagado o saturado», que era
+falso. Esta versión: (1) la ruta va ESCAPADA con barras dobles,
+la forma de la documentación oficial; (2) «conectada» SOLO lo
+dice la interfaz de gestión (fuera la detección por subcadena de
+procesos, que contaba openvpn-gui/openvpnserv como túnel y dio
+el «CONECTADA» falso de la foto); (3) la salida de arranque de
+openvpn.exe se CAPTURA a un archivo y su código de salida se
+guarda: si muere antes de abrir el registro, esa salida ES la
+causa y viaja en el detalle; (4) el registro rota por intento
+sin borrar el anterior y sus últimas líneas van al detalle y
+al registro de actividad.
 """
 import os
 import re
@@ -113,29 +135,59 @@ def ip_publica_actual(timeout: int = 15) -> str:
         return ""
 
 
-def procesos_openvpn() -> list[dict]:
-    """Procesos del motor OpenVPN en marcha (uno por conexión activa).
+def _filtrar_procesos_openvpn(info_procesos) -> list[dict]:
+    """Filtra una lista de infos de proceso a los openvpn.exe REALES.
 
-    OpenVPN Connect, OpenVPN GUI y el motor de la app lanzan un
-    proceso openvpn por túnel: si hay alguno, hay una conexión
-    OpenVPN viva. Se lee con psutil (multiplataforma); sin psutil o
-    sin permisos, devuelve []."""
+    v1.0.11: SOLO cuenta el ejecutable del túnel, por nombre EXACTO
+    «openvpn.exe». La 1.0.10 contaba cualquier nombre que contuviera
+    la subcadena «openvpn» —incluidos openvpn-gui.exe y
+    openvpnserv.exe, residentes desde la instalación— y de ahí
+    salió el falso «VPN: CONECTADA a un servidor» de la foto del
+    usuario: un proceso con «openvpn» en el nombre NO es un túnel.
+    """
+    encontrados = []
+    for info in info_procesos or []:
+        try:
+            nombre = (info.get("name") or "").lower()
+        except Exception:
+            continue
+        if nombre == "openvpn.exe":
+            encontrados.append({"pid": info.get("pid"), "nombre": nombre})
+    return encontrados
+
+
+def procesos_openvpn() -> list[dict]:
+    """Procesos openvpn.exe en marcha (el ejecutable del túnel).
+
+    OJO (v1.0.11): que haya un openvpn.exe vivo NO prueba que el
+    túnel esté arriba — puede estar conectando o reintentando—;
+    sirve para localizar el proceso del motor (p. ej. al
+    desconectar o para no actualizar OpenVPN con un túnel en
+    curso), nunca como prueba de conexión: eso solo lo dice la
+    interfaz de gestión (CONNECTED,SUCCESS). Se lee con psutil;
+    sin psutil o sin permisos, devuelve []."""
     try:
         import psutil
     except ImportError:
         return []
-    encontrados = []
+    infos = []
     for proc in psutil.process_iter(["pid", "name"]):
         try:
-            nombre = (proc.info.get("name") or "").lower()
+            infos.append(proc.info)
         except Exception:
             continue
-        if "openvpn" in nombre:
-            encontrados.append({"pid": proc.info.get("pid"), "nombre": nombre})
-    return encontrados
+    return _filtrar_procesos_openvpn(infos)
 
 
 def hay_tunel_openvpn() -> bool:
+    """¿Hay un proceso openvpn.exe vivo? (NO «¿hay túnel arriba?»)
+
+    Nombre heredado: lo usan el auto-actualizador de OpenVPN
+    (diferir si un túnel PUEDE estar en curso) y la desconexión
+    como respaldo. Desde la 1.0.11 ya no cuenta la GUI ni los
+    servicios residentes: solo el ejecutable del túnel. El estado
+    «conectada» NO se decide aquí: ver estado_openvpn().
+    """
     return bool(procesos_openvpn())
 
 
@@ -267,7 +319,13 @@ def preparar_perfil_vpngate(contenido: str, ruta_credenciales: str) -> str:
       management, log/log-append) para que no choquen con las suyas.
     - Añade `auth-user-pass` apuntando al archivo de credenciales
       de la app («vpn»/«vpn», lo que aceptan los servidores de
-      VPN Gate).
+      VPN Gate). v1.0.11: la ruta va ESCAPADA con barras DOBLES:
+      dentro de un parámetro entrecomillado del .ovpn, OpenVPN
+      trata la barra simple como escape («Bad backslash usage»)
+      y en 2.7.9 eso es un error FATAL de opciones que mata el
+      proceso antes de abrir su registro — fue LA causa del fallo
+      de la 1.0.10 con todos los servidores. La documentación
+      oficial manda barras dobles para rutas Windows en perfiles.
     - Si el perfil fija un `cipher` y no trae `data-ciphers`,
       añade `data-ciphers-fallback` con ese cifrado: en OpenVPN
       2.5+ el `cipher` antiguo quedó en desuso y sin el respaldo
@@ -292,7 +350,8 @@ def preparar_perfil_vpngate(contenido: str, ruta_credenciales: str) -> str:
         salida.append(linea.rstrip())
     while salida and not salida[-1].strip():
         salida.pop()
-    salida.append(f'auth-user-pass "{ruta_credenciales}"')
+    ruta_en_perfil = (ruta_credenciales or "").replace("\\", "\\\\")
+    salida.append(f'auth-user-pass "{ruta_en_perfil}"')
     if cifrado and not trae_data_ciphers:
         salida.append(f"data-ciphers-fallback {cifrado}")
     return "\n".join(salida) + "\n"
@@ -345,14 +404,53 @@ def _puerto_libre() -> int:
 # Los tests las sustituyen: son la ÚNICA vía del motor a openvpn.exe
 # y a su interfaz de gestión.
 
-def _lanzar_openvpn(argumentos: list[str], carpeta: str):
-    """Lanza openvpn.exe SIN ventana y devuelve el proceso (Popen)."""
+_SALIDA_ARRANQUE_FH = None  # mango del archivo de salida de arranque
+
+
+def _lanzar_openvpn(argumentos: list[str], carpeta: str,
+                    ruta_salida_arranque: str = ""):
+    """Lanza openvpn.exe SIN ventana y devuelve el proceso (Popen).
+
+    v1.0.11: si se pasa `ruta_salida_arranque`, la salida del
+    proceso (stdout+stderr) va a ESE archivo en vez de a la nada.
+    La 1.0.10 lanzaba con DEVNULL: un openvpn que muere al parsear
+    el perfil (antes de abrir su --log-append) no dejaba ni una
+    línea en ningún sitio y su causa se perdía para siempre.
+    """
+    global _SALIDA_ARRANQUE_FH
     if not es_windows():
         raise WindowsNoDisponible("OpenVPN solo se maneja en Windows.")
+    destino_out = subprocess.DEVNULL
+    destino_err = subprocess.DEVNULL
+    if ruta_salida_arranque:
+        _cerrar_salida_arranque()
+        _SALIDA_ARRANQUE_FH = open(ruta_salida_arranque, "w",
+                                   encoding="utf-8", errors="replace")
+        destino_out = _SALIDA_ARRANQUE_FH
+        destino_err = subprocess.STDOUT
     return subprocess.Popen(
         argumentos, cwd=carpeta,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=destino_out, stderr=destino_err,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def _cerrar_salida_arranque() -> None:
+    global _SALIDA_ARRANQUE_FH
+    if _SALIDA_ARRANQUE_FH is not None:
+        try:
+            _SALIDA_ARRANQUE_FH.close()
+        except Exception:
+            pass
+        _SALIDA_ARRANQUE_FH = None
+
+
+def _leer_salida_arranque(ruta: str) -> str:
+    """La salida capturada del arranque de openvpn ("" si no hay)."""
+    try:
+        with open(ruta, "r", encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 
 def _mgmt_enviar(puerto: int, comando: str, timeout: int = 10) -> str:
@@ -419,59 +517,198 @@ def interpretar_estado_mgmt(salida: str) -> dict:
             "estado": estado, "ip_local": ip_local}
 
 
-def _causa_del_registro(ruta_log: str) -> str:
-    """La línea de causa del registro de openvpn (para el detalle).
+# Marcas de causa en las líneas de OpenVPN, por PRIORIDAD: un
+# «AUTH_FAILED» seguido de «Exiting due to fatal error» debe
+# reportar la autenticación, que es lo accionable, no la despedida
+# genérica del proceso. v1.0.11: entran el error de OPCIONES (el
+# «Bad backslash» de la 1.0.10), el dispositivo DCO y el servicio
+# interactivo, que la 1.0.10 no clasificaba y disfrazaba de
+# «servidor apagado o saturado».
+_PRIORIDADES_CAUSA = (
+    "bad backslash", "options error", "auth_failed",
+    "cannot open tun/tap", "tun/tap", "tap-windows", "ovpn-dco",
+    "data channel offload", "interactive service", "iservice",
+    "tls error", "tls handshake", "verify error", "certificate",
+    "private key", "connection reset", "connection refused",
+    "no route to host", "network is unreachable",
+    "cannot resolve", "fatal error", "error")
 
-    Busca por PRIORIDAD de causa, de la más específica a la más
-    genérica (autenticación, tarjeta TAP, TLS, red, error fatal):
-    un «AUTH_FAILED» seguido de «Exiting due to fatal error» debe
-    reportar la autenticación, que es lo accionable, no la
-    despedida genérica del proceso. Si ninguna marca aparece, la
-    última línea con contenido del registro.
-    """
+
+def _elegir_causa(lineas) -> str:
+    """La línea de causa entre unas líneas de OpenVPN (o "")."""
+    limpias = [ln.strip() for ln in (lineas or []) if ln and ln.strip()]
+    for marca in _PRIORIDADES_CAUSA:
+        for linea in limpias:
+            if marca in linea.lower():
+                return linea[-300:]
+    return limpias[-1][-300:] if limpias else ""
+
+
+def _causa_del_registro(ruta_log: str) -> str:
+    """La línea de causa del registro de openvpn (para el detalle)."""
     try:
         with open(ruta_log, "r", encoding="utf-8", errors="replace") as f:
             lineas = [ln.strip() for ln in f if ln.strip()]
     except OSError:
         return ""
-    prioridades = ("auth_failed", "cannot open tun/tap", "tun/tap",
-                   "tls error", "tls handshake", "certificate",
-                   "private key", "connection reset", "no route to host",
-                   "network is unreachable", "fatal error", "error")
-    for marca in prioridades:
-        for linea in lineas:
-            if marca in linea.lower():
-                return linea[-300:]
-    return lineas[-1][-300:] if lineas else ""
+    return _elegir_causa(lineas)
+
+
+def _causa_en_texto(texto: str) -> str:
+    """La línea de causa dentro de un texto (la salida de arranque)."""
+    return _elegir_causa((texto or "").splitlines())
+
+
+def _ultimas_lineas(ruta: str, maximo: int = 12,
+                    tope: int = 1500) -> str:
+    """Las últimas líneas con contenido de un archivo de registro.
+
+    v1.0.11: el detalle de un fallo lleva las últimas líneas
+    COMPLETAS del registro (o de la salida de arranque), no una
+    sola línea elegida: el contexto es lo que permite diagnosticar.
+    """
+    try:
+        with open(ruta, "r", encoding="utf-8", errors="replace") as f:
+            lineas = [ln.rstrip() for ln in f if ln.strip()]
+    except OSError:
+        return ""
+    return "\n".join(lineas[-maximo:])[-tope:]
+
+
+def _rotar_registro_openvpn(ruta_log: str, conservar: int = 5) -> str:
+    """Rota el registro del intento anterior SIN borrarlo (v1.0.11).
+
+    La 1.0.10 borraba openvpn-conexion.log al empezar cada intento:
+    si el intento nuevo moría antes de abrir su registro, la causa
+    del anterior también desaparecía. Ahora el anterior se renombra
+    con fecha/hora (openvpn-conexion-AAAAMMDD-HHMMSS.log) y se
+    conservan los `conservar` más recientes. Devuelve la ruta del
+    rotado ("" si no había registro que rotar).
+    """
+    if not os.path.isfile(ruta_log):
+        return ""
+    carpeta = os.path.dirname(ruta_log)
+    sello = time.strftime("%Y%m%d-%H%M%S",
+                          time.localtime(os.path.getmtime(ruta_log)))
+    destino = os.path.join(carpeta, f"openvpn-conexion-{sello}.log")
+    base, contador = destino, 1
+    while os.path.exists(destino):
+        contador += 1
+        destino = f"{base[:-4]}-{contador}.log"
+    try:
+        os.rename(ruta_log, destino)
+    except OSError:
+        return ""
+    try:
+        rotados = sorted(
+            (os.path.join(carpeta, n) for n in os.listdir(carpeta)
+             if n.startswith("openvpn-conexion-")
+             and n.endswith(".log")),
+            key=lambda r: os.path.getmtime(r))
+        for viejo in rotados[:-conservar] if conservar > 0 else rotados:
+            try:
+                os.remove(viejo)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return destino
+
+
+def _clasificar_fallo_openvpn(causa: str, codigo_salida,
+                              hostname: str) -> tuple[str, str]:
+    """(mensaje en español, detalle) para un openvpn que murió solo.
+
+    v1.0.11: el texto «servidor apagado o saturado» SOLO se usa
+    para causas reales de red/TLS. Cada familia de causa tiene su
+    mensaje honesto, y una causa VACÍA se declara como tal («se
+    cerró sin dejar registro, código de salida N») en vez de
+    inventar que el servidor está apagado.
+    """
+    bajo = (causa or "").lower()
+    if not bajo:
+        return (f"OpenVPN se cerró sin dejar registro (código de "
+                f"salida {codigo_salida}). No es que el servidor "
+                f"{hostname} esté apagado: el programa se cerró en "
+                "este equipo antes de poder anotar su causa; la "
+                "salida de su arranque quedó guardada en el registro "
+                "de actividad de la app.",
+                f"OpenVPN se cerró sin dejar registro; código de "
+                f"salida {codigo_salida}.")
+    # Las opciones van ANTES que la autenticación: una línea de
+    # «Options error» puede mencionar auth-user-pass sin ser un
+    # rechazo del servidor.
+    if "bad backslash" in bajo or "options error" in bajo \
+            or ("option" in bajo and "error" in bajo):
+        return ("OpenVPN rechazó el perfil de conexión de este "
+                "servidor (error de opciones en el perfil): el fallo "
+                "está en el perfil, no en el servidor. La línea real "
+                "está en el detalle y en el registro de actividad.",
+                causa)
+    if "auth" in bajo:
+        return ("El servidor rechazó el inicio de sesión "
+                "(autenticación): VPN Gate acepta usuario y "
+                "contraseña «vpn»; si este servidor pide otra cosa, "
+                "elige otro de la lista.", causa)
+    if "tun/tap" in bajo or "tap" in bajo or "dco" in bajo \
+            or "data channel" in bajo:
+        return ("OpenVPN no pudo abrir su tarjeta virtual "
+                "(TAP-Windows/DCO). Reinstala la app para repararla: "
+                "su instalador vuelve a dejar la tarjeta en su "
+                "sitio.", causa)
+    if "interactive service" in bajo or "iservice" in bajo \
+            or "service" in bajo and "pipe" in bajo:
+        return ("OpenVPN no pudo apoyarse en su servicio (OpenVPN "
+                "Interactive Service): puede estar parado. Reinicia "
+                "el equipo y vuelve a intentarlo; si sigue igual, "
+                "reinstala la app para repararlo.", causa)
+    if "tls" in bajo or "verify error" in bajo or "certificate" in bajo:
+        return (f"El servidor {hostname} cortó la conexión al "
+                "comprobar los certificados (error TLS): suele ser "
+                "un servidor de VPN Gate caído o saturado; elige "
+                "otro de la lista e inténtalo de nuevo.", causa)
+    if any(m in bajo for m in ("connection reset", "connection refused",
+                               "no route to host",
+                               "network is unreachable", "cannot resolve",
+                               "timed out")):
+        return (f"El servidor {hostname} no respondió o cortó la "
+                "conexión. Suele ser un servidor apagado o saturado: "
+                "elige otro de la lista e inténtalo de nuevo.", causa)
+    return ("OpenVPN se cerró antes de conectar. La causa real "
+            "está en el detalle de esta pantalla y en el registro "
+            "de actividad de la app.", causa)
 
 
 def estado_openvpn() -> dict:
-    """{"instalado": bool, "conectado": bool, "hostname": str}.
+    """{"instalado": bool, "conectado": bool, "hostname": str,
+    "conectando": bool}.
 
-    «conectado» es REAL: la interfaz de gestión de la sesión de la
-    app dice CONNECTED,SUCCESS, o (si la app se reabrió y perdió el
-    control de la interfaz) hay un proceso openvpn vivo y una
-    sesión anotada. Seguro en cualquier plataforma: sin OpenVPN o
-    sin sesión devuelve enseguida.
+    v1.0.11: «conectado» SOLO lo dice la interfaz de gestión de la
+    sesión (CONNECTED,SUCCESS). La 1.0.10 caía al respaldo
+    «proceso vivo + sesión anotada» y, como su detección de
+    procesos contaba la GUI y el servicio residente, la pantalla
+    decía «CONECTADA a un servidor» sin haber conectado nunca.
+    Sin confirmación de la interfaz no hay conectado: la sesión
+    en curso se reporta como «conectando» y nada más. Seguro en
+    cualquier plataforma: sin OpenVPN o sin sesión, enseguida.
     """
     estado = {"instalado": openvpn_instalado(), "conectado": False,
-              "hostname": ""}
+              "hostname": "", "conectando": False}
     sesion = _leer_sesion() if estado["instalado"] else {}
     if not sesion:
         return estado
     estado["hostname"] = str(sesion.get("hostname") or "")
+    estado["conectando"] = sesion.get("estado") == "conectando"
     puerto = sesion.get("puerto")
     if puerto:
         try:
             salida = _mgmt_enviar(int(puerto), "state", timeout=5)
             if interpretar_estado_mgmt(salida)["conectado"]:
                 estado["conectado"] = True
+                estado["conectando"] = False
                 return estado
         except Exception:
             pass
-    # Respaldo: proceso vivo + sesión anotada (la app se reabrió).
-    if hay_tunel_openvpn():
-        estado["conectado"] = True
     return estado
 
 
@@ -512,56 +749,56 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
     with open(ruta_perfil, "w", encoding="utf-8", newline="\n") as f:
         f.write(preparar_perfil_vpngate(contenido_ovpn, ruta_cred))
     ruta_log = os.path.join(carpeta, "openvpn-conexion.log")
-    try:
-        os.remove(ruta_log)  # nunca leer la causa de un intento viejo
-    except OSError:
-        pass
+    # v1.0.11: el registro del intento anterior NO se borra: rota
+    # con fecha/hora (se conservan los últimos 5).
+    _rotar_registro_openvpn(ruta_log)
+    # v1.0.11: la salida de arranque se captura a un archivo: si
+    # openvpn muere antes de abrir su registro (p. ej. un error de
+    # opciones al parsear el perfil), ESA salida es la causa.
+    ruta_salida = os.path.join(carpeta, "openvpn-arranque.txt")
     puerto = _puerto_libre()
     argumentos = [ruta_exe, "--config", ruta_perfil,
                   "--management", "127.0.0.1", str(puerto),
                   "--log-append", ruta_log]
     try:
-        _PROCESO = _lanzar_openvpn(argumentos, carpeta)
+        _PROCESO = _lanzar_openvpn(argumentos, carpeta, ruta_salida)
     except Exception as exc:
         return {"ok": False,
                 "mensaje": "No se pudo arrancar el motor de OpenVPN.",
                 "detalle": str(exc), "datos": {}}
+    # La sesión nace «conectando»: solo pasa a «conectada» cuando
+    # la interfaz de gestión confirma el túnel (v1.0.11).
     _guardar_sesion({"hostname": hostname, "puerto": puerto,
                      "pid": getattr(_PROCESO, "pid", None),
-                     "desde": time.time()})
+                     "desde": time.time(), "estado": "conectando"})
     limite = time.time() + max(5, int(espera))
     while time.time() < limite:
         if _PROCESO is not None and _PROCESO.poll() is not None:
-            causa = _causa_del_registro(ruta_log)
+            codigo = getattr(_PROCESO, "returncode", None)
+            _cerrar_salida_arranque()
+            causa = (_causa_del_registro(ruta_log)
+                     or _causa_en_texto(_leer_salida_arranque(ruta_salida)))
+            ultimas = (_ultimas_lineas(ruta_log)
+                       or _ultimas_lineas(ruta_salida))
+            mensaje, detalle = _clasificar_fallo_openvpn(
+                causa, codigo, hostname)
+            if ultimas:
+                detalle = ultimas
             _borrar_sesion()
-            bajo = causa.lower()
-            if "auth" in bajo:
-                return {"ok": False,
-                        "mensaje": ("El servidor rechazó el inicio de "
-                                    "sesión (autenticación): VPN Gate "
-                                    "acepta usuario y contraseña «vpn»; "
-                                    "si este servidor pide otra cosa, "
-                                    "elige otro de la lista."),
-                        "detalle": causa, "datos": {}}
-            if "tun/tap" in bajo or "tap" in bajo:
-                return {"ok": False,
-                        "mensaje": ("OpenVPN no pudo abrir su tarjeta "
-                                    "virtual (TAP-Windows). Reinstala "
-                                    "la app para repararla: su "
-                                    "instalador vuelve a dejar la "
-                                    "tarjeta en su sitio."),
-                        "detalle": causa, "datos": {}}
-            return {"ok": False,
-                    "mensaje": (f"El servidor {hostname} no respondió o "
-                                "cortó la conexión. Suele ser un "
-                                "servidor apagado o saturado: elige "
-                                "otro de la lista e inténtalo de nuevo."),
-                    "detalle": causa, "datos": {}}
+            _PROCESO = None
+            return {"ok": False, "mensaje": mensaje,
+                    "detalle": detalle,
+                    "datos": {"codigo_salida": codigo,
+                              "ultimas_lineas": ultimas}}
         try:
             salida = _mgmt_enviar(puerto, "state", timeout=5)
         except Exception:
             salida = ""
         if salida and interpretar_estado_mgmt(salida)["conectado"]:
+            _guardar_sesion({"hostname": hostname, "puerto": puerto,
+                             "pid": getattr(_PROCESO, "pid", None),
+                             "desde": time.time(),
+                             "estado": "conectada"})
             return {"ok": True,
                     "mensaje": (f"Conectado a {hostname} con OpenVPN: "
                                 "el túnel está arriba y trabaja en "
@@ -570,13 +807,36 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                     "datos": {"hostname": hostname, "via": "openvpn",
                               "puerto_mgmt": puerto}}
         time.sleep(2)
-    causa = _causa_del_registro(ruta_log)
+    # Timeout: v1.0.11 — el proceso NO queda vivo reintentando en
+    # segundo plano (la 1.0.10 lo dejaba: túnel huérfano que podía
+    # conectar después de que la app ya dijo que falló). Se mata,
+    # se borra la sesión y el detalle trae la causa real si la hay.
+    codigo = None
+    if _PROCESO is not None:
+        try:
+            _PROCESO.terminate()
+            try:
+                _PROCESO.wait(timeout=3)
+            except Exception:
+                _PROCESO.kill()
+        except Exception:
+            pass
+        codigo = getattr(_PROCESO, "returncode", None)
+        _PROCESO = None
+    _cerrar_salida_arranque()
+    _borrar_sesion()
+    causa = (_causa_del_registro(ruta_log)
+             or _causa_en_texto(_leer_salida_arranque(ruta_salida)))
+    ultimas = (_ultimas_lineas(ruta_log)
+               or _ultimas_lineas(ruta_salida))
     return {"ok": False,
             "mensaje": ("OpenVPN aceptó la orden de conectar, pero el "
                         "túnel no se confirmó a tiempo. El servidor "
                         "puede estar saturado: elige otro de la lista "
                         "e inténtalo de nuevo."),
-            "detalle": causa, "datos": {}}
+            "detalle": ultimas or causa,
+            "datos": {"codigo_salida": codigo,
+                      "ultimas_lineas": ultimas}}
 
 
 def desconectar_openvpn() -> dict:

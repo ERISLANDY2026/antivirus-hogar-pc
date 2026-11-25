@@ -715,6 +715,13 @@ class _PaginaRed(QWidget):
         self._lbl_vpn = etiqueta("Pulsa «Actualizar lista de servidores» para "
                                  "descargar la lista pública de VPN Gate.")
         lay_v.addWidget(self._lbl_vpn)
+        # v1.0.11: el DETALLE TÉCNICO del intento VPN, visible bajo
+        # el mensaje: la causa real del registro de OpenVPN. En la
+        # 1.0.10 el detalle se calculaba pero no se pintaba en todo
+        # el flujo VPN, y un error fatal del perfil se veía como
+        # «servidor apagado o saturado» sin forma de saber más.
+        self._lbl_vpn_detalle = etiqueta("", suave=True)
+        lay_v.addWidget(self._lbl_vpn_detalle)
         # Barrita TEMPORAL de la actualización (v1.0.5): visible solo
         # mientras se busca la lista; desaparece al terminar.
         self._barra_vpn = BarraProgreso()
@@ -1059,6 +1066,7 @@ class _PaginaRed(QWidget):
     def _conectar(self, servidor) -> None:
         self._lbl_vpn.setStyleSheet("")
         self._lbl_vpn.setText(f"Conectando con {servidor.hostname}…")
+        self._lbl_vpn_detalle.setText("")
 
         def _al_conectar(r: ResultadoModulo) -> None:
             if r.ok and (r.datos or {}).get("conectado"):
@@ -1069,11 +1077,20 @@ class _PaginaRed(QWidget):
                 self._lbl_vpn.setStyleSheet(
                     f"color: {theme.VERDE}; font-weight: 700;")
                 self._lbl_vpn.setText("Conectado: " + r.mensaje)
+                self._lbl_vpn_detalle.setText("")
             else:
                 self._lbl_vpn.setStyleSheet("")
                 self._lbl_vpn.setText(r.mensaje)
-            if r.ok:
-                self._ver_estado_vpn()  # el interruptor refleja el servidor
+                # v1.0.11: la causa REAL, visible bajo el mensaje
+                # (antes el detalle técnico no se pintaba nunca en
+                # el flujo VPN y el fallo quedaba indiagnosticable).
+                self._lbl_vpn_detalle.setText(
+                    f"Detalle técnico: {r.detalle_tecnico}"
+                    if r.detalle_tecnico else "")
+            # v1.0.11: el interruptor se refresca TAMBIÉN tras un
+            # fallo (en la 1.0.10 solo se refrescaba si r.ok y el
+            # rótulo falso de «CONECTADA» se quedaba puesto).
+            self._ver_estado_vpn()
 
         _lanzar(self, lambda: srv.conectar_vpn(servidor), _al_conectar)
 

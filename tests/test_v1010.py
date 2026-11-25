@@ -69,7 +69,7 @@ def test_sin_softether_en_el_paquete_ni_en_el_motor():
 
 def test_openvpn_presente_y_verificado_en_el_paquete():
     iss = _leer(os.path.join("packaging", "instalador.iss"))
-    assert '#define AppVersion "1.0.10"' in iss
+    assert '#define AppVersion "1.0.11"' in iss  # v1.0.11: vigente
     assert "openvpn\\OpenVPN-2.7.9-I002-amd64.msi" in iss
     assert "msiexec" in iss and "/quiet" in iss  # instalación silenciosa
     # La retirada limpia de los restos de SoftEther SÍ está.
@@ -191,7 +191,13 @@ def test_preparar_perfil_vpngate():
     salida = preparar_perfil_vpngate(_PERFIL_VPNGATE, r"C:\datos\cred.txt")
     # Las credenciales de la app, una sola vez y con su ruta.
     assert salida.count("auth-user-pass") == 1
-    assert 'auth-user-pass "C:\\datos\\cred.txt"' in salida
+    # v1.0.11: la ruta va ESCAPADA con barras dobles. La 1.0.10 la
+    # escribía con barras simples y este test lo EXIGÍA: OpenVPN
+    # 2.7.9 lo trata como error fatal de opciones («Bad backslash»)
+    # y muere antes de abrir su registro — fue el fallo real en la
+    # PC del usuario con todos los servidores.
+    assert 'auth-user-pass "C:\\\\datos\\\\cred.txt"' in salida
+    assert 'auth-user-pass "C:\\datos\\cred.txt"' not in salida
     # El cifrado viejo del perfil queda como respaldo de negociación.
     assert "data-ciphers-fallback AES-128-CBC" in salida
     # El resto del perfil no se toca.
@@ -247,7 +253,7 @@ def _motor_falso(monkeypatch, tmp_path, estado=_ESTADO_CONECTADO,
             return estado
         return "SUCCESS: signal SIGTERM thrown"
 
-    def falso_lanzar(argumentos, carpeta_trabajo):
+    def falso_lanzar(argumentos, carpeta_trabajo, ruta_salida=""):
         if log:
             ruta_log = argumentos[argumentos.index("--log-append") + 1]
             with open(ruta_log, "w", encoding="utf-8") as f:
@@ -274,8 +280,11 @@ def test_conectar_openvpn_flujo_completo(monkeypatch, tmp_path):
     assert cred.splitlines() == ["vpn", "vpn"]
     # Estado: la interfaz dice que el túnel está arriba.
     estado = vpn_win.estado_openvpn()
+    # v1.0.11: el estado trae además «conectando» (la sesión en
+    # curso sin confirmar); confirmado el túnel, queda en False.
     assert estado == {"instalado": True, "conectado": True,
-                      "hostname": "vpn123.opengw.net"}
+                      "hostname": "vpn123.opengw.net",
+                      "conectando": False}
     # Desconexión por la interfaz (signal SIGTERM), no a lo bruto.
     desc = vpn_win.desconectar_openvpn()
     assert desc["ok"] is True

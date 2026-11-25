@@ -25,10 +25,12 @@ def test_notas_y_version_107():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core import notas_version
 
-    # v1.0.10: la versión vigente sube (cambio de motor VPN); las
-    # notas de la 1.0.9, la 1.0.8 y la 1.0.7 quedan en el historial.
-    assert config.VERSION == "1.0.10"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.10"
+    # v1.0.11: la versión vigente sube (arreglo del motor VPN);
+    # las notas de la 1.0.10 y anteriores quedan en el historial.
+    assert config.VERSION == "1.0.11"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.11"
+    notas = notas_version.notas_de("1.0.11")
+    assert notas is not None and len(notas["novedades"]) >= 3
     notas = notas_version.notas_de("1.0.10")
     assert notas is not None and len(notas["novedades"]) >= 3
     texto = " ".join(notas["novedades"])
@@ -51,7 +53,7 @@ def test_instalador_lleva_openvpn_incorporado():
     with open(os.path.join(raiz, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
         iss = f.read()
-    assert '#define AppVersion "1.0.10"' in iss
+    assert '#define AppVersion "1.0.11"' in iss  # v1.0.11: vigente
     # El payload de OpenVPN, a {app}\openvpn, y su instalación silenciosa.
     assert "openvpn\\OpenVPN-2.7.9-I002-amd64.msi" in iss
     assert "msiexec" in iss
