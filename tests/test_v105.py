@@ -246,29 +246,32 @@ def test_lanzamiento_elevado_es_oculto(monkeypatch):
 
 
 def test_optimizar_volumen_progreso_y_resultado(monkeypatch):
+    """v1.0.15: la vía es defrag.exe — el guion falso deja su salida
+    con % y el resultado con EXITCODE=0; el veredicto es el cierto
+    («Optimización finalizada») y el progreso sale de defrag."""
     from antivirus_hogar_pc.winapi import disks
 
     monkeypatch.setattr(disks, "es_windows", lambda: True)
     rutas = {}
 
-    def _script(letra, operacion, ruta_progreso, ruta_resultado):
-        rutas["progreso"] = ruta_progreso
+    def _script(letra, es_ssd, ruta_salida, ruta_resultado):
+        rutas["salida"] = ruta_salida
         rutas["resultado"] = ruta_resultado
         return "script"
 
     def _lanzar(script):
         def _trabajo():
             time.sleep(0.15)
-            with open(rutas["progreso"], "w", encoding="utf-8") as f:
-                f.write("Desfragmentando: pasada 1 - 42%")
+            with open(rutas["salida"], "w", encoding="utf-8") as f:
+                f.write("Defragmentation: 42%\n")
             time.sleep(0.15)
             with open(rutas["resultado"], "w", encoding="utf-8") as f:
-                f.write("OK")
+                f.write("PRECHECK=OK\nEXITCODE=0\n")
 
         threading.Thread(target=_trabajo, daemon=True).start()
         return 999
 
-    monkeypatch.setattr(disks, "_script_optimizacion", _script)
+    monkeypatch.setattr(disks, "_script_defrag", _script)
     monkeypatch.setattr(disks, "lanzar_elevado_oculto", _lanzar)
     monkeypatch.setattr(disks, "_proceso_vivo", lambda pid: True)
     eventos = []
@@ -277,6 +280,7 @@ def test_optimizar_volumen_progreso_y_resultado(monkeypatch):
         al_progreso=lambda fase, pct: eventos.append((fase, pct)),
         timeout=30, intervalo=0.05)
     assert res["ok"] is True
+    assert res["mensaje"].startswith("Optimización finalizada")
     assert any(pct == 42 for _f, pct in eventos), eventos
     assert eventos[-1] == ("Completado", 100)
 

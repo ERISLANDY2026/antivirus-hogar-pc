@@ -29,6 +29,15 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.15",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "ICONOS 3D DE VERDAD (tu veredicto sobre la 1.0.14: «no llegaron los iconos como yo los quiero»): los iconos del panel de la izquierda ya no son glifos planos dibujados por código: son gráficos 3D generados a partir de TU foto de referencia, uno por entrada y con sus materiales —casa azul con las ventanas encendidas, lupa de cristal, escudo de metal con el check verde, chip negro con pines dorados, escoba de mango azul y cerdas doradas, disco CD con brillo iridiscente, flechas verde y azul, globo terráqueo con su anillo, portapapeles con gráfica, moneda dorada con la «i», calendario con reloj y engranaje de metal—. Siguen animados igual que antes (brillo que cruza, pulso del activo, giro de Actualizaciones) y el interruptor de animaciones de Ajustes los deja quietos en su versión 3D.",
+            "OPTIMIZAR VOLÚMENES: VEREDICTO CIERTO SIEMPRE (tu orden: «ya no quiero que diga no se completó»): la optimización ya no depende de que un comando silencioso deje constancia en tres sitios distintos. Ahora la hace defrag.exe, la herramienta de Windows, con su informe y su código de resultado capturados por la propia app: si termina bien, dice «Optimización finalizada»; si algo falla, la causa sale del propio informe de Windows o de su código —incluidos dos avisos nuevos con nombre propio: si Windows tuviera el TRIM deshabilitado o el servicio «Optimize drives» apagado, eso es lo que la app te dirá. El desenlace «Windows no dio la causa» ha desaparecido.",
+            "AHORA TAMBIÉN EN INGLÉS (pedido tuyo durante la construcción de la 1.0.14; sale en esta porque una versión con el mismo número no puede ofrecerse como actualización a la que ya tienes): en el panel de la izquierda hay un selector de idioma, Español / English, que cambia TODA la interfaz al momento —pantallas, botones, mensajes de la VPN, menú de la bandeja y avisos— sin reiniciar la app y sin cortar una VPN conectada. Tu elección queda guardada. Las notas de versión y el detalle técnico de OpenVPN siguen saliendo tal cual los produce la herramienta, sin traducir.",
+        ],
+    },
+    {
         "version": "1.0.14",
         "fecha": "25/11/2026",
         "novedades": [
@@ -36,7 +45,6 @@ NOTAS_VERSION: list[dict] = [
             "DOS FUENTES DE SERVIDORES, UNA SOLA LISTA: además de VPN Gate, la app trae ahora los servidores de VPNBook (Estados Unidos, Canadá, Reino Unido, Alemania y Francia), cada uno marcado con su fuente en la tabla. La contraseña de VPNBook cambia cada una o dos semanas y la app la lee de su página oficial en cada actualización de la lista: nunca va escrita dentro del programa.",
             "AUTOANÁLISIS CON PRUEBA REAL: al abrir la app, en segundo plano y sin estorbar, la lista se actualiza sola (cada media hora) y la app comprueba DE VERDAD unos pocos servidores cada vez —conecta con ellos un instante y se desconecta— para saber cuáles funcionan. Cada fila enseña su sello («✓ Verificado» con la hora, «Lleno/sin acceso», «No responde» o «Sin verificar») y el orden nuevo «Recomendado» pone primero los verificados y luego los de pocas sesiones: los más rápidos de la lista solían ser justo los llenos.",
             "LA LISTA NUNCA QUEDA VACÍA NI DESACTUALIZADA EN SILENCIO: la última lista buena queda guardada en el equipo y es la que ves al abrir, con sus sellos, mientras la nueva se busca en segundo plano. Si una actualización de la lista falla, la guardada no se toca.",
-            "AHORA TAMBIÉN EN INGLÉS (pedido tuyo durante la construcción de esta versión): en el panel de la izquierda hay un selector de idioma, Español / English, que cambia TODA la interfaz al momento —pantallas, botones, mensajes de la VPN, menú de la bandeja y avisos— sin reiniciar la app y sin cortar una VPN conectada. Tu elección queda guardada. Las notas de versión y el detalle técnico de OpenVPN siguen saliendo tal cual los produce la herramienta, sin traducir.",
         ],
     },
     {
