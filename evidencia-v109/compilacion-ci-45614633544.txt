@@ -1,0 +1,9 @@
+Corrida CI 45614633544 (SUCCESS) — controlador verificado e instalador final:
+Controlador Neo6_x64_VPN.sys: huella verificada (54E74A7906AF47C2B07F0EA171973D6ABB123549A1C66CF0CC6F24EC5E55A237)
+Controlador Neo6_x64_VPN.cat: huella verificada (162C56608532EF7C699520194FD2231550BAB6D0A32C1BBB6866F22DA8C45AED)
+Controlador Neo6_x64_VPN.inf: huella verificada (8F049A53BAB3F1A16F118C91C15569CCEEF4B2955905C8F7C70F7952F9C175B8)
+Controlador de la tarjeta virtual: origen = arbol oficial de fuentes SoftEtherVPN_Stable v4.44-9807-rtm (src/bin/hamcore/DriverPackages/Neo6_Win10/x64)
+Instalador final: Instalador-AntivirusHogarPC-1.0.9.exe = 63729305 bytes
+   Compressing: D:\a\antivirus-hogar-pc\antivirus-hogar-pc\packaging\softether\client\driver\Neo6_x64_VPN.cat
+   Compressing: D:\a\antivirus-hogar-pc\antivirus-hogar-pc\packaging\softether\client\driver\Neo6_x64_VPN.inf
+   Compressing: D:\a\antivirus-hogar-pc\antivirus-hogar-pc\packaging\softether\client\driver\Neo6_x64_VPN.sys

@@ -1,0 +1,19 @@
+Corrida CI 45613046882 (forense) — enumeración completa de recursos DATAFILE del instalador oficial de SoftEther 4.44-9807:
+DATAFILE del instalador oficial:
+  \.rsrc\0\DATAFILE\INSTALL_SRC.DAT (25)
+  \.rsrc\0\DATAFILE\RAW_HAMCORE.SE2 (23209854)
+  \.rsrc\0\DATAFILE\VPNCLIENT_X64.EXE (2904367)
+  \.rsrc\0\DATAFILE\VPNCLIENT.EXE (2569266)
+  \.rsrc\0\DATAFILE\VPNCMD_X64.EXE (2913088)
+  \.rsrc\0\DATAFILE\VPNCMD.EXE (2577074)
+  \.rsrc\0\DATAFILE\VPNCMGR_X64.EXE (3071765)
+  \.rsrc\0\DATAFILE\VPNCMGR.EXE (2736390)
+  \.rsrc\0\DATAFILE\VPNINSTALL.EXE (2645281)
+  \.rsrc\0\DATAFILE\VPNSETUP_X64.EXE (3647671)
+  \.rsrc\0\DATAFILE\VPNSETUP.EXE (3311579)
+  \.rsrc\0\DATAFILE\VPNWEB.CAB (206497)
+
+7-Zip sobre hamcore.se2:
+ERROR: packaging\softether\client\hamcore.se2 : Cannot open the file as archive
+Cannot open the file as archive
+7-Zip no sacó el controlador completo del hamcore (0/3): se usa el árbol oficial de fuentes de la etiqueta v4.44-9807-rtm.
