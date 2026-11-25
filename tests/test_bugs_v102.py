@@ -145,10 +145,14 @@ def test_pagina_vpn_puebla_combo_tabla_y_botones():
     assert tabla.rowCount() == 2
     assert tabla.item(0, 0).text() == "Japan"
     assert tabla.item(0, 1).text() == "vpn123456789.opengw.net"
-    assert tabla.item(0, 3).text() == "18 ms"
+    # v1.0.14: 8 columnas [País, Servidor, Fuente, Velocidad,
+    # Ping, Sesiones, Verificación, Acción].
+    assert tabla.item(0, 2).text() == "VPN Gate"
+    assert tabla.item(0, 3).text() == "450 Mbps"
+    assert tabla.item(0, 4).text() == "18 ms"
     for fila in range(2):
         # v1.0.9: la celda de acción es un contenedor con los botones.
-        celda = tabla.cellWidget(fila, 5)
+        celda = tabla.cellWidget(fila, 7)
         botones = celda.findChildren(QPushButton)
         assert len(botones) == 1 and botones[0].text() == "Conectar"
     pagina.deleteLater()

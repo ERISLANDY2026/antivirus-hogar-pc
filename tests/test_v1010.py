@@ -134,7 +134,7 @@ def test_boton_conectar_cabe_entero_en_su_fila(monkeypatch):
         app.processEvents()
     tabla = pagina._tabla_vpn
     assert tabla.verticalHeader().defaultSectionSize() == 42
-    celda = tabla.cellWidget(0, 5)
+    celda = tabla.cellWidget(0, 7)
     boton = celda.findChildren(QPushButton)[0]
     assert boton.text() == "Conectar"
     # El botón, con sus márgenes de celda (2 px por lado), cabe
