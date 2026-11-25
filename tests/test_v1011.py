@@ -48,12 +48,12 @@ def test_version_vigente_1011():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core import notas_version
 
-    assert config.VERSION == "1.0.12"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.12"
-    notas = notas_version.notas_de("1.0.12")
+    assert config.VERSION == "1.0.13"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.13"
+    notas = notas_version.notas_de("1.0.13")
     assert notas is not None and len(notas["novedades"]) >= 3
     iss = _leer(os.path.join("packaging", "instalador.iss"))
-    assert '#define AppVersion "1.0.12"' in iss
+    assert '#define AppVersion "1.0.13"' in iss
 
 
 # === 1. LA CAUSA: la ruta escapada ==============================================
@@ -245,10 +245,18 @@ def _motor_muerto(monkeypatch, tmp_path, proceso, salida_arranque="",
 
 def test_muerte_por_opciones_se_ve_desde_la_salida_de_arranque(
         monkeypatch, tmp_path):
-    """LA reproducción del fallo de la 1.0.10: openvpn muere al
-    parsear (sin abrir su registro); la causa sale de la salida
-    CAPTURADA, se clasifica como error de opciones y NO se disfraza
-    de «servidor apagado o saturado»."""
+    """LA reproducción del fallo de la 1.0.10, bajo el contrato
+    de la 1.0.13: openvpn muere al parsear (sin abrir su
+    registro) y la única «causa» disponible estaría en el
+    archivo de salida de arranque — pero desde la 1.0.12 las
+    vías servicio/elevado lanzan con el stdout a NUL y NADIE
+    escribe ese archivo: su contenido es un FÓSIL de otro
+    intento y el detalle tiene prohibido servírselo al usuario
+    (en la prueba real de la 1.0.12 se sirvió el fósil de las
+    11:31 como si fuera el intento en curso). La muerte sin
+    registro propio se declara como lo que es —«se cerró sin
+    dejar registro en este intento»—, sin disfrazarla de
+    «servidor apagado o saturado» y sin filtrar el fósil."""
     salida = (
         "2026-11-25 10:54:06 DEPRECATED OPTION: --persist-key option "
         "ignored.\n"
@@ -261,10 +269,14 @@ def test_muerte_por_opciones_se_ve_desde_la_salida_de_arranque(
     res = vpn_win.conectar_openvpn(_PERFIL_SIMPLE, "vpn123.opengw.net",
                                    espera=5)
     assert res["ok"] is False
-    assert "opciones" in res["mensaje"]
+    assert "sin dejar registro" in res["mensaje"]
     assert "saturado" not in res["mensaje"]
     assert res["datos"]["codigo_salida"] == 1
-    assert "Bad backslash" in res["detalle"]
+    # El fósil NO se filtra: ni su marca en el detalle ni en el
+    # mensaje (el detalle hermético tiene su propio test en la
+    # suite de la 1.0.13).
+    assert "Bad backslash" not in res["detalle"]
+    assert "Bad backslash" not in res["mensaje"]
     # La sesión no queda: nada de «conectada» fantasma tras el fallo.
     assert vpn_win._leer_sesion() == {}
 

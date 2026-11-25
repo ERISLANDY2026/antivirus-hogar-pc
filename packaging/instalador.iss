@@ -2,7 +2,7 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.12.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.13.exe
 ;
 ; v1.0.10: el instalador lleva INCORPORADO el instalador oficial
 ; de OpenVPN Community (MSI en packaging\openvpn\, ver su
@@ -22,7 +22,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.12"
+#define AppVersion "1.0.13"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 
@@ -293,7 +293,7 @@ end;
 
 procedure PrepararMotorOpenVPN();
 begin
-  LogOpenVPN := 'Antivirus Hogar PC v1.0.12 - motor VPN OpenVPN ' +
+  LogOpenVPN := 'Antivirus Hogar PC v1.0.13 - motor VPN OpenVPN ' +
     'durante la instalacion.' + #13#10 + #13#10;
   RetirarRestosSoftEther();
   InstalarOpenVPN();

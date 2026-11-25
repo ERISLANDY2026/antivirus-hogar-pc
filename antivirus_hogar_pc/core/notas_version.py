@@ -29,6 +29,16 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.13",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "VPN Gate REPARADA DE NUEVO, con la causa probada en tu PC: en la 1.0.12 cada intento de conexión se cerraba EN SU PRIMER SEGUNDO — la propia app apagaba el intento. OpenVPN arranca elevado a través de su servicio y la app, que corre normal, a veces no tiene permiso ni para mirar ese proceso; la comprobación de vida lo daba por muerto sin poder mirarlo y la app lo apagaba ella misma. Ahora la vida del proceso tiene tres estados —vivo, muerto o «no comprobable»— y lo no comprobable NUNCA cuenta como muerte: la muerte exige dos pruebas positivas, una de ellas preguntando por la propia interfaz de gestión de OpenVPN.",
+            "Diagnóstico honesto de la VPN, segunda parte: si la app detiene un intento (por ejemplo, al agotar el tiempo de espera), la pantalla lo dice tal cual —«la app detuvo el intento»— en vez de culpar al servidor. El aviso de error de certificados (TLS) ya no puede salir de una advertencia rutinaria de arranque: exige un error TLS de verdad. Y el código de salida de OpenVPN solo se enseña si se leyó del proceso real; si no se conoce, se dice «no disponible» — nunca más un 0 inventado.",
+            "El detalle técnico de un intento ya sale SOLO del registro de ese intento, con su hora: en la 1.0.12 la pantalla llegó a enseñar el registro de un intento anterior (el de las 11:31) como si fuera el de ahora, porque caía a un archivo que la versión ya no escribe. Si un intento aún no tiene registro, el detalle dice «sin registro todavía» y nada más.",
+            "Cada intento de conexión queda anotado en el registro de actividad con la vía usada (servicio interactivo o elevado) y su primer sondeo, para poder diagnosticar sin fotos si algo vuelve a fallar.",
+        ],
+    },
+    {
         "version": "1.0.12",
         "fecha": "25/11/2026",
         "novedades": [

@@ -932,3 +932,244 @@ en sitio a 1.0.12 y puerta final anónima superada. Pendiente
 honesto de siempre: la delegación real del servicio, el posible
 re-login único y el túnel con rutas solo se prueban en su
 Toughbook al instalar desde el botón de su 1.0.11.
+
+---
+
+# PRUEBA v1.0.12 — 2026-11-25: la propia app mata el intento en su primer segundo (SIGTERM por gestión)
+
+La prueba de la 1.0.12 en la Toughbook REFUTÓ la conexión con un
+patrón nuevo, probado con TRES registros reales de
+`openvpn-conexion.log` fotografiados por el usuario. La causa está
+en el código de la propia app, no en los servidores ni en la red.
+
+## 1. La evidencia (tres registros reales, carpeta `vpn`)
+
+- **12:44:45** (UDP, 27.130.33.137:1974): arranque, gestión
+  escuchando en 127.0.0.1:64124, «TLS: Initial packet from
+  [AF_INET]27.130.33.137:1974» — y EN EL MISMO SEGUNDO:
+  «MANAGEMENT: Client connected from [AF_INET]127.0.0.1:64125» →
+  «MANAGEMENT: CMD 'signal SIGTERM'» → «SIGTERM[hard,] received,
+  process exiting».
+- **12:47:47** (TCP, 110.163.142.88:5555): «TCP connection
+  established» y en el mismo segundo gestión conectada (64180) →
+  «CMD 'signal SIGTERM'» → salida.
+- **12:50:29** (TCP, 113.23.60.86:995): idéntico — TCP
+  established, gestión conectada (64201→64202), SIGTERM
+  inmediato, salida.
+
+En cada registro hay UNA SOLA conexión de gestión y su único
+comando es el SIGTERM: la app ni siquiera llegó a enviar un
+`state` en esos intentos. Los registros rotados de estos intentos
+pesan 1–2 KB (muerte al nacer), frente a los 14 KB del intento de
+las 12:17:56. El usuario confirmó que no tocó «Desconectar» ni
+cerró la app. El titular de la app clasificó los tres como
+«cortó la conexión al comprobar los certificados (error TLS):
+servidor caído o saturado» — falso en los tres.
+
+## 2. Quién envía el SIGTERM (auditoría completa, sospechosos en orden)
+
+En TODO el código solo hay dos literales `signal SIGTERM`:
+`winapi/vpn_win.py:1377` (en `_cerrar_proceso`, vpn_win.py:1364)
+y `winapi/vpn_win.py:1731` (en `desconectar_openvpn`).
+
+- **(d) Un segundo cliente de gestión vigilante: NO EXISTE.** El
+  único otro comando que la app envía a la interfaz es `state`
+  (`estado_openvpn`). Nadie envía SIGTERM «de sondeo».
+- **(b) El barrido de huérfanos: EXONERADO por mecanismo.**
+  `_barrido_huerfanos` (vpn_win.py:1464) corre ANTES del
+  lanzamiento y mata por PID con `psutil.terminate()` =
+  TerminateProcess: esa muerte no deja línea de gestión ni
+  salida limpia («SIGTERM[hard,] received, process exiting» es
+  la despedida ordenada de un SIGTERM por gestión). La firma del
+  registro no es la del barrido.
+- **(c) La guarda de un solo intento: EXONERADA.**
+  `_cerrar_intento_previo` (vpn_win.py:1413) también corre antes
+  del lanzamiento y apunta al puerto de la sesión ANTERIOR; el
+  SIGTERM de cada registro llegó al puerto NUEVO de ese intento
+  en su primer segundo.
+- **`desconectar_openvpn` (1731): EXCLUIDO** — solo se alcanza
+  desde los botones «Desconectar» (modules/net/page.py:697 y
+  1051) y el usuario no los tocó.
+- **EL REMITENTE: el `finally` de `conectar_openvpn`**
+  (vpn_win.py:1705), que al no haber éxito confirmado llama a
+  `_cerrar_proceso(proceso, puerto)` (vpn_win.py:1709–1710) y
+  este envía el SIGTERM (vpn_win.py:1377). `cerrar_intento_en_curso`
+  usa el mismo `_cerrar_proceso`, pero solo se dispara al
+  destruirse la página o al salir la app — no fue el caso.
+
+## 3. Por qué el finally saltó en el primer segundo: poll() declara muerto a un proceso vivo
+
+El bucle de espera de `conectar_openvpn` comprueba PRIMERO
+(vpn_win.py:1609) `proceso.poll() is not None`. Que el usuario
+viera el titular TLS prueba que el bucle salió por esa rama (el
+titular nace ahí, de `_mensaje_familia` sobre
+`_analizar_registro`): una excepción habría llegado a la pantalla
+como «No se pudo completar…» vía `seguro()`. Es decir: **poll()
+declaró muerto al proceso en la primera iteración, con el
+handshake recién empezado**.
+
+El mango de la vía servicio es `_ProcesoPorPid` (vpn_win.py:676)
+y su `poll()` (vpn_win.py:692) se fía de `_pid_vivo()`
+(vpn_win.py:589): `OpenProcess(0x1000)` +
+`GetExitCodeProcess == STILL_ACTIVE (259)`. CUALQUIER fallo —
+handle NULL o GetExitCodeProcess fallido— se colapsa en «no
+vivo» con `except Exception: return False` y SIN leer
+GetLastError: el código no distingue «muerto» de «no pude
+mirarlo». El mecanismo más probable: el Interactive Service
+lanza openvpn ELEVADO (token de administrador, integridad alta)
+y la app corre con integridad media; si `OpenProcess` sobre ese
+proceso es denegado, `_pid_vivo` devuelve False para un proceso
+vivito. Acto seguido, `poll()` fija
+`returncode = _codigo_salida_pid(pid)` (vpn_win.py:620) **o 0 si
+no se pudo leer** (vpn_win.py:697–699): de ahí el «Código de
+salida de OpenVPN: 0» que pintó la pantalla sobre un proceso que
+segundos después respondió al SIGTERM con una salida limpia. El
+0 es fabricado (misma familia de defecto que el «código de
+salida 0» anotado en INFORME-V1012 §5.4 para la 1.0.11).
+
+Agravante de diseño: `puerta_previa_openvpn` (vpn_win.py:1919)
+calcula la vía de la sesión («elevado» cuando el grupo aún no se
+refleja — el caso típico tras instalar la 1.0.12 sin cerrar
+sesión), pero `conectar_openvpn` NUNCA pasa `puerta["via"]` a
+`_lanzar_openvpn` (vpn_win.py:924), que siempre prueba el
+servicio primero. Y si el lanzamiento acabó en la reserva, el
+mango `_ProcesoElevado.poll()` (vpn_win.py:736,
+WaitForSingleObject sobre el handle de ShellExecuteEx) repite el
+mismo patrón: lo indeterminado se convierte en «muerto» con
+código 0. Compartan la vía que compartan los tres intentos, el
+defecto es el mismo: **un veredicto de muerte instantáneo, sin
+periodo de gracia y sin contrastar con la interfaz de gestión,
+que SÍ estaba respondiendo**.
+
+Por qué la CI no lo cazó: `tests/test_v1012.py` sustituye
+`_lanzar_openvpn` por procesos falsos con `poll()` ideal
+(`_ProcVivo`, línea 366) y el kernel32 falso solo ejercita el
+protocolo del tubo hasta recibir el PID (línea 195). Ninguna
+prueba corrió `conectar_openvpn` contra un `_ProcesoPorPid` real
+ni contra `_pid_vivo`; el workflow usa el openvpn.exe real solo
+para la puerta de parseo del perfil (build-windows.yml:139–157).
+La costura de «¿sigue vivo?» quedó sin doble en la frontera del
+SO: el proceso falso jamás pudo estar «vivo pero no abrible».
+
+## 4. Por qué el titular dijo «TLS» (reproducido ejecutando el código)
+
+`_analizar_registro` (vpn_win.py:1107) toma en su primera pasada
+la primera «línea de error» (contiene warning/error/fatal/
+failed/denied/cannot/unable) con familia conocida. Las marcas de
+la familia **tls** (`_FAMILIAS_REGISTRO`, vpn_win.py:1085–1086)
+incluyen la palabra suelta **«certificate»**. Y TODOS los
+intentos anotan al arrancar la línea rutinaria «WARNING: No
+server certificate verification method has been enabled…»: es
+warning (→ línea de error) y contiene «certificate» (→ familia
+tls), y precede a cualquier error real en un registro truncado.
+
+Reproducido en esta investigación con las líneas reales de las
+12:44:45: `_analizar_registro` → familia «tls», causa = ese
+WARNING; `_mensaje_familia` → exactamente el titular que vio el
+usuario. El clasificador no vio ningún fallo TLS: vio un
+handshake truncado por el SIGTERM de la propia app y nombró el
+primer warning que encontró. Falta la familia que este registro
+grita: «detenido por la propia app» — un registro que termina en
+«MANAGEMENT: CMD 'signal SIGTERM'» + «SIGTERM[hard,] received»
+prueba que lo detuvo la app, y esa familia debe ir POR DELANTE
+de todas las de red.
+
+## 5. Por qué el detalle quedó congelado en las 11:31
+
+La rama de proceso-muerto construye el detalle con
+`ultimas = _ultimas_lineas(ruta_log) or _ultimas_lineas(ruta_salida)`
+(vpn_win.py:1615) y el análisis con
+`lineas = _lineas_archivo(ruta_log) + _lineas_archivo(ruta_salida)`
+(vpn_win.py:1612), donde `ruta_salida` es
+`openvpn-arranque.txt` (vpn_win.py:1585).
+
+En la 1.0.12 **nadie escribe openvpn-arranque.txt**: por las
+vías servicio/elevado el stdout va a NUL y `_lanzar_openvpn`
+conserva el parámetro solo «por compatibilidad» —
+`_SALIDA_ARRANQUE_FH` nunca se abre. El archivo conserva la
+captura del ÚLTIMO intento de la 1.0.11 (foto de la carpeta:
+modificado 11:31, 4 KB, el intento de la TAP ocupada). Como el
+fallo se declara en t≈0 —antes de que el openvpn lanzado por el
+servicio haya creado el nuevo `openvpn-conexion.log` (el
+anterior acababa de rotarse)—, `_ultimas_lineas(ruta_log)`
+vuelve «» y el respaldo sirve el arranque fosilizado de las
+11:31 como si fuera el detalle de este intento, con el «Código
+de salida de OpenVPN: 0» añadido. Las dos lecturas (análisis y
+últimas) son aperturas separadas en plena carrera con el proceso
+que crea su registro: así conviven en un mismo resultado un
+titular TLS (de las primeras líneas del registro nuevo) y un
+detalle fosilizado (del arranque viejo).
+
+## 6. PLAN CONCRETO v1.0.13 (sin construir — pendiente de orden)
+
+1. **Vida en tres estados.** `_pid_vivo` devuelve
+   vivo/muerto/no-comprobable, leyendo GetLastError y anotando
+   el fallo en actividad.jsonl; «no comprobable» JAMÁS cuenta
+   como muerte. `_ProcesoPorPid.poll()` y `_ProcesoElevado.poll()`
+   solo declaran muerte con prueba positiva (código de salida
+   leído de verdad / WAIT_OBJECT_0 con código real). Desaparece
+   el returncode fabricado 0: código desconocido = None y la
+   pantalla dice «código de salida desconocido».
+2. **Gracia y contraste en el bucle.** Ningún veredicto de
+   muerte en los primeros segundos del intento, y antes de
+   declarar muerto hay contraste: si la interfaz de gestión
+   responde `state` (aunque sea CONNECTING), el proceso está
+   vivo, punto. Muerte exige dos pruebas positivas separadas en
+   el tiempo.
+3. **La limpieza no se disfraza de fallo de red.** Si el
+   finally detiene un proceso cuya muerte no se probó, el
+   resultado dice «la app detuvo el intento» y no se clasifica
+   como fallo del servidor. El clasificador gana la familia
+   PRIORITARIA «detenido por la app» (marcas: «MANAGEMENT: CMD
+   'signal SIGTERM'», «SIGTERM[hard,] received») y la familia
+   tls pierde la marca suelta «certificate» (quedan «tls error»,
+   «verify error», «tls handshake failed», «tls key negotiation
+   failed»); el WARNING «No server certificate verification
+   method» queda marcado como informativo expreso.
+4. **Detalle del intento en curso.** Fuera el respaldo a
+   openvpn-arranque.txt en las vías servicio/elevado (o se
+   trunca al empezar el intento, como el registro); el detalle
+   sale SOLO del registro de este intento, leído tras la salida
+   confirmada con una breve espera de asentamiento, y si el
+   registro no existe el detalle lo dice («OpenVPN no llegó a
+   crear su registro en este intento»).
+5. **Puerta coherente y vía observable.** `conectar_openvpn`
+   honra `puerta["via"]` (si la puerta dice «elevado», se lanza
+   elevado primero) y cada intento anota en actividad.jsonl: vía
+   usada, aviso de la puerta, resultado del primer poll() y el
+   GetLastError de `_pid_vivo` cuando falle — el próximo fallo
+   debe poder diagnosticarse desde actividad.jsonl sin fotos.
+6. **CI que caza ESTE fallo:**
+   - Regresión con los registros reales 12:44/12:47/12:50: la
+     familia esperada es «detenido por la app», jamás tls; y el
+     WARNING de certificado a solas no produce familia.
+   - `conectar_openvpn` con un proceso falso cuyo poll()
+     simule «vivo pero no comprobable» y una gestión que
+     responde `state` en CONNECTING: prohibido enviar SIGTERM
+     antes del timeout real y prohibido clasificar TLS.
+   - `poll()` con OpenProcess fallando por acceso denegado
+     (monkeypatch) devuelve None (no 0); imposible fabricar el
+     código de salida 0.
+   - Detalle hermético: con un openvpn-arranque.txt fosilizado
+     con texto marcador, el resultado de un intento por la vía
+     servicio no puede contener ese marcador.
+   - En el runner Windows: humo con el OpenVPN REAL del MSI
+     (ya se extrae para la puerta de parseo) — lanzar un
+     proceso real tras `_ProcesoPorPid` con una configuración
+     contra un oyente local tonto y afirmar que poll() sigue en
+     None mientras vive: ejercita la costura del SO que los
+     falsos ocultaron. La delegación completa del Interactive
+     Service sigue siendo prueba de la Toughbook, como siempre.
+
+## 7. Qué NO fue (descartado con mecanismo)
+
+Ni los servidores (tres distintos, UDP y TCP, misma firma en su
+primer segundo), ni el barrido (mata por PID, sin línea de
+gestión), ni la guarda de un intento (actúa antes del
+lanzamiento y sobre el puerto anterior), ni un segundo cliente
+de gestión (no existe tal código). El patrón completo —SIGTERM
+propio en t≈0, titular TLS sobre un WARNING rutinario y detalle
+fosilizado de las 11:31— lo explican tres defectos encadenados
+de la 1.0.12: veredicto de muerte sin prueba (§3), clasificador
+que nombra «certificate» como TLS (§4) y detalle alimentado de
+un archivo que la versión ya no escribe (§5).

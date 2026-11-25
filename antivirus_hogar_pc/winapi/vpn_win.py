@@ -73,6 +73,43 @@ clasificador nuevo: las líneas informativas nunca son causa,
 la familia «rutas/privilegios» va antes que la de adaptador, y
 «Initialization Completed» con rutas fallidas se reporta como
 lo que es: túnel abierto pero sin rutas.
+
+v1.0.13 — LA PRUEBA DE LA 1.0.12 EN LA TOUGHBOOK (investigación,
+sección «PRUEBA v1.0.12»): tres intentos reales (12:44, 12:48 y
+12:50) murieron EN SU PRIMER SEGUNDO con «MANAGEMENT: CMD
+'signal SIGTERM'» en su propio registro, y la auditoría probó
+que el SIGTERM lo enviaba la propia app: el servicio lanza
+openvpn ELEVADO y la app, sin elevar, no siempre puede
+inspeccionar ese proceso (permiso denegado); la comprobación de
+vida de la 1.0.12 colapsaba «no pude mirarlo» en «está muerto»,
+así que el bucle declaraba muerto a un OpenVPN vivo en la
+primera vuelta y el finally lo apagaba por gestión — con un
+«código de salida 0» fabricado encima. El titular culpó al TLS
+porque la advertencia rutinaria «No server certificate
+verification method…» trae la palabra «certificate», marca de
+esa familia; y el detalle pintó el registro fósil de las 11:31
+porque caía a openvpn-arranque.txt, un archivo que la 1.0.12 ya
+no escribe. Esta versión: (1) vida en TRES estados —vivo,
+muerto, NO COMPROBABLE— y «no comprobable» jamás cuenta como
+muerte ni dispara limpieza: la muerte exige DOS pruebas
+positivas, una de ellas el silencio de la propia interfaz de
+gestión; (2) si la app detiene un intento sin muerte probada
+(timeout, cierre), el resultado lo dice tal cual («la app
+detuvo el intento») en vez de disfrazarlo de fallo del
+servidor, y el código de salida solo se pinta si se leyó del
+proceso real — nunca un 0 fabricado; (3) el detalle sale SOLO
+del registro de ESTE intento (prohibido el respaldo al archivo
+fósil): si aún no hay registro, el detalle dice «sin registro
+todavía»; (4) el clasificador gana la familia prioritaria
+«detenido por la app» (un registro que termina en SIGTERM por
+gestión lo detuvo la app, no el servidor) y la familia TLS
+exige un error TLS real: las advertencias rutinarias de
+arranque quedan marcadas como informativas expresas y la
+palabra suelta «certificate» ya no es marca de TLS; (5) la
+puerta previa manda de verdad: conectar honra la vía que la
+puerta decidió (servicio o elevado) y cada intento anota en el
+registro de actividad la vía, el aviso de la puerta y el primer
+sondeo, para que el próximo fallo se diagnostique sin fotos.
 """
 import atexit
 import os
@@ -467,6 +504,12 @@ def preparar_perfil_vpngate(contenido: str, ruta_credenciales: str) -> str:
 # --- Sesión del motor (qué conexión lanzó la app) ------------------------------
 
 _PROCESO = None  # Popen de la conexión viva lanzada por la app
+# v1.0.13: la vía que la puerta previa decidió para el intento
+# en curso ("servicio" | "elevado" | "" = orden por defecto).
+# conectar_openvpn la fija antes de lanzar y _lanzar_openvpn la
+# honra: en la 1.0.12 la puerta calculaba la vía pero el motor
+# siempre probaba el servicio primero.
+_VIA_PREFERIDA = ""
 
 
 def _ruta_sesion() -> str:
@@ -586,45 +629,82 @@ def _interpretar_respuesta_servicio(datos: bytes) -> dict:
             "funcion": partes[1], "mensaje": "\n".join(partes[2:])}
 
 
-def _pid_vivo(pid) -> bool:
-    """¿El proceso sigue vivo? (GetExitCodeProcess en Windows)."""
+def _estado_pid_con_error(pid) -> tuple:
+    """El estado de un PID: ("vivo"|"muerto"|"no_comprobable",
+    error_de_windows|None). v1.0.13.
+
+    La 1.0.12 colapsaba TODO fallo de inspección en «no vivo» y
+    el bucle declaraba muerto a un openvpn ELEVADO que la app no
+    podía ni mirar (OpenProcess denegado): la propia app lo
+    apagaba por gestión en su primer segundo. Ahora «no
+    comprobable» es un estado propio y JAMÁS cuenta como
+    muerte: «muerto» solo sale de una prueba positiva — el
+    código de salida leído de verdad (distinto de STILL_ACTIVE)
+    o un OpenProcess que falla porque ese PID NO EXISTE
+    (ERROR_INVALID_PARAMETER, 87). El acceso denegado (5) y
+    cualquier otro fallo de inspección son «no_comprobable» y
+    el error viaja para poder anotarlo.
+    """
     if not pid:
-        return False
+        return ("no_comprobable", None)
     if es_windows():
         try:
             import ctypes
 
-            kernel32 = ctypes.windll.kernel32
+            kernel32 = _kernel32()
             kernel32.OpenProcess.restype = ctypes.c_void_p
             handle = kernel32.OpenProcess(0x1000, False, int(pid))
             if not handle:
-                return False
+                error = kernel32.GetLastError()
+                if error == 87:  # ERROR_INVALID_PARAMETER
+                    return ("muerto", error)
+                return ("no_comprobable", error)
             try:
                 codigo = ctypes.c_ulong(0)
                 if not kernel32.GetExitCodeProcess(
                         handle, ctypes.byref(codigo)):
-                    return False
-                return codigo.value == 259  # STILL_ACTIVE
+                    return ("no_comprobable",
+                            kernel32.GetLastError())
+                if codigo.value == 259:  # STILL_ACTIVE
+                    return ("vivo", None)
+                return ("muerto", None)
             finally:
                 kernel32.CloseHandle(handle)
         except Exception:
-            return False
+            return ("no_comprobable", None)
     try:
         import psutil
 
-        return psutil.pid_exists(int(pid))
+        return ("vivo" if psutil.pid_exists(int(pid))
+                else "muerto", None)
     except Exception:
-        return False
+        return ("no_comprobable", None)
+
+
+def _estado_pid(pid) -> str:
+    """«vivo» | «muerto» | «no_comprobable» (v1.0.13)."""
+    return _estado_pid_con_error(pid)[0]
+
+
+def _pid_vivo(pid) -> bool:
+    """True SOLO con prueba positiva de vida (v1.0.13).
+
+    Compatibilidad: un False aquí significa «muerto O no
+    comprobable» — NUNCA usarlo para declarar una muerte; para
+    eso está _estado_pid, que distingue los tres estados.
+    """
+    return _estado_pid(pid) == "vivo"
 
 
 def _codigo_salida_pid(pid):
-    """El código de salida de un proceso ya terminado (o None)."""
+    """El código de salida REAL de un proceso terminado (o None
+    si no se pudo leer: jamás se fabrica un 0)."""
     if not pid or not es_windows():
         return None
     try:
         import ctypes
 
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = _kernel32()
         kernel32.OpenProcess.restype = ctypes.c_void_p
         handle = kernel32.OpenProcess(0x1000, False, int(pid))
         if not handle:
@@ -633,6 +713,8 @@ def _codigo_salida_pid(pid):
             codigo = ctypes.c_ulong(0)
             if not kernel32.GetExitCodeProcess(
                     handle, ctypes.byref(codigo)):
+                return None
+            if codigo.value == 259:  # STILL_ACTIVE: no ha salido
                 return None
             return codigo.value
         finally:
@@ -673,6 +755,31 @@ def _terminar_pid(pid, forzar: bool = False) -> bool:
     return False
 
 
+# v1.0.13: marca INTERNA de «muerto probado, código ilegible».
+# poll() la devuelve para que el bucle distinga la muerte, pero
+# NO es un código de salida: _codigo_para_pintar la traduce a
+# None («no disponible») y jamás se enseña en pantalla. Los
+# códigos de Windows son DWORD sin signo: el -1 no colisiona
+# con ninguno real.
+_CODIGO_SALIDA_DESCONOCIDO = -1
+
+
+def _codigo_para_pintar(proceso):
+    """El código de salida REAL y enseñable de un proceso.
+
+    None si el proceso sigue vivo, si su código no se pudo leer
+    o si el mango solo trae la marca interna de «muerto sin
+    código»: la pantalla dice entonces «no disponible» en vez
+    del 0 fabricado de la 1.0.12.
+    """
+    if proceso is None:
+        return None
+    codigo = getattr(proceso, "returncode", None)
+    if codigo is None or codigo == _CODIGO_SALIDA_DESCONOCIDO:
+        return None
+    return codigo
+
+
 class _ProcesoPorPid:
     """Mango de un openvpn.exe conocido por su PID (v1.0.12).
 
@@ -680,6 +787,17 @@ class _ProcesoPorPid:
     para los procesos que NO lanzó Popen: los del Interactive
     Service y los de una sesión de una apertura anterior de la
     app. poll() lee el estado real del proceso en Windows.
+
+    v1.0.13: poll() trabaja con la vida en TRES estados. Solo
+    declara muerte con la prueba positiva de _estado_pid
+    («muerto»); «vivo» y «no_comprobable» devuelven None (el
+    proceso se trata como en curso y la gestión manda). Si la
+    muerte está probada pero el código de salida no se puede
+    leer, returncode queda en None y poll() devuelve la marca
+    interna _CODIGO_SALIDA_DESCONOCIDO: el 0 fabricado de la
+    1.0.12 desaparece. La primera vez que la vida resulta «no
+    comprobable» queda anotada en el registro de actividad, con
+    el error de Windows que la causó.
     """
 
     via = "pid"
@@ -688,14 +806,29 @@ class _ProcesoPorPid:
         self.pid = pid
         self.returncode = None
         self.aviso = ""
+        self._muerto_probado = False
+        self._no_comprobable_anotado = False
 
     def poll(self):
-        if self.returncode is not None:
-            return self.returncode
-        if not _pid_vivo(self.pid):
-            codigo = _codigo_salida_pid(self.pid)
-            self.returncode = codigo if codigo is not None else 0
-            return self.returncode
+        if self._muerto_probado:
+            return (self.returncode if self.returncode is not None
+                    else _CODIGO_SALIDA_DESCONOCIDO)
+        estado, error = _estado_pid_con_error(self.pid)
+        if estado == "muerto":
+            self._muerto_probado = True
+            self.returncode = _codigo_salida_pid(self.pid)
+            return (self.returncode if self.returncode is not None
+                    else _CODIGO_SALIDA_DESCONOCIDO)
+        if estado == "no_comprobable" \
+                and not self._no_comprobable_anotado:
+            self._no_comprobable_anotado = True
+            _anotar_actividad_vpn(
+                "La vida del OpenVPN con PID "
+                f"{self.pid} no se pudo comprobar"
+                + (f" (error de Windows {error} al inspeccionar "
+                   "el proceso)" if error else "")
+                + ": se trata como vivo y manda su interfaz de "
+                  "gestión.")
         return None
 
     def wait(self, timeout=None):
@@ -732,37 +865,46 @@ class _ProcesoElevado:
         self.pid = pid
         self.returncode = None
         self.aviso = ""
+        self._muerto_probado = False
 
     def poll(self):
-        if self.returncode is not None:
-            return self.returncode
+        # v1.0.13: la muerte solo la prueba WAIT_OBJECT_0 sobre
+        # el mango PROPIO de ShellExecuteEx; el código se lee de
+        # ese mango y, si la lectura falla, returncode queda en
+        # None y poll() devuelve la marca interna de «sin
+        # código» — la 1.0.12 fabricaba un 0 también aquí. Todo
+        # lo demás (sigue corriendo, espera fallida, excepción)
+        # es «no muerto»: None.
+        if self._muerto_probado:
+            return (self.returncode if self.returncode is not None
+                    else _CODIGO_SALIDA_DESCONOCIDO)
         try:
             import ctypes
 
-            kernel32 = ctypes.windll.kernel32
+            kernel32 = _kernel32()
             if kernel32.WaitForSingleObject(self._handle, 0) == 0:
+                self._muerto_probado = True
                 codigo = ctypes.c_ulong(0)
                 if kernel32.GetExitCodeProcess(
                         self._handle, ctypes.byref(codigo)):
                     self.returncode = codigo.value
-                else:
-                    self.returncode = 0
-                return self.returncode
+                return (self.returncode
+                        if self.returncode is not None
+                        else _CODIGO_SALIDA_DESCONOCIDO)
         except Exception:
             pass
         return None
 
     def wait(self, timeout=None):
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        ms = (int(timeout * 1000) if timeout is not None
-              else 0xFFFFFFFF)
-        if kernel32.WaitForSingleObject(self._handle, ms) != 0:
-            raise TimeoutError("El OpenVPN elevado no terminó a "
-                               "tiempo.")
-        codigo = self.poll()
-        return codigo if codigo is not None else 0
+        limite = time.time() + (timeout if timeout is not None
+                                else 31_536_000)
+        while time.time() < limite:
+            codigo = self.poll()
+            if codigo is not None:
+                return codigo
+            time.sleep(0.2)
+        raise TimeoutError("El OpenVPN elevado no terminó a "
+                           "tiempo.")
 
     def terminate(self):
         try:
@@ -941,25 +1083,45 @@ def _lanzar_openvpn(argumentos: list[str], carpeta: str,
     el parseo lo vigila la puerta de CI con el exe real desde la
     1.0.11. `ruta_salida_arranque` queda por compatibilidad de
     la puerta (las pruebas la sustituyen y la usan).
+
+    v1.0.13: el orden honra `_VIA_PREFERIDA`, la vía que la
+    puerta previa decidió para este intento (si la puerta dice
+    «elevado» —p. ej. la sesión aún no refleja el grupo—, se
+    lanza elevado PRIMERO y el servicio queda de reserva).
     """
     if not es_windows():
         raise WindowsNoDisponible("OpenVPN solo se maneja en Windows.")
-    error_servicio = None
-    try:
-        return _lanzar_por_servicio(argumentos, carpeta)
-    except Exception as exc:  # el servicio manda; si no, la reserva
-        error_servicio = exc
-    try:
-        proceso = _lanzar_elevado(argumentos, carpeta)
-    except Exception as exc:
-        raise _ErrorServicioOpenVPN(
-            "No se pudo arrancar OpenVPN ni por su servicio "
-            f"interactivo ({error_servicio}) ni elevado ({exc}).")
-    proceso.aviso = (
-        "El servicio interactivo de OpenVPN no se pudo usar "
-        f"({error_servicio}); OpenVPN se lanzó ELEVADO como "
-        "reserva.")
-    return proceso
+    orden = (("elevado", "servicio") if _VIA_PREFERIDA == "elevado"
+             else ("servicio", "elevado"))
+    errores = {}
+    for via in orden:
+        try:
+            if via == "servicio":
+                proceso = _lanzar_por_servicio(argumentos, carpeta)
+            else:
+                proceso = _lanzar_elevado(argumentos, carpeta)
+        except Exception as exc:
+            errores[via] = exc
+            continue
+        if via == "elevado" and "servicio" in errores:
+            proceso.aviso = (
+                "El servicio interactivo de OpenVPN no se pudo "
+                f"usar ({errores['servicio']}); OpenVPN se lanzó "
+                "ELEVADO como reserva.")
+        elif via == "elevado":
+            proceso.aviso = (
+                "OpenVPN se lanzó ELEVADO: así lo decidió la "
+                "puerta previa para este intento.")
+        elif "elevado" in errores:
+            proceso.aviso = (
+                "La reserva elevada no se pudo usar "
+                f"({errores['elevado']}); OpenVPN se lanzó por "
+                "su servicio interactivo.")
+        return proceso
+    raise _ErrorServicioOpenVPN(
+        "No se pudo arrancar OpenVPN ni por su servicio "
+        f"interactivo ({errores.get('servicio')}) ni elevado "
+        f"({errores.get('elevado')}).")
 
 
 def _cerrar_salida_arranque() -> None:
@@ -1067,8 +1229,36 @@ def interpretar_estado_mgmt(salida: str) -> dict:
 _MARCAS_ERROR_LINEA = ("error", "fatal", "warning", "failed",
                        "denied", "cannot", "unable")
 
+# v1.0.13: advertencias RUTINARIAS de arranque de OpenVPN. Traen
+# «WARNING» (y hasta la palabra «certificate») pero no anuncian
+# ningún fallo: son informativas EXPRESAS y jamás pueden ser la
+# causa. En la prueba real de la 1.0.12, «No server certificate
+# verification method has been enabled» bastó para culpar al
+# servidor de un «error TLS» sobre un intento que la propia app
+# había detenido.
+_MARCAS_INFORMATIVAS_EXPRESAS = (
+    "no server certificate verification method",
+    "this configuration may cache passwords",
+    "deprecated option",
+    "--persist-key",
+    "not supported by ovpn-dco",
+)
+
+
+def _es_linea_informativa_expresa(linea: str) -> bool:
+    baja = (linea or "").lower()
+    return any(marca in baja
+               for marca in _MARCAS_INFORMATIVAS_EXPRESAS)
+
+
 # Familias en orden de evaluación: (familia, marcas en minúsculas).
+# v1.0.13: «detenido» va PRIMERA — un registro que termina en un
+# SIGTERM enviado por la interfaz de gestión lo detuvo la propia
+# app (es el único cliente de gestión), y esa verdad va por
+# delante de cualquier familia de red. Y «tls» pierde la marca
+# suelta «certificate»: exige un error TLS real.
 _FAMILIAS_REGISTRO = (
+    ("detenido", ("signal sigterm", "sigterm[hard")),
     ("opciones", ("bad backslash", "options error",
                   "options warning")),
     ("rutas", ("route addition failed", "createipforwardentry",
@@ -1083,7 +1273,8 @@ _FAMILIAS_REGISTRO = (
              "data channel offload failed")),
     ("servicio", ("interactive service", "iservice")),
     ("tls", ("tls error", "verify error", "tls handshake failed",
-             "tls key negotiation failed", "certificate")),
+             "tls key negotiation failed",
+             "authenticate/decrypt packet error")),
     ("saturado", ("connection reset", "connection refused",
                   "connection timed out", "recvfrom", "read udp")),
     ("red", ("no route to host", "network is unreachable",
@@ -1092,11 +1283,15 @@ _FAMILIAS_REGISTRO = (
 
 
 def _es_linea_error(linea: str) -> bool:
+    if _es_linea_informativa_expresa(linea):
+        return False
     baja = (linea or "").lower()
     return any(marca in baja for marca in _MARCAS_ERROR_LINEA)
 
 
 def _familia_de_linea(linea: str) -> str:
+    if _es_linea_informativa_expresa(linea):
+        return ""
     baja = (linea or "").lower()
     for familia, marcas in _FAMILIAS_REGISTRO:
         if any(marca in baja for marca in marcas):
@@ -1251,6 +1446,13 @@ def _mensaje_familia(familia: str, causa: str,
     es un problema de privilegios en ESTE equipo, no de la
     tarjeta ni del servidor.
     """
+    if familia == "detenido":
+        return ("La propia app detuvo este intento de OpenVPN "
+                "antes de que conectara (le envió la orden de "
+                "apagado por su interfaz de gestión): no fue el "
+                "servidor ni tu red. La línea real está en el "
+                "detalle y el intento quedó anotado en el "
+                "registro de actividad.", causa)
     if familia == "opciones":
         return ("OpenVPN rechazó el perfil de conexión de este "
                 "servidor (error de opciones en el perfil): el fallo "
@@ -1306,16 +1508,23 @@ def _clasificar_fallo_openvpn(causa: str, codigo_salida,
     de causa (que ya viene filtrada por _analizar_registro: las
     informativas no llegan aquí como «tap» suelto). Una causa
     VACÍA se declara como tal, como mandó la 1.0.11.
+
+    v1.0.13: el código de salida puede ser None («no
+    disponible»): se dice tal cual, jamás se pinta un número
+    fabricado.
     """
     if not (causa or "").strip():
-        return (f"OpenVPN se cerró sin dejar registro (código de "
-                f"salida {codigo_salida}). No es que el servidor "
+        codigo_txt = (f"código de salida {codigo_salida}"
+                      if codigo_salida is not None
+                      else "código de salida no disponible")
+        return (f"OpenVPN se cerró sin dejar registro en este "
+                f"intento ({codigo_txt}). No es que el servidor "
                 f"{hostname} esté apagado: el programa se cerró en "
-                "este equipo antes de poder anotar su causa; la "
-                "salida de su arranque quedó guardada en el registro "
-                "de actividad de la app.",
-                f"OpenVPN se cerró sin dejar registro; código de "
-                f"salida {codigo_salida}.")
+                "este equipo antes de poder anotar su causa; lo "
+                "que se sabe quedó en el registro de actividad de "
+                "la app.",
+                f"OpenVPN se cerró sin dejar registro en este "
+                f"intento; {codigo_txt}.")
     return _mensaje_familia(_familia_de_linea(causa), causa, hostname)
 
 
@@ -1520,6 +1729,89 @@ def _ajenos_vivos() -> list:
             if not _es_proceso_propio(i, pids_sesion)]
 
 
+# v1.0.13: el detalle de un intento sin registro propio lo dice
+# tal cual — jamás se rellena con el registro de otro intento ni
+# con el fósil openvpn-arranque.txt de la 1.0.11.
+_DETALLE_SIN_REGISTRO = (
+    "Sin registro todavía: OpenVPN no llegó a crear su registro "
+    "en este intento.")
+
+
+def _esperar_asentamiento_registro(ruta_log: str,
+                                   espera_max: float = 1.5) -> None:
+    """Espera breve a que el registro del intento se asiente.
+
+    Tras una muerte probada, openvpn puede estar aún volcando
+    sus últimas líneas: se espera a que el tamaño del archivo
+    deje de cambiar (con tope) antes de leerlo, para no analizar
+    un registro a medias (en la 1.0.12 el titular y el detalle
+    llegaron a salir de dos lecturas distintas en plena
+    carrera).
+    """
+    try:
+        anterior = os.path.getsize(ruta_log)
+    except OSError:
+        return
+    limite = time.time() + espera_max
+    while time.time() < limite:
+        time.sleep(0.25)
+        try:
+            actual = os.path.getsize(ruta_log)
+        except OSError:
+            return
+        if actual == anterior:
+            return
+        anterior = actual
+
+
+def _registro_anuncia_salida(ruta_log: str) -> bool:
+    """¿El propio registro de openvpn anuncia su salida?"""
+    for linea in _lineas_archivo(ruta_log):
+        baja = linea.lower()
+        if "process exiting" in baja \
+                or "exiting due to fatal error" in baja:
+            return True
+    return False
+
+
+def _muerte_probada(proceso, puerto, ruta_log: str = "") -> bool:
+    """¿La muerte del proceso está PROBADA? (v1.0.13)
+
+    Exige DOS pruebas positivas: (1) el mango declara la muerte
+    con su prueba positiva (poll() no-None: en los mangos de la
+    1.0.13 eso ya significa código leído de verdad, PID
+    inexistente confirmado o WAIT_OBJECT_0 — «no comprobable»
+    devuelve None y aquí ni se entra); y (2) UNA de estas dos:
+    el propio registro de openvpn anuncia su salida («process
+    exiting» / «Exiting due to fatal error»), o la interfaz de
+    gestión CALLA ante un `state` y una segunda lectura de
+    poll(), separada en el tiempo, sigue declarando la muerte.
+    Si la gestión responde con cualquier estado, el proceso
+    está vivo, punto.
+    """
+    if proceso is None:
+        return False
+    try:
+        if proceso.poll() is None:
+            return False
+    except Exception:
+        return False
+    if ruta_log and _registro_anuncia_salida(ruta_log):
+        return True
+    if puerto:
+        try:
+            salida = _mgmt_enviar(int(puerto), "state", timeout=3)
+            if salida and interpretar_estado_mgmt(salida)["estado"]:
+                return False
+        except Exception:
+            pass
+    time.sleep(1.0)
+    try:
+        return proceso.poll() is not None
+    except Exception:
+        return False
+
+
 def conectar_openvpn(contenido_ovpn: str, hostname: str,
                      espera: int = 45) -> dict:
     """Conecta con un servidor de VPN Gate por el motor OpenVPN.
@@ -1534,9 +1826,18 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
     inicializa pero Windows negó las rutas, se reporta como lo
     que es («túnel abierto pero sin rutas») y se baja limpio.
 
+    v1.0.13: la espera manda por la interfaz de gestión y la
+    muerte solo se declara con _muerte_probada (dos pruebas
+    positivas; «no comprobable» jamás es muerte — la 1.0.12 se
+    apagaba su propio intento en el primer segundo). El detalle
+    sale SOLO del registro de este intento (fuera el respaldo al
+    fósil openvpn-arranque.txt), el código de salida solo se
+    pinta si es real, y si la app detiene el intento (timeout)
+    el resultado lo dice tal cual en vez de culpar al servidor.
+
     Devuelve {"ok", "mensaje", "detalle", "datos"}.
     """
-    global _PROCESO
+    global _PROCESO, _VIA_PREFERIDA
     hostname = (hostname or "").strip()
     if not hostname:
         return {"ok": False, "mensaje": "Falta el servidor al que conectar.",
@@ -1579,23 +1880,39 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
     # v1.0.11: el registro del intento anterior NO se borra: rota
     # con fecha/hora (se conservan los últimos 5).
     _rotar_registro_openvpn(ruta_log)
-    # v1.0.11: la salida de arranque se captura a un archivo: si
-    # openvpn muere antes de abrir su registro (p. ej. un error de
-    # opciones al parsear el perfil), ESA salida es la causa.
+    # v1.0.13: el detalle de ESTE intento sale solo de su propio
+    # registro (ruta_log). El parámetro de salida de arranque se
+    # sigue pasando al lanzador por compatibilidad de su firma,
+    # pero su archivo YA NO se lee: en la 1.0.12 nadie lo
+    # escribía y su fósil de la 1.0.11 se sirvió como si fuera
+    # el intento en curso.
     ruta_salida = os.path.join(carpeta, "openvpn-arranque.txt")
     puerto = _puerto_libre()
     argumentos = [ruta_exe, "--config", ruta_perfil,
                   "--management", "127.0.0.1", str(puerto),
                   "--log-append", ruta_log]
+    # v1.0.13: la puerta previa MANDA: la vía que decidió es la
+    # que el lanzador prueba primero.
+    _VIA_PREFERIDA = puerta.get("via", "") or ""
     try:
         _PROCESO = _lanzar_openvpn(argumentos, carpeta, ruta_salida)
     except Exception as exc:
+        _VIA_PREFERIDA = ""
         return {"ok": False,
                 "mensaje": "No se pudo arrancar el motor de OpenVPN.",
                 "detalle": str(exc), "datos": {}}
+    _VIA_PREFERIDA = ""
     proceso = _PROCESO
     via = getattr(proceso, "via", "") or ""
     aviso = aviso_puerta or getattr(proceso, "aviso", "") or ""
+    # v1.0.13: el intento queda anotado con su vía y el aviso de
+    # la puerta — el próximo fallo se diagnostica desde el
+    # registro de actividad, sin fotos.
+    _anotar_actividad_vpn(
+        f"Conexión VPN a {hostname}: vía de la puerta previa "
+        f"«{puerta.get('via', '')}», vía usada «{via}», PID "
+        f"{getattr(proceso, 'pid', None)}, puerto de gestión "
+        f"{puerto}." + (f" Aviso: {aviso}" if aviso else ""))
     exito = False
     try:
         # La sesión nace «conectando»: solo pasa a «conectada»
@@ -1605,15 +1922,24 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                          "via": via,
                          "desde": time.time(), "estado": "conectando"})
         limite = time.time() + max(5, int(espera))
+        sondeo_anotado = False
         while time.time() < limite:
-            if proceso is not None and proceso.poll() is not None:
-                codigo = getattr(proceso, "returncode", None)
-                _cerrar_salida_arranque()
-                lineas = (_lineas_archivo(ruta_log)
-                          + _lineas_archivo(ruta_salida))
+            # v1.0.13: la muerte solo se declara con
+            # _muerte_probada (dos pruebas positivas, una por la
+            # propia gestión o por el registro del proceso); un
+            # «no comprobable» jamás entra aquí. Después manda la
+            # interfaz de gestión, la única que confirma el
+            # túnel.
+            if proceso is not None and proceso.poll() is not None \
+                    and _muerte_probada(proceso, puerto, ruta_log):
+                # Muerte PROBADA: el detalle sale SOLO del
+                # registro de este intento, ya asentado, y el
+                # código de salida solo si es real.
+                codigo = _codigo_para_pintar(proceso)
+                _esperar_asentamiento_registro(ruta_log)
+                lineas = _lineas_archivo(ruta_log)
                 analisis = _analizar_registro(lineas)
-                ultimas = (_ultimas_lineas(ruta_log)
-                           or _ultimas_lineas(ruta_salida))
+                ultimas = _ultimas_lineas(ruta_log)
                 if analisis["inicializacion_completa"] \
                         and analisis["rutas_fallidas"]:
                     mensaje = (
@@ -1636,6 +1962,10 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                     detalle = (detalle
                                + f"\nCódigo de salida de OpenVPN: "
                                  f"{codigo}.").strip()
+                else:
+                    detalle = (detalle
+                               + "\nCódigo de salida de OpenVPN: "
+                                 "no disponible.").strip()
                 return {"ok": False, "mensaje": mensaje,
                         "detalle": detalle,
                         "datos": {"codigo_salida": codigo,
@@ -1645,6 +1975,13 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                 salida = _mgmt_enviar(puerto, "state", timeout=5)
             except Exception:
                 salida = ""
+            if not sondeo_anotado:
+                sondeo_anotado = True
+                _anotar_actividad_vpn(
+                    f"Primer sondeo del intento a {hostname}: la "
+                    "gestión "
+                    + ("respondió." if salida else "no respondió.")
+                    + f" poll()={proceso.poll()!r}.")
             if salida and interpretar_estado_mgmt(salida)["conectado"]:
                 # v1.0.12: confirmado el túnel, se revisa el
                 # registro: si las rutas fallaron, el túnel está
@@ -1682,23 +2019,29 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
                                   "via_arranque": via,
                                   "puerto_mgmt": puerto}}
             time.sleep(2)
-        # Timeout: el proceso NO queda vivo reintentando (el
-        # finally lo baja): túnel huérfano nunca más.
-        codigo = getattr(proceso, "returncode", None) \
-            if proceso is not None else None
-        _cerrar_salida_arranque()
-        lineas = (_lineas_archivo(ruta_log)
-                  + _lineas_archivo(ruta_salida))
+        # Timeout SIN muerte probada: quien detiene el intento
+        # es la PROPIA APP (el finally lo baja) y el resultado
+        # lo dice tal cual — la 1.0.12 lo disfrazaba de «el
+        # servidor puede estar saturado». El proceso NO queda
+        # vivo reintentando: túnel huérfano nunca más.
+        codigo = _codigo_para_pintar(proceso)
+        lineas = _lineas_archivo(ruta_log)
         analisis = _analizar_registro(lineas)
-        ultimas = (_ultimas_lineas(ruta_log)
-                   or _ultimas_lineas(ruta_salida))
+        ultimas = _ultimas_lineas(ruta_log)
+        _anotar_actividad_vpn(
+            f"La app detuvo el intento a {hostname} por tiempo "
+            "de espera agotado, sin muerte probada del proceso.")
         return {"ok": False,
-                "mensaje": ("OpenVPN aceptó la orden de conectar, "
-                            "pero el túnel no se confirmó a tiempo. "
-                            "El servidor puede estar saturado: "
-                            "elige otro de la lista e inténtalo de "
-                            "nuevo."),
-                "detalle": ultimas or analisis["causa"],
+                "mensaje": ("La app detuvo el intento antes de "
+                            "confirmar la conexión: el túnel no "
+                            "se confirmó a tiempo y la app cerró "
+                            "el intento para no dejarlo corriendo "
+                            "sin control. No es un fallo "
+                            "confirmado del servidor "
+                            f"{hostname}: elige otro de la lista "
+                            "e inténtalo de nuevo."),
+                "detalle": ultimas or analisis["causa"]
+                           or _DETALLE_SIN_REGISTRO,
                 "datos": {"codigo_salida": codigo,
                           "ultimas_lineas": ultimas,
                           "via": via}}
