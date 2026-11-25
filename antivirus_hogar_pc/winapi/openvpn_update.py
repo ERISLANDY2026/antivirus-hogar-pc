@@ -306,8 +306,10 @@ def _script_firma_respaldo(ruta: str) -> str:
         "[System.Security.Cryptography.X509Certificates."
         "X509RevocationMode]::NoCheck; "
         "$ok = $cadena.Build($cert2); "
+        "$st = ($cadena.ChainStatus | ForEach-Object { "
+        "$_.Status.ToString() }) -join ','; "
         "[PSCustomObject]@{ estado = $(if ($ok) { 'Valid' } else "
-        "{ 'Invalid' }); firmante = $cert.Subject } | "
+        "{ 'Invalid' }); firmante = $cert.Subject; cadena = $st } | "
         "ConvertTo-Json -Compress")
 
 
