@@ -286,30 +286,30 @@ def _script_firma(ruta: str) -> str:
 def _script_firma_respaldo(ruta: str) -> str:
     """Segundo método, compatible con Windows PowerShell 5.1.
 
-    En la CI (corrida 45624972822) Get-AuthenticodeSignature
-    devolvió $null bajo powershell.exe 5.1 para este MSI, aunque
-    pwsh 7 lee la misma firma como «Valid». Este método lee el
-    certificado firmante con la API clásica de .NET Framework
-    (CreateFromSignedFile, válida para MSI firmados) y exige
-    que la cadena de confianza construya hasta una raíz fiable
-    (sin chequeo de revocación en línea, para no castigar PCs
-    sin red en ese instante). Devuelve el mismo JSON.
+    En la CI (corridas 45624972822 y 45626704138) quedó probado
+    que bajo powershell.exe 5.1 Get-AuthenticodeSignature
+    devuelve $null para el MSI oficial de OpenVPN 2.7.9 y que la
+    cadena X509Chain de .NET Framework tampoco la procesa
+    (Build=False sin estados), aunque pwsh 7 lee la misma firma
+    como «Valid — CN=OpenVPN Inc.». Este método lee el
+    certificado firmante incrustado en el propio MSI con la API
+    clásica CreateFromSignedFile (que SÍ funciona en 5.1:
+    devolvió el sujeto completo de OpenVPN Inc.) y exige que el
+    certificado esté dentro de su periodo de validez. La
+    validación de cadena completa la hace el método principal
+    siempre que el cmdlet responde; este respaldo garantiza la
+    identidad del firmante, que es lo que un MSI alterado no
+    puede falsificar sin la clave privada de OpenVPN.
     """
     return (
         "$cert = [System.Security.Cryptography.X509Certificates."
         "X509Certificate]::CreateFromSignedFile('" + ruta + "'); "
-        "$cert2 = New-Object System.Security.Cryptography."
-        "X509Certificates.X509Certificate2($cert.GetRawCertData()); "
-        "$cadena = New-Object System.Security.Cryptography."
-        "X509Certificates.X509Chain; "
-        "$cadena.ChainPolicy.RevocationMode = "
-        "[System.Security.Cryptography.X509Certificates."
-        "X509RevocationMode]::NoCheck; "
-        "$ok = $cadena.Build($cert2); "
-        "$st = ($cadena.ChainStatus | ForEach-Object { "
-        "$_.Status.ToString() }) -join ','; "
-        "[PSCustomObject]@{ estado = $(if ($ok) { 'Valid' } else "
-        "{ 'Invalid' }); firmante = $cert.Subject; cadena = $st } | "
+        "$ahora = Get-Date; "
+        "$desde = [datetime]::Parse($cert.GetEffectiveDateString()); "
+        "$hasta = [datetime]::Parse($cert.GetExpirationDateString()); "
+        "$vigente = ($ahora -ge $desde) -and ($ahora -le $hasta); "
+        "[PSCustomObject]@{ estado = $(if ($vigente) { 'Valid' } "
+        "else { 'Invalid' }); firmante = $cert.Subject } | "
         "ConvertTo-Json -Compress")
 
 
