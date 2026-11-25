@@ -116,10 +116,20 @@ jobs:
           f = firma_authenticode(ruta)
           print("Firma Authenticode:", f)
           if not f["valida"]:
-              from antivirus_hogar_pc.winapi import openvpn_update as ou
+              # Diagnóstico total (corrida 45624087168: el cmdlet
+              # devolvió estado y firmante vacíos bajo
+              # powershell.exe; hay que ver el objeto y el error).
               from antivirus_hogar_pc.winapi.powershell import ejecutar_powershell
-              cruda = ejecutar_powershell(ou._script_firma(ruta), timeout=60)
-              print("Salida cruda de Get-AuthenticodeSignature:", repr(cruda))
+              diag = (
+                  "Write-Output ('PWD=' + (Get-Location).Path); "
+                  "Write-Output ('TestPath=' + (Test-Path '" + ruta + "')); "
+                  "$s = Get-AuthenticodeSignature -FilePath '" + ruta + "'; "
+                  "Write-Output ('Tipo=' + $s.GetType().FullName); "
+                  "Write-Output ('Status=[' + $s.Status + ']'); "
+                  "Write-Output ('StatusMsg=[' + $s.StatusMessage + ']'); "
+                  "Write-Output ('Cert=[' + $s.SignerCertificate.Subject + ']'); "
+                  "Write-Output ('Error=[' + $Error[0] + ']')")
+              print("DIAG powershell.exe:", repr(ejecutar_powershell(diag, timeout=60)))
           assert f["valida"], f
           print("Auto-actualizador de OpenVPN OK contra el instalador oficial real")
           '@ | Set-Content -Path "ovpn-probar-verificacion.py" -Encoding ascii

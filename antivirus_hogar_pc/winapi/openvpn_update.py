@@ -288,7 +288,8 @@ def firma_authenticode(ruta: str) -> dict:
     from .powershell import ejecutar_powershell
 
     try:
-        salida = ejecutar_powershell(_script_firma(ruta), timeout=60)
+        salida = ejecutar_powershell(
+            _script_firma(os.path.abspath(ruta)), timeout=60)
     except Exception:
         return {"valida": False, "firmante": ""}
     return interpretar_firma(salida)
