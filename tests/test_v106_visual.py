@@ -74,19 +74,19 @@ def test_pixmap_nav_3d_flotacion_y_barrido_cambian_el_dibujo():
     barrido = pixmap_nav("proteccion", barrido=0.5)
     assert _pixeles(base) != _pixeles(flotando)
     assert _pixeles(base) != _pixeles(barrido)
-    # Volumen: la parte baja del cuerpo es más oscura que la alta
-    # (extrusión + gradiente de tres paradas).
+    # Volumen (v1.0.15): el icono ya no es un glifo plano de un
+    # color dibujado por código, sino un recurso gráfico 3D con
+    # sombreado real: cientos de tonos distintos, con luces y
+    # sombras de verdad (un pictograma plano tendría <10 tonos).
     img = base.toImage()
-    from PySide6.QtGui import QColor
-
-    def brillo(y):
-        c = QColor(img.pixel(img.width() // 2, y))
-        return c.red() + c.green() + c.blue()
-
-    alto = max(brillo(y) for y in range(6, 16))
-    bajo = max(brillo(y) for y in range(img.height() - 16,
-                                        img.height() - 4))
-    assert bajo < alto
+    tonos = set()
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            if c.alpha() > 200:
+                tonos.add((c.red() // 16, c.green() // 16,
+                           c.blue() // 16))
+    assert len(tonos) > 40, len(tonos)
 
 
 def test_tarjeta_borde_animado_cambia_entre_dos_instantes():

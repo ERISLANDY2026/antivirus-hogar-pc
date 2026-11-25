@@ -151,5 +151,9 @@ def test_pixmap_nav_usa_el_recurso_3d():
         pm = pixmap_nav(nombre)
         assert not pm.isNull(), nombre
         img: QImage = pm.toImage()
-        assert img.pixelColor(img.width() // 2,
-                              img.height() // 2).alpha() > 0, nombre
+        opacos = sum(
+            1 for y in range(img.height()) for x in range(img.width())
+            if img.pixelColor(x, y).alpha() > 200)
+        # Hay gráfico de verdad (el centro del CD es su agujero:
+        # no se exige opacidad en un punto concreto).
+        assert opacos > (img.width() * img.height()) // 5, nombre
