@@ -2,14 +2,18 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.9.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.10.exe
 ;
-; v1.0.7: el instalador lleva INCORPORADO SoftEther VPN Client
-; (archivos oficiales en packaging\softether\client\, ver su
-; LEEME.md): se copian a {app}\softether y al terminar se registra
-; su servicio SEVPNCLIENT (solo si el equipo no tiene ya uno) para
-; que la app lo maneje por vpncmd en segundo plano, sin que el
-; usuario instale ni abra nada más.
+; v1.0.10: el instalador lleva INCORPORADO el instalador oficial
+; de OpenVPN Community (MSI en packaging\openvpn\, ver su
+; LEEME.md): se deja una copia en la carpeta «openvpn» de la app
+; (el instalador interno que conserva el auto-actualizador) y, si
+; el equipo no tiene ya OpenVPN, se instala EN SILENCIO con
+; msiexec para dejar su servicio interactivo y su tarjeta virtual
+; TAP-Windows, sin que el usuario instale ni abra nada mas.
+; SoftEther SALE por completo: al actualizar desde versiones
+; anteriores se retiran sus restos (servicio SEVPNCLIENT solo si
+; lo registro esta app, su carpeta y su controlador).
 ;
 ; La app se instala por máquina en Archivos de programa: escribir el hosts,
 ; crear la tarea semanal y tocar Defender exigen administrador, y la propia
@@ -18,7 +22,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.9"
+#define AppVersion "1.0.10"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 
@@ -59,6 +63,13 @@ Name: "desktopicon"; Description: "Crear un icono en el &escritorio"; GroupDescr
 Type: files; Name: "{autodesktop}\{#AppNombre}.lnk"
 Type: files; Name: "{group}\{#AppNombre}.lnk"
 Type: files; Name: "{group}\Desinstalar {#AppNombre}.lnk"
+; v1.0.10: restos de SoftEther de versiones anteriores (su carpeta
+; con el cliente incorporado y el registro de la preparacion de su
+; tarjeta virtual) se retiran al actualizar: el motor ya es
+; OpenVPN. Su servicio y su controlador los retira el codigo de
+; instalacion (ver RetirarRestosSoftEther), solo si son de la app.
+Type: filesandordirs; Name: "{app}\softether"
+Type: files; Name: "{app}\softether-nic-instalacion.txt"
 
 [Files]
 ; Salida --onedir de PyInstaller (dist\AntivirusHogarPC\*)
@@ -74,16 +85,19 @@ Source: "smartctl\smartctl.exe"; DestDir: "{app}"; Flags: ignoreversion
 #if FileExists("smartctl\smartd.exe")
 Source: "smartctl\smartd.exe"; DestDir: "{app}"; Flags: ignoreversion
 #endif
-; SoftEther VPN Client INCORPORADO (v1.0.7): los archivos del cliente
-; oficial 4.44-9807 (extraídos de su instalador; el instalador oficial
-; NO tiene modo silencioso, por eso la vía es copiar los archivos y
-; registrar el servicio — ver [Code]). Solo si el paquete está al
-; compilar: la compilación en la nube lo descarga del sitio oficial,
-; verifica tamaño y huella, lo extrae y FALLA si falta; una
-; compilación local sin el paquete produce la app sin SoftEther y la
-; app lo detecta (cae a la vía del perfil .ovpn).
-#if FileExists("softether\client\SOFTETHER-CLIENT.txt")
-Source: "softether\client\*"; DestDir: "{app}\softether"; Flags: ignoreversion recursesubdirs createallsubdirs
+; OpenVPN Community INCORPORADO (v1.0.10): el instalador oficial
+; (MSI amd64) verificado por la compilacion (tamano y SHA-256
+; fijados en el workflow). Se deja en la carpeta «openvpn» de la
+; app: es el instalador interno que conserva el
+; auto-actualizador, y el propio instalador de la app lo instala
+; en silencio si el equipo no tiene OpenVPN (ver el codigo).
+; Solo si el paquete esta al compilar: la compilacion en la nube
+; lo descarga del sitio oficial, verifica tamano y huella y
+; FALLA si falta; una compilacion local sin el paquete produce
+; la app sin el instalador conservado (la app lo detecta).
+#if FileExists("openvpn\OpenVPN-2.7.9-I002-amd64.msi")
+Source: "openvpn\OpenVPN-2.7.9-I002-amd64.msi"; DestDir: "{app}\openvpn"; Flags: ignoreversion
+Source: "openvpn\OPENVPN-INSTALADOR.txt"; DestDir: "{app}\openvpn"; Flags: ignoreversion
 #endif
 ; Script de la exclusión de Defender (v1.0.7, punto 4): lo ejecuta
 ; el propio instalador al terminar (ver [Code]) y deja su resultado
@@ -107,279 +121,146 @@ procedure SHChangeNotify(wEventId: Cardinal; uFlags: Cardinal;
   dwItem1: Cardinal; dwItem2: Cardinal);
   external 'SHChangeNotify@shell32.dll stdcall';
 
-{ v1.0.7: SoftEther INCORPORADO. El instalador oficial de SoftEther
-  no admite instalación silenciosa (verificado: es un instalador
-  propio sin parámetros desatendidos documentados), así que la vía
-  es la de su comunidad oficial: copiar los archivos del cliente y
-  registrar su servicio de Windows (SEVPNCLIENT, binario
-  «vpnclient_x64.exe /service»).
-  v1.0.9 — LA SOLUCIÓN DEL «ERROR 31»: en la 1.0.8 la tarjeta se
-  creaba aquí, elevado, y AUN ASÍ NicCreate devolvía «Error code:
-  31 — Installation of the Virtual Network Adapter device driver
-  failed» (evidencia: el softether-nic-instalacion.txt de la PC del
-  usuario). Causa raíz probada: el paquete del CONTROLADOR de la
-  tarjeta (Neo6 x64) nunca quedaba instalado en el almacén de
-  controladores de Windows (DriverStore); NicCreate lo ejecuta el
-  servicio (SYSTEM, sesión 0), que no puede mostrar el aviso de
-  confianza del editor para un controlador aún no almacenado, y la
-  instalación del driver moría siempre. El instalador oficial de
-  SoftEther SÍ deja ese controlador almacenado al instalar. Desde
-  la 1.0.9 ESTE instalador hace lo mismo: con pnputil, A LA VISTA y
-  ANTES de NicCreate, almacena el paquete oficial del controlador
-  (softether\driver\Neo6_x64_VPN.inf, extraído en la compilación
-  del hamcore del instalador oficial y verificado por huella) y
-  comprueba con pnputil /enum-drivers que quedó guardado. Todo el
-  proceso queda en softether-nic-instalacion.txt.
-  Si el equipo YA tiene un servicio SEVPNCLIENT (SoftEther propio
-  del usuario), no se toca nada. Si lo registramos nosotros, se
-  deja una marca en el registro para que el desinstalador solo
-  retire el servicio cuando es el incorporado. }
-function SoftEtherExePath(): String;
+{ v1.0.10: OpenVPN INCORPORADO y SoftEther RETIRADO.
+  OpenVPN: el instalador oficial (MSI) viaja en la carpeta
+  «openvpn» de la app como instalador interno conservado; si el
+  equipo no tiene openvpn.exe, ESTE instalador lo instala en
+  silencio (msiexec /quiet): quedan su servicio interactivo y su
+  tarjeta TAP-Windows, con controladores firmados que Windows
+  acepta. Si el equipo YA tiene OpenVPN (del usuario), no se toca:
+  el auto-actualizador interno de la app lo mantiene al dia.
+  SoftEther: al actualizar desde la 1.0.9 o anteriores, se retira
+  lo que la propia app dejo — su servicio SEVPNCLIENT (SOLO si la
+  marca del registro dice que lo registro esta app: el SoftEther
+  propio del usuario no se toca), el paquete de su controlador
+  Neo6 en el DriverStore y su carpeta (esta ultima por
+  InstallDelete). Todo queda anotado en openvpn-instalacion.txt.
+  Nada de esto aborta la instalacion si algo falla. }
+function OpenVPNExePath(): String;
 begin
-  if FileExists(ExpandConstant('{app}\softether\vpnclient_x64.exe')) then
-    Result := ExpandConstant('{app}\softether\vpnclient_x64.exe')
-  else if FileExists(ExpandConstant('{app}\softether\vpnclient.exe')) then
-    Result := ExpandConstant('{app}\softether\vpnclient.exe')
+  if FileExists(ExpandConstant('{pf}\OpenVPN\bin\openvpn.exe')) then
+    Result := ExpandConstant('{pf}\OpenVPN\bin\openvpn.exe')
+  else if FileExists(ExpandConstant('{pf32}\OpenVPN\bin\openvpn.exe')) then
+    Result := ExpandConstant('{pf32}\OpenVPN\bin\openvpn.exe')
   else
     Result := '';
 end;
 
-procedure RegistrarServicioSoftEther();
-var
-  ResultCode: Integer;
-  Exe: String;
+function OpenVPNMsiPath(): String;
 begin
-  Exe := SoftEtherExePath();
-  if Exe = '' then
-    Exit;
-  { ¿Ya existe el servicio? Entonces es del usuario: no se toca. }
-  if Exec(ExpandConstant('{sys}\sc.exe'), 'query SEVPNCLIENT', '',
-      SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
-    Exit;
-  if Exec(ExpandConstant('{sys}\sc.exe'),
-      'create SEVPNCLIENT binPath= "' + Exe + ' /service" ' +
-      'DisplayName= "SoftEther VPN Client" start= auto', '',
-      SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
-  begin
-    RegWriteStringValue(HKLM, 'Software\Antivirus Hogar PC',
-      'SoftEtherServicioPropio', '1');
-    Exec(ExpandConstant('{sys}\sc.exe'),
-      'description SEVPNCLIENT "Cliente VPN incluido con Antivirus ' +
-      'Hogar PC: trabaja en segundo plano para las conexiones de ' +
-      'VPN Gate."', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec(ExpandConstant('{sys}\net.exe'), 'start SEVPNCLIENT', '',
-      SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  end;
-end;
-
-// v1.0.8: ruta del vpncmd INCORPORADO (para crear la tarjeta
-// virtual durante la instalacion, ver CrearTarjetaVirtualSoftEther).
-function VpncmdPath(): String;
-begin
-  if FileExists(ExpandConstant('{app}\softether\vpncmd_x64.exe')) then
-    Result := ExpandConstant('{app}\softether\vpncmd_x64.exe')
-  else if FileExists(ExpandConstant('{app}\softether\vpncmd.exe')) then
-    Result := ExpandConstant('{app}\softether\vpncmd.exe')
-  else
+  Result := ExpandConstant(
+    '{app}\openvpn\OpenVPN-2.7.9-I002-amd64.msi');
+  if not FileExists(Result) then
     Result := '';
 end;
 
-// Lee un archivo de texto capturado y lo devuelve como un bloque.
-function LeerCaptura(Ruta: String): String;
+// Registro acumulado de la instalacion de OpenVPN y de la
+// retirada de SoftEther: se guarda en openvpn-instalacion.txt.
 var
-  Lineas: TArrayOfString;
-  i: Integer;
+  LogOpenVPN: String;
+
+procedure AgregarLogOpenVPN(Texto: String);
 begin
-  Result := '';
-  if LoadStringsFromFile(Ruta, Lineas) then
-    for i := 0 to GetArrayLength(Lineas) - 1 do
-      Result := Result + Lineas[i] + #13#10;
+  LogOpenVPN := LogOpenVPN + Texto;
 end;
 
-// Trae la captura de NicList la tarjeta «VPN»? Las tablas de vpncmd
-// ponen el nombre del adaptador como primera celda de su fila (la
-// fila lleva «|»); el prompt «VPN Client>» no lleva «|» y se descarta.
-function NicListTraeVPN(RutaCaptura: String): Boolean;
-var
-  Lineas: TArrayOfString;
-  i: Integer;
-  L: String;
-begin
-  Result := False;
-  if not LoadStringsFromFile(RutaCaptura, Lineas) then
-    Exit;
-  for i := 0 to GetArrayLength(Lineas) - 1 do
-  begin
-    L := Trim(Lineas[i]);
-    if (Length(L) >= 3) and (Copy(L, 1, 3) = 'VPN') and
-        (Pos('|', L) > 0) then
-      if (Length(L) = 3) or (Copy(L, 4, 1) = ' ') or
-          (Copy(L, 4, 1) = '|') then
-      begin
-        Result := True;
-        Exit;
-      end;
-  end;
-end;
-
-// v1.0.9: registro ACUMULADO de la preparación de la tarjeta
-// virtual (sección del controlador + sección de NicCreate) que se
-// guarda de una vez en softether-nic-instalacion.txt.
-var
-  LogNic: String;
-
-procedure AgregarLogNic(Texto: String);
-begin
-  LogNic := LogNic + Texto;
-end;
-
-// Trae el paquete del controlador en la enumeración de pnputil?
-// La salida de /enum-drivers trae «Original Name: Neo6_x64_VPN.inf»
-// (en español: «Nombre original:»); basta buscar el nombre del .inf.
-function EnumTraeControlador(RutaCaptura: String): Boolean;
-begin
-  Result := Pos('neo6_x64_vpn.inf',
-    LowerCase(LeerCaptura(RutaCaptura))) > 0;
-end;
-
-// v1.0.9: EL CONTROLADOR SE ALMACENA EN EL DRIVERSTORE, A LA VISTA
-// Y ANTES DE CREAR LA TARJETA. Es EL paso que faltaba (ver la causa
-// raíz en el comentario de RegistrarServicioSoftEther): pnputil
-// /add-driver deja el paquete Neo6_x64_VPN (el controlador oficial
-// de SoftEther para Windows 10 x64, hardware NeoAdapter_VPN) en el
-// almacén de controladores de Windows; con el paquete ya
-// almacenado y aceptado, el servicio SEVPNCLIENT puede crear la
-// tarjeta sin necesitar ningún aviso interactivo. Este paso corre
-// VISIBLE (SW_SHOW), NUNCA SW_HIDE: si Windows enseña su aviso de
-// instalación del controlador, el usuario debe poder verlo y
-// aceptarlo. Su salida exacta y la verificación con
-// pnputil /enum-drivers van al registro acumulado.
-procedure InstalarControladorTarjetaVirtual();
+// Retira los restos de SoftEther QUE DEJO ESTA APP (ver la marca
+// en el registro). El servicio se para y se borra; el paquete de
+// su controlador (Neo6_x64_VPN.inf) se quita del DriverStore con
+// pnputil buscando su nombre publicado (oemNN.inf) por bloques.
+// Si la marca no esta, el equipo tenia SU SoftEther (o ninguno):
+// no se toca nada.
+procedure RetirarRestosSoftEther();
 var
   ResultCode: Integer;
-  Inf: String;
-  Pnp: String;
-  CapAdd: String;
-  CapEnum: String;
-  Orden: String;
+  Marca: String;
+  Ps: String;
+  Script: String;
 begin
-  Inf := ExpandConstant('{app}\softether\driver\Neo6_x64_VPN.inf');
-  if not FileExists(Inf) then
+  if not RegQueryStringValue(HKLM, 'Software\Antivirus Hogar PC',
+      'SoftEtherServicioPropio', Marca) or (Marca <> '1') then
   begin
-    AgregarLogNic('Controlador de la tarjeta virtual: el paquete ' +
-      'NO trae softether\driver\Neo6_x64_VPN.inf: no se pudo ' +
-      'almacenar el controlador en el DriverStore.' + #13#10);
+    AgregarLogOpenVPN('SoftEther: sin marca de servicio propio; ' +
+      'no se retira ningun servicio (si el equipo tenia un ' +
+      'SoftEther del usuario, es suyo y no se toca).' + #13#10);
     Exit;
   end;
-  Pnp := ExpandConstant('{sys}\pnputil.exe');
-  CapAdd := ExpandConstant('{tmp}\ahpc-pnputil-add.txt');
-  CapEnum := ExpandConstant('{tmp}\ahpc-pnputil-enum.txt');
-  Orden := '/C ""' + Pnp + '" /add-driver "' + Inf + '" /install ' +
-    '> "' + CapAdd + '" 2>&1"';
-  Exec(ExpandConstant('{cmd}'), Orden, '', SW_SHOW,
-    ewWaitUntilTerminated, ResultCode);
-  AgregarLogNic('--- pnputil /add-driver "' + Inf + '" /install ' +
-    '(codigo del proceso: ' + IntToStr(ResultCode) + ') ---' + #13#10 +
-    LeerCaptura(CapAdd) + #13#10);
-  Orden := '/C ""' + Pnp + '" /enum-drivers > "' + CapEnum + '" 2>&1"';
-  Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
-    ewWaitUntilTerminated, ResultCode);
-  if EnumTraeControlador(CapEnum) then
-    AgregarLogNic('Verificacion del controlador: pnputil ' +
-      '/enum-drivers TRAE el paquete Neo6_x64_VPN.inf: el ' +
-      'controlador quedo ALMACENADO en el DriverStore.' + #13#10)
-  else
-    AgregarLogNic('Verificacion del controlador: pnputil ' +
-      '/enum-drivers NO trae Neo6_x64_VPN.inf: el controlador NO ' +
-      'quedo almacenado; la salida de pnputil va arriba.' + #13#10);
-  AgregarLogNic(#13#10);
-end;
-
-// LA TARJETA VIRTUAL SE CREA EN LA INSTALACION (v1.0.8), DESPUÉS de
-// almacenar su controlador (v1.0.9). Aqui se asegura el servicio en
-// marcha, se ejecuta NicCreate con el vpncmd incorporado y se
-// verifica con NicList; su sección se añade al registro acumulado.
-// Si algo falla NO se aborta la instalacion: queda registrado para
-// que el usuario pueda reportarlo.
-procedure CrearTarjetaVirtualSoftEther();
-var
-  ResultCode: Integer;
-  Cmd: String;
-  CapAntes: String;
-  CapCreate: String;
-  CapDespues: String;
-  Orden: String;
-begin
-  Cmd := VpncmdPath();
-  if Cmd = '' then
-  begin
-    AgregarLogNic('vpncmd no encontrado en la carpeta de ' +
-      'SoftEther: la tarjeta virtual NO se pudo crear.' + #13#10);
-    Exit;
-  end;
-  CapAntes := ExpandConstant('{tmp}\ahpc-niclist-antes.txt');
-  CapCreate := ExpandConstant('{tmp}\ahpc-niccreate.txt');
-  CapDespues := ExpandConstant('{tmp}\ahpc-niclist-despues.txt');
-  // El servicio debe estar en marcha para que vpncmd le hable; si ya
-  // corria, este «net start» devuelve error sin ninguna importancia.
-  Exec(ExpandConstant('{sys}\net.exe'), 'start SEVPNCLIENT', '',
+  Exec(ExpandConstant('{sys}\net.exe'), 'stop SEVPNCLIENT', '',
     SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(2000);
-  Orden := '/C ""' + Cmd + '" localhost /CLIENT /CMD NicList > "' +
-    CapAntes + '" 2>&1"';
-  Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete SEVPNCLIENT', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  AgregarLogOpenVPN('SoftEther: servicio SEVPNCLIENT (registrado ' +
+    'por esta app) parado y retirado.' + #13#10);
+  Ps := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Script := '$bloques = (pnputil /enum-drivers | Out-String) ' +
+    '-split ''\r?\n\r?\n''; ' +
+    'foreach ($b in $bloques) { ' +
+    'if (($b -match ''Neo6_x64_VPN\.inf'') -and ' +
+    '($b -match ''(oem\d+\.inf)'')) { ' +
+    'pnputil /delete-driver $Matches[1] /uninstall /force | ' +
+    'Out-Null } }';
+  Exec(Ps, '-NoProfile -NonInteractive -ExecutionPolicy Bypass ' +
+    '-Command "' + Script + '"', '', SW_HIDE,
     ewWaitUntilTerminated, ResultCode);
-  if NicListTraeVPN(CapAntes) then
-  begin
-    AgregarLogNic('La tarjeta virtual (VPN) YA existia: NicList ' +
-      'la trae y no hizo falta crearla.' + #13#10);
-  end
-  else
-  begin
-    Orden := '/C ""' + Cmd + '" localhost /CLIENT /CMD NicCreate VPN' +
-      ' > "' + CapCreate + '" 2>&1"';
-    Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
-      ewWaitUntilTerminated, ResultCode);
-    AgregarLogNic('NicCreate ejecutado durante la instalacion ' +
-      '(codigo del proceso: ' + IntToStr(ResultCode) + ').' + #13#10);
-    Sleep(2000);
-    Orden := '/C ""' + Cmd + '" localhost /CLIENT /CMD NicList > "' +
-      CapDespues + '" 2>&1"';
-    Exec(ExpandConstant('{cmd}'), Orden, '', SW_HIDE,
-      ewWaitUntilTerminated, ResultCode);
-    if NicListTraeVPN(CapDespues) then
-      AgregarLogNic('Verificacion: NicList trae la tarjeta (VPN): ' +
-        'tarjeta creada y presente.' + #13#10)
-    else
-      AgregarLogNic('Verificacion: NicList sigue SIN traer la ' +
-        'tarjeta (VPN): la creacion fallo; la salida exacta de ' +
-        'vpncmd va debajo para poder reportarla.' + #13#10);
-    AgregarLogNic(#13#10 + '--- Salida de NicCreate ---' + #13#10 +
-      LeerCaptura(CapCreate) + #13#10 +
-      '--- Salida de NicList (despues) ---' + #13#10 +
-      LeerCaptura(CapDespues));
-  end;
+  AgregarLogOpenVPN('SoftEther: paquete de su controlador ' +
+    '(Neo6_x64_VPN.inf) retirado del DriverStore si estaba ' +
+    '(pnputil, codigo ' + IntToStr(ResultCode) + ').' + #13#10);
+  RegDeleteValue(HKLM, 'Software\Antivirus Hogar PC',
+    'SoftEtherServicioPropio');
 end;
 
-// v1.0.9: la preparación completa de la tarjeta, en orden: primero
-// el controlador al DriverStore (pnputil, visible) y después la
-// creación de la tarjeta (NicCreate verificado con NicList). El
-// registro acumulado se guarda de una vez junto a la app.
-procedure PrepararTarjetaVirtualSoftEther();
+// Instala OpenVPN en silencio si el equipo no lo tiene. El MSI
+// oficial deja el servicio interactivo y la tarjeta TAP-Windows.
+// Codigos de msiexec que valen: 0 (instalado), 3010 y 1641
+// (instalado, reinicio pendiente). Cualquier otro se anota tal
+// cual: no se finge.
+procedure InstalarOpenVPN();
+var
+  ResultCode: Integer;
+  Msi: String;
 begin
-  LogNic := 'Antivirus Hogar PC v1.0.9 - preparacion de la tarjeta ' +
-    'virtual de SoftEther durante la instalacion.' + #13#10 + #13#10;
-  if VpncmdPath() = '' then
-    AgregarLogNic('vpncmd no encontrado en la carpeta de SoftEther: ' +
-      'este instalador no traia el paquete y la tarjeta virtual NO ' +
-      'se pudo preparar.' + #13#10)
-  else
+  if OpenVPNExePath() <> '' then
   begin
-    InstalarControladorTarjetaVirtual();
-    CrearTarjetaVirtualSoftEther();
+    AgregarLogOpenVPN('OpenVPN: ya presente en el equipo (' +
+      OpenVPNExePath() + '); no se reinstala. Su mantenimiento ' +
+      'queda en el auto-actualizador interno de la app.' + #13#10);
+    Exit;
   end;
-  SaveStringToFile(ExpandConstant('{app}\softether-nic-instalacion.txt'),
-    LogNic, False);
+  Msi := OpenVPNMsiPath();
+  if Msi = '' then
+  begin
+    AgregarLogOpenVPN('OpenVPN: este instalador NO traia el ' +
+      'paquete oficial (openvpn\OpenVPN-2.7.9-I002-amd64.msi): ' +
+      'el motor VPN no se pudo instalar.' + #13#10);
+    Exit;
+  end;
+  if Exec(ExpandConstant('{sys}\msiexec.exe'),
+      '/i "' + Msi + '" /quiet /norestart', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    AgregarLogOpenVPN('OpenVPN: instalador oficial ejecutado en ' +
+      'silencio (msiexec, codigo ' + IntToStr(ResultCode) + '). ' +
+      '0 = instalado; 3010/1641 = instalado con reinicio ' +
+      'pendiente.' + #13#10)
+  else
+    AgregarLogOpenVPN('OpenVPN: no se pudo ni lanzar msiexec ' +
+      'para instalar el paquete oficial.' + #13#10);
+  if OpenVPNExePath() <> '' then
+    AgregarLogOpenVPN('Verificacion: openvpn.exe presente en ' +
+      OpenVPNExePath() + '.' + #13#10)
+  else
+    AgregarLogOpenVPN('Verificacion: openvpn.exe SIGUE sin ' +
+      'aparecer tras la instalacion silenciosa; el codigo de ' +
+      'msiexec de arriba dice la causa.' + #13#10);
+end;
+
+procedure PrepararMotorOpenVPN();
+begin
+  LogOpenVPN := 'Antivirus Hogar PC v1.0.10 - motor VPN OpenVPN ' +
+    'durante la instalacion.' + #13#10 + #13#10;
+  RetirarRestosSoftEther();
+  InstalarOpenVPN();
+  SaveStringToFile(ExpandConstant('{app}\openvpn-instalacion.txt'),
+    LogOpenVPN, False);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -389,7 +270,10 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    { Solo se retira el servicio si lo registró ESTE instalador. }
+    { Solo se retira el servicio si lo registró ESTE instalador
+      (instalaciones de la epoca de SoftEther, hasta la 1.0.9).
+      OpenVPN NO se desinstala: es un programa del sistema que el
+      usuario puede usar con otros fines. }
     if RegQueryStringValue(HKLM, 'Software\Antivirus Hogar PC',
         'SoftEtherServicioPropio', Marca) and (Marca = '1') then
     begin
@@ -434,18 +318,9 @@ var
   Lineas: String;
 begin
   Lineas := '["AntivirusHogarPC.exe", "icono.ico", "exclusion_defender.ps1"';
-  if SoftEtherExePath() <> '' then
-  begin
-    Lineas := Lineas + ', "softether\vpnclient_x64.exe", ' +
-      '"softether\vpncmd_x64.exe", "softether\vpncmgr_x64.exe", ' +
-      '"softether\hamcore.se2"';
-    { v1.0.9: el paquete del controlador de la tarjeta virtual. }
-    if FileExists(ExpandConstant(
-        '{app}\softether\driver\Neo6_x64_VPN.inf')) then
-      Lineas := Lineas + ', "softether\driver\Neo6_x64_VPN.inf", ' +
-        '"softether\driver\Neo6_x64_VPN.sys", ' +
-        '"softether\driver\Neo6_x64_VPN.cat"';
-  end;
+  { v1.0.10: el instalador interno de OpenVPN conservado. }
+  if OpenVPNMsiPath() <> '' then
+    Lineas := Lineas + ', "openvpn\OpenVPN-2.7.9-I002-amd64.msi"';
   Lineas := Lineas + ']';
   SaveStringToFile(ExpandConstant('{app}\componentes.json'),
     Lineas, False);
@@ -456,8 +331,7 @@ begin
   if CurStep = ssPostInstall then
   begin
     SHChangeNotify($08000000, $0000, 0, 0); { SHCNE_ASSOCCHANGED }
-    RegistrarServicioSoftEther();
-    PrepararTarjetaVirtualSoftEther();
+    PrepararMotorOpenVPN();
     AplicarExclusionDefender();
     EscribirManifiestoComponentes();
   end;

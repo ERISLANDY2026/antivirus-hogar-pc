@@ -287,22 +287,23 @@ def main(argv: list[str] | None = None) -> int:
                                 _aviso_defender)
 
         QTimer.singleShot(1500, _mostrar_aviso_defender)
-    # Auto-actualizador de SoftEther (v1.0.7, punto 7): chequeo en
-    # segundo plano si toca (cada 3 días) y aplicación de lo
-    # pendiente si no hay túnel; nunca bloquea la interfaz.
-    def _chequeo_softether():
+    # Auto-actualizador de OpenVPN (v1.0.10): chequeo en segundo
+    # plano si toca (cada 3 días) y aplicación SEGURA de lo
+    # pendiente si no hay túnel (verificada antes y después, con
+    # reversión si algo queda mal); nunca bloquea la interfaz.
+    def _chequeo_openvpn():
         import threading
 
         def _trabajo():
-            from ..winapi import softether_update
+            from ..winapi import openvpn_update
 
-            softether_update.chequear_y_aplicar(
+            openvpn_update.chequear_y_aplicar(
                 servicios.registrar_actividad,
                 avisar=bandeja.avisar if bandeja is not None else None)
 
         threading.Thread(target=_trabajo, daemon=True).start()
 
-    QTimer.singleShot(6000, _chequeo_softether)
+    QTimer.singleShot(6000, _chequeo_openvpn)
     if "--inicio-automatico" in argv:
         # Arranque de Windows: minimizada, en segundo plano, y con la
         # rutina automática si su interruptor está activado.

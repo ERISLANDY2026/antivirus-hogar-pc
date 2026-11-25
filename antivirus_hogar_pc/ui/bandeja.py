@@ -4,7 +4,7 @@ Al arrancar —también con --inicio-automatico— la app vive junto al
 reloj: doble clic abre la ventana, el menú contextual trae «Abrir»,
 «Escaneo rápido» y «Salir», y los avisos importantes (rutina de
 arranque terminada, escaneo con hallazgos, actualización de
-SoftEther) llegan por globito SIN actuar nunca sola ante amenazas:
+OpenVPN) llegan por globito SIN actuar nunca sola ante amenazas:
 el globito avisa; decidir es del usuario.
 
 Al cerrar la ventana, la app se queda en la bandeja en vez de

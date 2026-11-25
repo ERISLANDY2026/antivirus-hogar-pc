@@ -2,8 +2,9 @@
 
 La API (https://www.vpngate.net/api/iphone/) devuelve un CSV con comentarios
 «*…», una cabecera que empieza por «#» y una fila por servidor; la última
-columna trae la configuración OpenVPN en Base64. La app NO implementa el
-túnel: genera el .ovpn y lo delega a SoftEther VPN Client u OpenVPN Connect.
+columna trae la configuración OpenVPN en Base64. Desde la 1.0.10
+el túnel lo levanta el motor OpenVPN incorporado (winapi.vpn_win);
+sin él, el .ovpn se delega al cliente VPN que haya instalado.
 
 Aviso honesto (también en la UI): los servidores son de VOLUNTARIOS; el
 operador puede registrar la conexión. No usar para banca ni anonimato.

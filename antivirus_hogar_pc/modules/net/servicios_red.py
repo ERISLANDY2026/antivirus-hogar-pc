@@ -167,38 +167,39 @@ def _registrar_intento_vpn(detalle: str) -> None:
 def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:
     """Conecta con el servidor elegido de VPN Gate.
 
-    v1.0.7 (pedido central del usuario): si SoftEther está en el
-    equipo (el INCORPORADO que instala la propia app, o uno que el
-    usuario ya tuviera), la app crea la conexión y la levanta ELLA
-    por vpncmd, en segundo plano y sin abrir la ventana de
-    SoftEther; el resultado trae datos["conectado"]=True cuando el
+    v1.0.10 (cambio de motor): si OpenVPN está en el equipo (el
+    INCORPORADO que instala la propia app, o uno que el usuario ya
+    tuviera), la app levanta el túnel ELLA con el perfil .ovpn del
+    servidor, en segundo plano y sin abrir ninguna ventana de
+    OpenVPN; el resultado trae datos["conectado"]=True cuando el
     túnel quedó confirmado, para que el botón se ponga verde.
 
-    Respaldo (sin SoftEther): la vía de siempre — se genera el .ovpn
-    y se entrega al cliente VPN instalado; si no hay ninguno, el
-    perfil queda guardado y se explica qué instalar.
+    Respaldo (sin OpenVPN): se genera el .ovpn y se entrega al
+    cliente VPN instalado; si no hay ninguno, el perfil queda
+    guardado y se explica qué instalar.
     """
-    res_se = seguro(vpn_win.softether_instalado)
-    if res_se.ok and res_se.datos:
-        res = seguro(vpn_win.conectar_softether, servidor.hostname)
-        datos_se = res.datos if res.ok and isinstance(res.datos, dict) else {}
-        if datos_se.get("ok"):
-            _guardar_estado_vpn(servidor, via="softether")
+    res_ov = seguro(vpn_win.openvpn_instalado)
+    if res_ov.ok and res_ov.datos:
+        res = seguro(vpn_win.conectar_openvpn,
+                     servidor.generar_ovpn(), servidor.hostname)
+        datos_ov = res.datos if res.ok and isinstance(res.datos, dict) else {}
+        if datos_ov.get("ok"):
+            _guardar_estado_vpn(servidor, via="openvpn")
             _registrar_intento_vpn(
                 f"VPN Gate: conectado a {servidor.hostname} "
-                f"({servidor.pais}) con SoftEther.")
+                f"({servidor.pais}) con OpenVPN.")
             return ResultadoModulo(
                 ok=True,
                 mensaje=(f"Conectado a {servidor.hostname} "
-                         f"({servidor.pais}) con SoftEther: el túnel "
+                         f"({servidor.pais}) con OpenVPN: el túnel "
                          "está arriba y trabaja en segundo plano, sin "
                          "que tengas que abrir ningún otro programa."),
-                datos={"via": "softether", "conectado": True,
+                datos={"via": "openvpn", "conectado": True,
                        "hostname": servidor.hostname},
             )
-        mensaje_fallo = (datos_se.get("mensaje") or
-                         "No se pudo conectar con SoftEther.")
-        detalle_fallo = datos_se.get("detalle") or res.mensaje or ""
+        mensaje_fallo = (datos_ov.get("mensaje") or
+                         "No se pudo conectar con OpenVPN.")
+        detalle_fallo = datos_ov.get("detalle") or res.mensaje or ""
         _registrar_intento_vpn(
             f"VPN Gate: no se pudo conectar a {servidor.hostname} "
             f"({servidor.pais}): {mensaje_fallo}"
@@ -223,9 +224,9 @@ def conectar_vpn(servidor: ServidorVPN) -> ResultadoModulo:
         return ResultadoModulo(
             ok=False,
             mensaje=("El perfil quedó guardado, pero no se encontró ningún cliente VPN "
-                     "instalado. Instala SoftEther VPN Client (el recomendado por "
-                     "VPN Gate) u OpenVPN Connect, y luego abre el perfil desde "
-                     f"la carpeta de perfiles:\n{ruta}"),
+                     "instalado. Instala OpenVPN (el de la comunidad, el que "
+                     "trae esta app) u OpenVPN Connect, y luego abre el perfil "
+                     f"desde la carpeta de perfiles:\n{ruta}"),
             datos={"ruta_ovpn": ruta},
         )
     cliente = clientes[0]
@@ -362,59 +363,61 @@ def estado_vpn() -> ResultadoModulo:
     ip = str(res_ip.datos) if res_ip.ok and res_ip.datos else ""
     guardado = _leer_estado_vpn()
     conectada = bool(seguro(vpn_win.hay_tunel_openvpn).datos)
-    # v1.0.7: el túnel de SoftEther (incorporado) también es conexión
-    # viva, y su estado lo confirma vpncmd, no un proceso openvpn.
-    res_estado_se = seguro(vpn_win.estado_softether)
-    estado_se = (res_estado_se.datos
-                 if res_estado_se.ok and isinstance(res_estado_se.datos, dict)
+    # v1.0.10: el túnel del motor OpenVPN (incorporado) también es
+    # conexión viva, y su estado lo confirma su interfaz de gestión,
+    # no solo que haya un proceso openvpn en marcha.
+    res_estado_ov = seguro(vpn_win.estado_openvpn)
+    estado_ov = (res_estado_ov.datos
+                 if res_estado_ov.ok and isinstance(res_estado_ov.datos, dict)
                  else {})
-    conectada_se = bool(estado_se.get("conectado"))
-    conectada = conectada or conectada_se
+    conectada_ov = bool(estado_ov.get("conectado"))
+    conectada = conectada or conectada_ov
     if conectada:
-        via = " con SoftEther" if conectada_se else ""
+        via = " con OpenVPN" if conectada_ov else ""
         mensaje = (f"VPN CONECTADA a {guardado.get('hostname') or 'un servidor'}"
                    f" ({guardado.get('pais') or 'país sin anotar'}){via}.")
     else:
         mensaje = ("VPN desconectada: no hay ningún túnel en marcha. "
                    "Pulsa «Conectar» en un servidor de la lista: con "
-                   "SoftEther (incluido) la app levanta el túnel ella "
+                   "OpenVPN (incluido) la app levanta el túnel ella "
                    "misma; sin él, le entrega el perfil a tu cliente VPN.")
     return ResultadoModulo(ok=True, mensaje=mensaje, datos={
         "clientes": nombres, "ip": ip, "conectada": conectada,
         "servidor": guardado.get("hostname", ""), "pais": guardado.get("pais", ""),
-        "softether": bool(estado_se.get("instalado")),
-        "conectada_softether": conectada_se,
+        "openvpn": bool(estado_ov.get("instalado")),
+        "conectada_openvpn": conectada_ov,
     })
 
 
 def desconectar_vpn() -> ResultadoModulo:
-    """Apaga la VPN desde la app cerrando el proceso openvpn del túnel.
+    """Apaga la VPN desde la app.
 
-    OpenVPN Connect/GUI no ofrecen un comando de desconexión para
-    terceros; terminar su proceso openvpn cierra la conexión al momento
-    (winapi.vpn_win.terminar_procesos_openvpn). La conexión de
-    SoftEther (v1.0.7) se baja por vpncmd (AccountDisconnect)."""
-    # v1.0.7: primero SoftEther, si su túnel es el que está arriba.
-    res_estado_se = seguro(vpn_win.estado_softether)
-    estado_se = (res_estado_se.datos
-                 if res_estado_se.ok and isinstance(res_estado_se.datos, dict)
+    La conexión del motor OpenVPN (v1.0.10) se baja por su interfaz
+    de gestión (signal SIGTERM). Las conexiones de otros clientes
+    OpenVPN (Connect/GUI) no ofrecen un comando de desconexión para
+    terceros: terminar su proceso openvpn cierra la conexión al
+    momento (winapi.vpn_win.terminar_procesos_openvpn)."""
+    # v1.0.10: primero el motor OpenVPN, si su túnel es el que está arriba.
+    res_estado_ov = seguro(vpn_win.estado_openvpn)
+    estado_ov = (res_estado_ov.datos
+                 if res_estado_ov.ok and isinstance(res_estado_ov.datos, dict)
                  else {})
-    if estado_se.get("conectado"):
-        res_desc = seguro(vpn_win.desconectar_softether)
+    if estado_ov.get("conectado"):
+        res_desc = seguro(vpn_win.desconectar_openvpn)
         datos_desc = (res_desc.datos if res_desc.ok
                       and isinstance(res_desc.datos, dict) else {})
         if datos_desc.get("ok"):
             _borrar_estado_vpn()
-            # v1.0.7, punto 7: si había una actualización de
-            # SoftEther DIFERIDA por el túnel activo, este es su
-            # momento: se aplica en segundo plano al cerrarlo.
+            # v1.0.10: si había una actualización de OpenVPN
+            # DIFERIDA por el túnel activo, este es su momento: se
+            # aplica en segundo plano al cerrarlo.
             def _aplicar_diferida():
                 try:
                     from ...core.actividad import RegistroActividad
-                    from ...winapi import softether_update
+                    from ...winapi import openvpn_update
 
                     registro = RegistroActividad(config.ruta_actividad())
-                    softether_update.aplicar_pendiente(registro.registrar)
+                    openvpn_update.aplicar_pendiente(registro.registrar)
                 except Exception:
                     pass
 
@@ -424,7 +427,7 @@ def desconectar_vpn() -> ResultadoModulo:
                              daemon=True).start()
             return ResultadoModulo(
                 ok=True,
-                mensaje=("VPN desconectada: SoftEther bajó el túnel. "
+                mensaje=("VPN desconectada: OpenVPN bajó el túnel. "
                          "Tu IP pública volverá a ser la de tu "
                          "proveedor en unos segundos."))
     res = seguro(vpn_win.terminar_procesos_openvpn)
@@ -441,14 +444,14 @@ def desconectar_vpn() -> ResultadoModulo:
         return ResultadoModulo(
             ok=True,
             mensaje=("No se encontró ningún proceso OpenVPN en marcha (la "
-                    "conexión ya estaba cerrada o la lleva SoftEther, que "
-                    "se desconecta en su propia ventana). El estado guardado "
-                    "quedó limpio: VPN desconectada."))
+                    "conexión ya estaba cerrada o la lleva otro cliente "
+                    "VPN, que se desconecta en su propia ventana). El "
+                    "estado guardado quedó limpio: VPN desconectada."))
     return ResultadoModulo(
         ok=False,
         mensaje=("No hay ninguna conexión VPN activa que esta app pueda "
-                 "cerrar. Si conectaste con SoftEther VPN Client, "
-                 "desconecta desde su ventana."))
+                 "cerrar. Si conectaste con otro cliente VPN (OpenVPN "
+                 "GUI o Connect), desconecta desde su ventana."))
 
 
 # --- Wi-Fi -----------------------------------------------------------------------

@@ -1,21 +1,20 @@
-"""v1.0.9 — La solución del «Error 31» de SoftEther + 2 cambios.
+"""v1.0.9 — Lo que queda vigente tras el cambio de motor de la 1.0.10.
 
-1. El controlador de la tarjeta virtual (Neo6_x64_VPN, Windows 10
-   x64) viaja con la app y el INSTALADOR lo almacena en el
-   DriverStore con pnputil /add-driver, VISIBLE (SW_SHOW) y ANTES
-   de NicCreate, verificando con /enum-drivers; el registro
-   acumulado va a softether-nic-instalacion.txt. La compilación en
-   la nube lo extrae del hamcore del instalador oficial (o del
-   árbol oficial de la etiqueta) verificando sus huellas SHA-256.
-2. Respaldo al conectar: crear_nic_elevada corre INTERACTIVO (sin
-   -NonInteractive), vuelve a almacenar el controlador con pnputil
-   y guarda la salida REAL (su línea de error va en el detalle).
-3. Cambio 1: la fila del servidor conectado lleva «Conectado»
-   (verde, deshabilitado) y «Desconectar» (rojo) a su derecha.
-4. Cambio 2: la calificación de salud sale del centro del anillo:
-   AnilloSalud ya no dibuja texto y expone texto_puntuacion() +
-   señal valor_cambiado para la esquina inferior izquierda del
-   radar de Inicio.
+Las secciones 1 y 2 de este archivo (el controlador Neo6 de
+SoftEther almacenado con pnputil y el respaldo interactivo de
+crear la tarjeta) se RETIRARON en la 1.0.10: SoftEther salió de
+la app y su solución del «Error 31» quedó superada por el cambio
+de motor a OpenVPN (ver tests/test_v1010.py). Se conserva la
+guarda ISPP del .iss (una línea que empieza por «#» tras espacios
+rompió ISCC en la corrida 45613046882) porque protege también al
+instalador nuevo.
+
+Lo que sigue vigente de la 1.0.9:
+3. La fila del servidor conectado lleva «Conectado» (verde,
+   deshabilitado) y «Desconectar» (rojo) a su derecha.
+4. La calificación de salud fuera del centro del anillo:
+   AnilloSalud no dibuja texto y expone texto_puntuacion() +
+   señal valor_cambiado para la esquina inferior izquierda.
 """
 import os
 
@@ -29,134 +28,16 @@ def _leer(ruta_relativa: str) -> str:
         return f.read()
 
 
-# === 1. Instalador: pnputil visible, antes de NicCreate =======================
-
-def test_instalador_109_almacena_el_controlador_antes_de_crear():
+def test_guardia_ispp_ninguna_linea_empieza_por_almohadilla():
     iss = _leer(os.path.join("packaging", "instalador.iss"))
-    assert '#define AppVersion "1.0.9"' in iss
-    assert "pnputil" in iss and "/add-driver" in iss
-    assert "Neo6_x64_VPN.inf" in iss
-    assert "/enum-drivers" in iss  # verificación de que quedó almacenado
-    # El paso de pnputil va VISIBLE: tras «/add-driver», el primer
-    # modo de ventana que aparece es SW_SHOW (el SW_HIDE de la
-    # sección es solo el de la verificación /enum-drivers).
-    seccion = iss.split("procedure InstalarControladorTarjetaVirtual();")[1]
-    seccion = seccion.split("procedure ")[0]
-    i_add = seccion.index("/add-driver")
-    assert seccion.index("SW_SHOW", i_add) < seccion.index("SW_HIDE", i_add)
-    # Orden en la preparación: primero el controlador, después NicCreate.
-    envoltura = iss.split("procedure PrepararTarjetaVirtualSoftEther();")[1]
-    envoltura = envoltura.split("procedure ")[0]
-    assert envoltura.index("InstalarControladorTarjetaVirtual();") < \
-        envoltura.index("CrearTarjetaVirtualSoftEther();")
-    # Y la preparación es lo que corre al terminar de instalar.
-    assert "PrepararTarjetaVirtualSoftEther();" in iss
-    # El registro es ACUMULADO (las dos secciones en un solo archivo).
-    assert "AgregarLogNic" in iss
-    assert "softether-nic-instalacion.txt" in iss
-    # Guarda ISPP: ninguna línea puede EMPEZAR por «#» (salvo las
-    # directivas legítimas, que van en columna 0): una continuación
-    # «#13#10 + …» al inicio de línea rompió ISCC en la corrida
-    # 45613046882 («Unknown preprocessor directive», línea 283).
+    # Guarda ISPP: ninguna línea puede EMPEZAR por «#» tras
+    # espacios (salvo las directivas legítimas, que van en columna
+    # 0): una continuación «#13#10 + …» al inicio de línea rompió
+    # ISCC en la corrida 45613046882 («Unknown preprocessor
+    # directive», línea 283).
     for linea in iss.splitlines():
         assert not linea.startswith((" ", "\t")) or \
             not linea.lstrip().startswith("#"), linea
-
-
-def test_workflow_109_extrae_y_verifica_el_controlador():
-    yml = _leer(os.path.join(".github", "workflows", "build-windows.yml"))
-    assert "Neo6_Win10" in yml  # la carpeta del controlador en el hamcore
-    for huella in (
-        "8F049A53BAB3F1A16F118C91C15569CCEEF4B2955905C8F7C70F7952F9C175B8",
-        "54E74A7906AF47C2B07F0EA171973D6ABB123549A1C66CF0CC6F24EC5E55A237",
-        "162C56608532EF7C699520194FD2231550BAB6D0A32C1BBB6866F22DA8C45AED",
-    ):
-        assert huella in yml  # huellas fijadas del paquete oficial
-    assert "v4.44-9807-rtm" in yml  # respaldo: árbol oficial de la etiqueta
-    assert "Get-ChildItem -Recurse se-extract" in yml  # forense completa
-
-
-# === 2. Respaldo al conectar: interactivo y con la salida real ================
-
-def test_elevado_interactivo_sin_noninteractive_en_el_proceso_elevado():
-    fuente = _leer(os.path.join(
-        "antivirus_hogar_pc", "winapi", "powershell.py"))
-    funcion = fuente.split("def ejecutar_elevado_interactivo")[1]
-    funcion = funcion.split("\ndef ")[0]
-    assert "ArgumentList" in funcion
-    argument_list = funcion.split("ArgumentList")[1].split(";")[0]
-    # El proceso ELEVADO no lleva -NonInteractive (el aviso de
-    # Windows debe poder aparecer); el lanzador no elevado sí, y es
-    # otra cosa: va fuera del ArgumentList.
-    assert "NonInteractive" not in argument_list
-    assert "-EncodedCommand" in argument_list
-
-
-def _preparar_vpn_win_falso(monkeypatch, tmp_path, nic_presente: bool,
-                            salida_elevada: str):
-    """vpn_win con vpncmd falso y el paso elevado grabado."""
-    from antivirus_hogar_pc.winapi import powershell, vpn_win
-
-    carpeta_soft = tmp_path / "softether"
-    (carpeta_soft / "driver").mkdir(parents=True)
-    (carpeta_soft / "driver" / "Neo6_x64_VPN.inf").write_text(
-        "[Version]", encoding="utf-8")
-    carpeta_datos = tmp_path / "datos"
-    carpeta_datos.mkdir()
-    monkeypatch.setattr(vpn_win, "ruta_vpncmd",
-                        lambda: r"C:\fake\vpncmd_x64.exe")
-    monkeypatch.setattr(vpn_win, "carpeta_softether",
-                        lambda: str(carpeta_soft))
-    monkeypatch.setattr(vpn_win, "carpeta_perfiles_vpn",
-                        lambda: str(carpeta_datos))
-    grabado = {}
-
-    def falso_interactivo(script, timeout=240):
-        grabado["script"] = script
-        (carpeta_datos / "salida-crear-nic.txt").write_text(
-            salida_elevada, encoding="utf-8")
-        return True
-
-    monkeypatch.setattr(powershell, "ejecutar_elevado_interactivo",
-                        falso_interactivo)
-    if nic_presente:
-        tabla = ("Virtual Network Adapter Name | Status\n"
-                 "VPN | Connected\n")
-    else:
-        tabla = "Virtual Network Adapter Name | Status\n"
-    monkeypatch.setattr(vpn_win, "_ejecutar_vpncmd",
-                        lambda args, timeout=30: (0, tabla))
-    return vpn_win, grabado
-
-
-def test_crear_nic_elevada_109_almacena_controlador_y_crea(monkeypatch,
-                                                          tmp_path):
-    vpn_win, grabado = _preparar_vpn_win_falso(
-        monkeypatch, tmp_path, nic_presente=True, salida_elevada="ok")
-    res = vpn_win.crear_nic_elevada()
-    assert res["ok"] is True
-    script = grabado["script"]
-    # La receta completa, en orden: pnputil primero, NicCreate después.
-    assert "pnputil" in script and "/add-driver" in script
-    assert "Neo6_x64_VPN.inf" in script
-    assert script.index("pnputil") < script.index("NicCreate")
-    # La salida real se guarda en la carpeta de datos de la app.
-    assert "salida-crear-nic.txt" in script
-
-
-def test_crear_nic_elevada_109_detalle_con_la_salida_real(monkeypatch,
-                                                          tmp_path):
-    vpn_win, _grabado = _preparar_vpn_win_falso(
-        monkeypatch, tmp_path, nic_presente=False,
-        salida_elevada=(
-            "VPN Client>NicCreate VPN\n"
-            "Error occurred. (Error code: 31)\n"
-            "Installation of the Virtual Network Adapter device "
-            "driver failed.\n"))
-    res = vpn_win.crear_nic_elevada()
-    assert res["ok"] is False
-    # El detalle trae la línea REAL de vpncmd, no un texto inventado.
-    assert "Error code: 31" in res["detalle"]
 
 
 # === 3. Cambio 1: botones por fila en VPN Gate ================================
@@ -193,7 +74,7 @@ def test_fila_conectada_lleva_conectado_verde_y_desconectar_rojo():
     celda1 = pagina._tabla_vpn.cellWidget(1, 5)
     botones1 = {b.text(): b for b in celda1.findChildren(QPushButton)}
     assert set(botones1) == {"Conectar"}
-    assert config.VERSION == "1.0.9"
+    assert config.VERSION == "1.0.10"
     pagina.deleteLater()
     app.processEvents()
 

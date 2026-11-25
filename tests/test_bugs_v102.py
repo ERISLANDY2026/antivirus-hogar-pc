@@ -221,4 +221,4 @@ def test_desconectar_sin_nada_activo(monkeypatch, tmp_path):
     srv = _preparar(monkeypatch, tmp_path)
     monkeypatch.setattr(srv.vpn_win, "terminar_procesos_openvpn", lambda: 0)
     r = srv.desconectar_vpn()
-    assert not r.ok and "SoftEther" in r.mensaje
+    assert not r.ok and "OpenVPN" in r.mensaje

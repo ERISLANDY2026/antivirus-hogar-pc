@@ -71,15 +71,12 @@ def ejecutar_elevado(script: str, timeout: int = 300) -> bool:
 def ejecutar_elevado_interactivo(script: str, timeout: int = 300) -> bool:
     """Ejecuta PowerShell ELEVADO e INTERACTIVO (SIN -NonInteractive).
 
-    v1.0.9: diferencia con ejecutar_elevado — el proceso elevado va
-    SIN «-NonInteractive», en la sesión del usuario y con su ventana
-    a la vista, para que los avisos de Windows (en concreto el de
-    confianza del editor al instalar un controlador) PUEDAN aparecer
-    y el usuario los acepte. Con -NonInteractive ese aviso no puede
-    mostrarse y la instalación del controlador de la tarjeta virtual
-    de SoftEther moría en silencio (el «Error code: 31» de vpncmd).
-    Se usa solo para ese paso de reparación de la tarjeta virtual.
-    Devuelve True si el proceso elevado terminó con código 0.
+    v1.0.9 lo trajo para la creación de la tarjeta virtual de
+    SoftEther (retirada en la 1.0.10 con el cambio de motor VPN a
+    OpenVPN); se conserva como utilidad genérica de elevación
+    interactiva para pasos que necesiten que un aviso de Windows
+    PUEDA aparecer y aceptarse. Devuelve True si el proceso
+    elevado terminó con código 0.
     """
     if not es_windows():
         raise WindowsNoDisponible("La elevación UAC solo existe en Windows.")

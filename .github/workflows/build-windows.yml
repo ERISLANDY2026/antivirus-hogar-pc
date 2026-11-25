@@ -63,253 +63,78 @@ jobs:
       - name: Instalar Inno Setup
         run: choco install innosetup -y --no-progress
 
-      # SoftEther VPN Client INCORPORADO (v1.0.7): se descarga el
-      # instalador oficial vigente del sitio del proyecto, se verifica
-      # su tamaño EXACTO contra el listado oficial y se anota su
-      # SHA-256 en el registro. Su instalador no tiene modo silencioso
-      # fiable, así que se incorporan sus ARCHIVOS (extraídos con
-      # 7-Zip, segundo pase sobre el .cab interior) y el .iss registra
-      # el servicio SEVPNCLIENT al instalar. Si algo no cuadra, la
-      # compilación FALLA: la 1.0.7 no sale sin SoftEther.
-      - name: Descargar y preparar SoftEther VPN Client (incorporado)
+      # OpenVPN Community INCORPORADO (v1.0.10): se descarga el
+      # instalador oficial vigente (el MSI amd64 que enlaza la
+      # pagina oficial openvpn.net/community-downloads), se
+      # verifica su tamano EXACTO y su SHA-256 contra los fijados
+      # aqui (tomados del servidor oficial el 2026-11-25) y su
+      # firma Authenticode. Si algo no cuadra, la compilacion
+      # FALLA: la 1.0.10 no sale sin su OpenVPN verificado.
+      # SoftEther ya no se descarga: salio del paquete.
+      - name: Descargar y verificar OpenVPN Community (incorporado)
         shell: pwsh
         run: |
-          $url = "https://www.softether-download.com/files/softether/v4.44-9807-rtm-2025.04.16-tree/Windows/SoftEther_VPN_Client/softether-vpnclient-v4.44-9807-rtm-2025.04.16-windows-x86_x64-intel.exe"
-          $exe = "softether-oficial.exe"
-          Invoke-WebRequest -Uri $url -OutFile $exe
-          $f = Get-Item $exe
-          Write-Host "SoftEther oficial: $($f.Length) bytes"
-          if ($f.Length -ne 56249368) { throw "El instalador de SoftEther no pesa lo que dice el listado oficial (56249368): $($f.Length)" }
-          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
-          Write-Host "SoftEther 4.44-9807 SHA-256: $hash"
-          $ErrorActionPreference = "Stop"
-          $7z = "C:\Program Files\7-Zip\7z.exe"
-          if (-not (Test-Path $7z)) { throw "7-Zip no está en el runner" }
-          New-Item -ItemType Directory -Force -Path se-extract | Out-Null
-          & $7z x $exe -ose-extract -y | Out-Null
-          # El instalador oficial es un PE: su carga va como RECURSOS
-          # en .rsrc\0\DATAFILE con los nombres internos del fabricante
-          # (comprobado en la corrida 45496371062: VPNCLIENT_X64.EXE,
-          # VPNCMD_X64.EXE —que es vpncmd—, VPNCMGR_X64.EXE y el núcleo
-          # RAW_HAMCORE.SE2). Se copian con el nombre que llevan en una
-          # instalación real de SoftEther, que es como la app los busca.
-          $datafile = Get-ChildItem -Recurse se-extract -Directory | Where-Object { $_.Name -eq "DATAFILE" } | Select-Object -First 1
-          if (-not $datafile) { throw "No apareció la carpeta DATAFILE del instalador oficial" }
-          Write-Host "DATAFILE del instalador oficial:"
-          Get-ChildItem $datafile.FullName -File | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length))" }
-          # v1.0.9 (forense del controlador): enumeración COMPLETA de
-          # los recursos del instalador oficial (todos los DATAFILE y
-          # todo lo demás que 7-Zip ve), no solo el primer directorio:
-          # queda en el registro de la corrida como evidencia.
-          Write-Host "Recursos COMPLETOS del instalador oficial:"
-          Get-ChildItem -Recurse se-extract -File | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path 'se-extract').Path.Length)) ($($_.Length))" }
-          $destino = "packaging\softether\client"
-          New-Item -ItemType Directory -Force -Path $destino | Out-Null
-          $mapa = @{
-            "VPNCLIENT_X64.EXE" = "vpnclient_x64.exe"
-            "VPNCMD_X64.EXE"    = "vpncmd_x64.exe"
-            "VPNCMGR_X64.EXE"   = "vpncmgr_x64.exe"
-            "RAW_HAMCORE.SE2"   = "hamcore.se2"
-          }
-          foreach ($k in $mapa.Keys) {
-            $src = Join-Path $datafile.FullName $k
-            if (-not (Test-Path $src)) { throw "Falta $k en los recursos del instalador oficial" }
-            Copy-Item $src (Join-Path $destino $mapa[$k]) -Force
-          }
-          # Los recursos .exe NO son el PE: van COMPRIMIDOS con el
-          # formato del fabricante (prefijo de 4 bytes con el tamaño
-          # real + flujo zlib «78 9C»; comprobado en la corrida
-          # 45500037110, por eso Windows los rechazaba). El hamcore
-          # sí va crudo (de ahí su nombre RAW_). Se descomprimen aquí
-          # y se verifica que el tamaño cuadra con el prefijo.
-          @'
-          import struct, zlib, os, sys
+          $url = "https://swupdate.openvpn.org/community/releases/OpenVPN-2.7.9-I002-amd64.msi"
+          New-Item -ItemType Directory -Force -Path "packaging\openvpn" | Out-Null
+          $msi = "packaging\openvpn\OpenVPN-2.7.9-I002-amd64.msi"
+          Invoke-WebRequest -Uri $url -OutFile $msi
+          $f = Get-Item $msi
+          Write-Host "OpenVPN oficial: $($f.Length) bytes"
+          if ($f.Length -ne 5939200) { throw "El instalador de OpenVPN no pesa lo que anuncia el servidor oficial (5939200): $($f.Length)" }
+          $hash = (Get-FileHash $msi -Algorithm SHA256).Hash
+          Write-Host "OpenVPN 2.7.9-I002 SHA-256: $hash"
+          if ($hash -ne "D050EFADC6CABC4E304EB810DD7FEDFC54B859D34730AB9CDCB22D61EB86AB7A") { throw "La huella del instalador de OpenVPN no coincide con la oficial fijada: $hash" }
+          $sig = Get-AuthenticodeSignature $msi
+          Write-Host "Firma Authenticode del MSI: $($sig.Status) - $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne "Valid") { throw "La firma del instalador de OpenVPN no es valida: $($sig.Status)" }
+          $txt = "OpenVPN Community 2.7.9 (instalador I002, amd64)`r`nInstalador oficial: $url`r`nTamano: 5939200 bytes`r`nSHA-256: $hash`r`n"
+          $txt | Out-File -FilePath "packaging\openvpn\OPENVPN-INSTALADOR.txt" -Encoding ascii
+          Write-Host "Archivos del paquete OpenVPN incorporado:"
+          Get-ChildItem "packaging\openvpn" | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length))" }
 
-          def descomprimir_todo(datos):
-              # Formato del fabricante: cabecera de 4 bytes y uno o
-              # VARIOS flujos zlib encadenados (la corrida 45501428390
-              # sacó 7.048.960 de un solo flujo y el total esperado es
-              # mayor: hay más bloques detrás). Se recorren todos,
-              # saltando una posible subcabecera de 4 bytes entre
-              # bloques, hasta agotar el recurso.
-              esperado = struct.unpack("<I", datos[:4])[0]
-              salida = bytearray()
-              pos = 4
-              bloques = 0
-              while pos < len(datos):
-                  if datos[pos] == 0x78:
-                      d = zlib.decompressobj()
-                      salida += d.decompress(datos[pos:])
-                      consumido = len(datos) - pos - len(d.unused_data)
-                      if consumido <= 0:
-                          break
-                      pos += consumido
-                      bloques += 1
-                      if not d.eof:
-                          break
-                  else:
-                      pos += 4  # subcabecera entre bloques
-              return bytes(salida), esperado, bloques
-
-          def validar_pe(b, nombre):
-              assert b[:2] == b"MZ", f"{nombre}: no empieza por MZ"
-              pe = struct.unpack("<I", b[0x3C:0x40])[0]
-              assert b[pe:pe + 4] == b"PE\0\0", f"{nombre}: sin firma PE"
-              machine, nsec = struct.unpack("<HH", b[pe + 4:pe + 8])
-              opt = struct.unpack("<H", b[pe + 20:pe + 22])[0]
-              sec = pe + 24 + opt
-              fin = 0
-              for i in range(nsec):
-                  s = sec + i * 40
-                  raw_size, raw_ptr = struct.unpack("<II", b[s + 16:s + 24])
-                  fin = max(fin, raw_ptr + raw_size)
-              assert fin <= len(b), f"{nombre}: secciones fuera del archivo"
-              return machine, fin
-
-          for nombre in ("vpnclient_x64.exe", "vpncmd_x64.exe", "vpncmgr_x64.exe"):
-              ruta = os.path.join("packaging", "softether", "client", nombre)
-              datos = open(ruta, "rb").read()
-              real, esperado, bloques = descomprimir_todo(datos)
-              machine, fin_pe = validar_pe(real, nombre)
-              print(f"{nombre}: bloques={bloques} total={len(real)} "
-                    f"esperado={esperado} machine=0x{machine:04X} fin_pe={fin_pe}")
-              assert machine == 0x8664, f"{nombre}: no es x64"
-              open(ruta, "wb").write(real)
-              print(f"{nombre}: PE x64 válido, escrito")
-          '@ | Set-Content -Path "se-descomprimir.py" -Encoding ascii
-          python se-descomprimir.py
-          if ($LASTEXITCODE -ne 0) { throw "La descompresión de los .exe de SoftEther falló" }
-          # Diagnóstico de formato: cabecera de cada pieza al registro
-          # (un PE x64 válido empieza por «MZ», Machine 0x8664; el
-          # hamcore lleva su firma «HamCore»).
-          foreach ($pieza in @("vpnclient_x64.exe", "vpncmd_x64.exe", "vpncmgr_x64.exe", "hamcore.se2")) {
-            $rutaP = Join-Path $destino $pieza
-            $b = [System.IO.File]::ReadAllBytes($rutaP)
-            $machine = ""
-            if ($b.Length -gt 64 -and $b[0] -eq 0x4D -and $b[1] -eq 0x5A) {
-              $peOff = [BitConverter]::ToInt32($b, 0x3C)
-              if ($peOff -gt 0 -and $peOff + 6 -lt $b.Length) {
-                $machine = " Machine=0x{0:X4}" -f [BitConverter]::ToUInt16($b, $peOff + 4)
-              }
-            }
-            Write-Host "$pieza`: $($b.Length) bytes, cabecera: $([BitConverter]::ToString($b[0..15]))$machine"
-          }
-          # Humo NO bloqueante: se intenta arrancar vpncmd; su salida
-          # queda en el registro como evidencia, pero un rechazo del
-          # runner (sesión de servicio, políticas) no tumba la
-          # compilación: la prueba de verdad es la PC del usuario.
-          try {
-            $vpncmdExe = (Resolve-Path (Join-Path $destino "vpncmd_x64.exe")).Path
-            $smoke = & $vpncmdExe /CLIENT localhost /CMD NicList 2>&1 | Out-String
-            Write-Host "vpncmd (humo, código $LASTEXITCODE): $smoke"
-          } catch {
-            Write-Host "vpncmd (humo) no arrancó en el runner: $($_.Exception.Message)"
-          }
-          # v1.0.9: EL CONTROLADOR DE LA TARJETA VIRTUAL (la solución
-          # del «Error 31»). El paquete Neo6 para Windows 10 x64 vive
-          # DENTRO de hamcore.se2, en DriverPackages\Neo6_Win10\x64\
-          # (árbol de fuentes oficial, src/bin/hamcore): se intenta
-          # extraer de ahí con 7-Zip; las huellas deben coincidir con
-          # las fijadas abajo, tomadas del árbol oficial de la misma
-          # etiqueta (v4.44-9807-rtm), que es además la vía de
-          # respaldo si 7-Zip no abre el .se2. Si ninguna vía entrega
-          # los 3 archivos con la huella exacta, la compilación
-          # FALLA: la 1.0.9 no sale sin el controlador.
-          $drvDir = Join-Path $destino "driver"
-          New-Item -ItemType Directory -Force -Path $drvDir | Out-Null
-          $huellasDriver = @{
-            "Neo6_x64_VPN.inf" = "8F049A53BAB3F1A16F118C91C15569CCEEF4B2955905C8F7C70F7952F9C175B8"
-            "Neo6_x64_VPN.sys" = "54E74A7906AF47C2B07F0EA171973D6ABB123549A1C66CF0CC6F24EC5E55A237"
-            "Neo6_x64_VPN.cat" = "162C56608532EF7C699520194FD2231550BAB6D0A32C1BBB6866F22DA8C45AED"
-          }
-          Write-Host "Listado de hamcore.se2 según 7-Zip (forense v1.0.9):"
-          & $7z l (Join-Path $destino "hamcore.se2") | Out-String | Write-Host
-          $origenDriver = ""
-          Remove-Item -Recurse -Force se-hamcore -ErrorAction SilentlyContinue
-          $eapAntes = $ErrorActionPreference
-          $ErrorActionPreference = "Continue"
-          & $7z x (Join-Path $destino "hamcore.se2") -ose-hamcore -y | Out-Null
-          $ErrorActionPreference = $eapAntes
-          $desdeHamcore = 0
-          foreach ($nombreD in $huellasDriver.Keys) {
-            $hallado = Get-ChildItem -Recurse se-hamcore -Filter $nombreD -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "Neo6_Win10" } | Select-Object -First 1
-            if ($hallado) {
-              Copy-Item $hallado.FullName (Join-Path $drvDir $nombreD) -Force
-              $desdeHamcore++
-            }
-          }
-          if ($desdeHamcore -eq 3) {
-            $origenDriver = "hamcore.se2 del instalador oficial (DriverPackages\Neo6_Win10\x64)"
-          } else {
-            Write-Host "7-Zip no sacó el controlador completo del hamcore ($desdeHamcore/3): se usa el árbol oficial de fuentes de la etiqueta v4.44-9807-rtm."
-            $baseTag = "https://raw.githubusercontent.com/SoftEtherVPN/SoftEtherVPN_Stable/v4.44-9807-rtm/src/bin/hamcore/DriverPackages/Neo6_Win10/x64"
-            foreach ($nombreD in $huellasDriver.Keys) {
-              Invoke-WebRequest -Uri "$baseTag/$nombreD" -OutFile (Join-Path $drvDir $nombreD)
-            }
-            $origenDriver = "arbol oficial de fuentes SoftEtherVPN_Stable v4.44-9807-rtm (src/bin/hamcore/DriverPackages/Neo6_Win10/x64)"
-          }
-          $lineasDriver = @()
-          foreach ($nombreD in $huellasDriver.Keys) {
-            $rutaD = Join-Path $drvDir $nombreD
-            if (-not (Test-Path $rutaD)) { throw "Falta el archivo del controlador: $nombreD" }
-            $hD = (Get-FileHash $rutaD -Algorithm SHA256).Hash
-            if ($hD -ne $huellasDriver[$nombreD]) { throw "La huella de $nombreD no coincide con la oficial: $hD" }
-            $lineasDriver += "$nombreD`: $((Get-Item $rutaD).Length) bytes, SHA-256 $hD"
-            Write-Host "Controlador $nombreD`: huella verificada ($hD)"
-          }
-          Write-Host "Controlador de la tarjeta virtual: origen = $origenDriver"
-          $txtCliente = "SoftEther VPN Client 4.44 Build 9807 RTM (2025-04-16)`r`nInstalador oficial: $url`r`nTamano: 56249368 bytes`r`nSHA-256: $hash`r`n`r`nControlador de la tarjeta virtual (v1.0.9, carpeta driver):`r`nOrigen: $origenDriver`r`n" + ($lineasDriver -join "`r`n")
-          $txtCliente | Out-File -FilePath (Join-Path $destino "SOFTETHER-CLIENT.txt") -Encoding ascii
-          Write-Host "Archivos del cliente incorporado:"
-          Get-ChildItem -Recurse $destino | ForEach-Object { Write-Host "  $($_.FullName.Substring((Resolve-Path $destino).Path.Length)) ($($_.Length))" }
-          # El humo deja $LASTEXITCODE=1 (vpncmd sin servicio: su
-          # «Error code: 1» es el resultado CORRECTO) y el runner
-          # cerraría el paso con ese código (pasó en 45502795985,
-          # con todo lo demás bien): se deja a 0 explícitamente.
-          $global:LASTEXITCODE = 0
-
-      # El extractor del auto-actualizador de SoftEther (punto 7 de
-      # la 1.0.7) se ejercita AQUÍ contra el instalador oficial REAL
-      # recién descargado: preparar_cliente debe extraer de sus
-      # recursos DATAFILE las 4 piezas, descomprimir los .exe a PE
-      # x64 válidos y verificar la firma del hamcore. Si el formato
-      # del fabricante cambiara, la compilación lo caza aquí y no en
-      # la PC del usuario.
-      - name: Ejercitar el extractor SoftEther del auto-actualizador
+      # La verificacion del auto-actualizador de OpenVPN (v1.0.10)
+      # se ejercita AQUI contra el instalador oficial REAL recien
+      # descargado: verificar_paquete_msi debe aceptar el paquete
+      # (tamano + estructura MSI + huella) y firma_authenticode
+      # debe dar la firma valida de OpenVPN. Es la misma puerta
+      # que la app aplica antes de actualizarse: si el formato
+      # cambiara, la compilacion lo caza aqui y no en la PC del
+      # usuario.
+      - name: Ejercitar la verificacion del auto-actualizador de OpenVPN
         shell: pwsh
         run: |
           @'
-          import os, sys
+          import sys
           sys.path.insert(0, ".")
-          from antivirus_hogar_pc.winapi.softether_update import preparar_cliente
-          datos = open("softether-oficial.exe", "rb").read()
-          escritos = preparar_cliente(datos, "se-autoupdate-test")
-          print("Extractor del auto-actualizador:", escritos)
-          esperados = {"vpnclient_x64.exe": 7048960,
-                       "vpncmd_x64.exe": 7055104,
-                       "vpncmgr_x64.exe": 7240448,
-                       "hamcore.se2": 23209854}
-          assert escritos == esperados, f"Tamaños inesperados: {escritos}"
-          print("Extractor OK: 4 piezas, tamaños y PE x64 verificados")
-          '@ | Set-Content -Path "se-probar-extractor.py" -Encoding ascii
-          python se-probar-extractor.py
-          if ($LASTEXITCODE -ne 0) { throw "El extractor del auto-actualizador de SoftEther falló contra el instalador oficial" }
+          from antivirus_hogar_pc.winapi.openvpn_update import (
+              verificar_paquete_msi, firma_authenticode)
+          ruta = r"packaging\openvpn\OpenVPN-2.7.9-I002-amd64.msi"
+          v = verificar_paquete_msi(ruta, 5939200)
+          print("Verificacion del paquete:", v)
+          assert v["ok"], v
+          assert v["sha256"] == "d050efadc6cabc4e304eb810dd7fedfc54b859d34730ab9cdcb22d61eb86ab7a", v
+          f = firma_authenticode(ruta)
+          print("Firma Authenticode:", f)
+          assert f["valida"], f
+          print("Auto-actualizador de OpenVPN OK contra el instalador oficial real")
+          '@ | Set-Content -Path "ovpn-probar-verificacion.py" -Encoding ascii
+          python ovpn-probar-verificacion.py
+          if ($LASTEXITCODE -ne 0) { throw "La verificacion del auto-actualizador de OpenVPN fallo contra el instalador oficial" }
 
       - name: Crear el instalador con Inno Setup
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\instalador.iss'
 
-      # El instalador FINAL debe llevar SoftEther dentro (v1.0.7): la
-      # prueba estructural es el registro de ISCC («Compressing: …
-      # softether\client\hamcore.se2» y las demás piezas, ya visto en
-      # la corrida 45500037110, que pesó 68.850.364 con la carga aún
-      # comprimida); como respaldo, el tamaño: la 1.0.6 pesaba
-      # 40.619.617 y con el cliente incorporado debe pasar de 55 MB.
-      - name: Verificar que el instalador lleva SoftEther
+      # El instalador FINAL debe llevar OpenVPN dentro (v1.0.10):
+      # sin el paquete, la app pesaba 40.619.617 bytes (1.0.6); con
+      # el MSI oficial de OpenVPN (5.939.200) debe pasar de 44 MB.
+      # La prueba fuerte del paquete (tamano, huella y firma) ya
+      # corrio en el paso de descarga.
+      - name: Verificar que el instalador lleva OpenVPN
         shell: pwsh
         run: |
           $inst = Get-Item "dist-instalador\*.exe" | Select-Object -First 1
           Write-Host "Instalador final: $($inst.Name) = $($inst.Length) bytes"
-          if ($inst.Length -lt 55000000) { throw "El instalador pesa $($inst.Length): SoftEther no quedó incorporado" }
+          if ($inst.Length -lt 44000000) { throw "El instalador pesa $($inst.Length): OpenVPN no quedo incorporado" }
 
       - name: Subir el instalador como artefacto
         uses: actions/upload-artifact@v4

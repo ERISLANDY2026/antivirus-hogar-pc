@@ -1,19 +1,34 @@
-"""VPN Gate en Windows: delegación en SoftEther VPN Client u OpenVPN Connect.
+"""VPN Gate en Windows: motor OpenVPN (Community) INCORPORADO.
 
-La app genera el .ovpn desde la API de VPN Gate y lo abre con el cliente
-instalado. No implementa el túnel (eso exigiría un driver firmado).
+v1.0.10 — CAMBIO DE MOTOR (decisión del usuario, 2026-11-25):
+SoftEther quedó descartado. Su controlador de tarjeta virtual
+(Neo6, de 2018) es bloqueado por Windows al instalar el dispositivo
+(«Error code: 31» de vpncmd) aun con el paquete almacenado en el
+DriverStore, el servicio corriendo y la Integridad de memoria
+apagada (evidencia: el softether-nic-instalacion.txt de la 1.0.9 en
+su Toughbook). El motor pasa a ser **OpenVPN Community**: su
+instalador oficial (MSI) lo instala el instalador de la app en
+silencio, dejando su servicio interactivo y su tarjeta TAP-Windows
+con controladores firmados y aceptados por Windows.
+
+La app maneja OpenVPN EN SEGUNDO PLANO, con la misma experiencia
+que tenía con SoftEther: lanza `openvpn.exe` con el perfil .ovpn
+del servidor de VPN Gate elegido y lo controla por su INTERFAZ DE
+GESTIÓN local (127.0.0.1), sin ventanas ni avisos: cuando el
+servicio interactivo de OpenVPN está presente, openvpn.exe le
+delega las operaciones con privilegios (rutas y tarjeta) sin pedir
+UAC al usuario. El túnel se confirma leyendo el estado real de la
+interfaz de gestión («CONNECTED,SUCCESS»), no suponiéndolo.
 """
 import os
+import re
+import socket
 import subprocess
 import sys
 import time
 
 from . import WindowsNoDisponible, es_windows
 
-RUTAS_SOFTETHER = [
-    r"C:\Program Files\SoftEther VPN Client\vpncmgr.exe",
-    r"C:\Program Files (x86)\SoftEther VPN Client\vpncmgr.exe",
-]
 RUTAS_OPENVPN_CONNECT = [
     r"C:\Program Files\OpenVPN Connect\OpenVPNConnect.exe",
     r"C:\Program Files (x86)\OpenVPN Connect\OpenVPNConnect.exe",
@@ -21,32 +36,45 @@ RUTAS_OPENVPN_CONNECT = [
 RUTAS_OPENVPN_GUI = [
     r"C:\Program Files\OpenVPN\bin\openvpn-gui.exe",
 ]
+RUTAS_OPENVPN_EXE = [
+    r"C:\Program Files\OpenVPN\bin\openvpn.exe",
+    r"C:\Program Files (x86)\OpenVPN\bin\openvpn.exe",
+]
+
+USUARIO_VPNGATE = "vpn"
+CLAVE_VPNGATE = "vpn"
+SERVICIO_INTERACTIVO_OPENVPN = "OpenVPNServiceInteractive"
+SERVICIO_OPENVPN = "OpenVPNService"
+# Literal del estado de la interfaz de gestión con el túnel arriba.
+_MARCA_CONECTADO_MGMT = "CONNECTED,SUCCESS"
 
 
 def clientes_vpn_instalados() -> list[dict]:
     """Clientes VPN conocidos presentes en el equipo.
 
-    v1.0.7: SoftEther se detecta también en la carpeta INCORPORADA
-    (junto al .exe de la app, donde lo deja nuestro instalador) y por
-    cualquiera de sus nombres de binario (con y sin sufijo _x64); la
-    entrada lleva «softether»: True para que la capa de servicios
-    use la ruta vpncmd en vez de entregar un .ovpn.
+    v1.0.10: la primera entrada es el OpenVPN INCORPORADO (el que
+    instala la propia app), con «openvpn»: True para que la capa de
+    servicios use el motor en segundo plano en vez de entregar un
+    .ovpn a una ventana ajena.
     """
     encontrados = []
-    if carpeta_softether():
+    ruta = ruta_openvpn_exe()
+    if ruta:
         encontrados.append({
-            "nombre": "SoftEther VPN Client (recomendado por VPN Gate)",
-            "ruta": ruta_vpncmgr() or ruta_vpncmd(),
-            "softether": True,
+            "nombre": "OpenVPN (incluido con la app)",
+            "ruta": ruta,
+            "openvpn": True,
         })
-    for nombre, rutas in (
-        ("OpenVPN Connect", RUTAS_OPENVPN_CONNECT),
-        ("OpenVPN GUI (Community)", RUTAS_OPENVPN_GUI),
-    ):
-        for ruta in rutas:
-            if os.path.isfile(ruta):
-                encontrados.append({"nombre": nombre, "ruta": ruta})
-                break
+    for ruta in RUTAS_OPENVPN_GUI:
+        if os.path.isfile(ruta):
+            encontrados.append(
+                {"nombre": "OpenVPN GUI (Community)", "ruta": ruta})
+            break
+    for ruta in RUTAS_OPENVPN_CONNECT:
+        if os.path.isfile(ruta):
+            encontrados.append(
+                {"nombre": "OpenVPN Connect", "ruta": ruta})
+            break
     return encontrados
 
 
@@ -88,9 +116,10 @@ def ip_publica_actual(timeout: int = 15) -> str:
 def procesos_openvpn() -> list[dict]:
     """Procesos del motor OpenVPN en marcha (uno por conexión activa).
 
-    OpenVPN Connect y OpenVPN GUI lanzan un proceso openvpn por túnel:
-    si hay alguno, hay una conexión OpenVPN viva. Se lee con psutil
-    (multiplataforma); sin psutil o sin permisos, devuelve []."""
+    OpenVPN Connect, OpenVPN GUI y el motor de la app lanzan un
+    proceso openvpn por túnel: si hay alguno, hay una conexión
+    OpenVPN viva. Se lee con psutil (multiplataforma); sin psutil o
+    sin permisos, devuelve []."""
     try:
         import psutil
     except ImportError:
@@ -113,12 +142,13 @@ def hay_tunel_openvpn() -> bool:
 def terminar_procesos_openvpn() -> int:
     """Cierra los procesos openvpn: así se apaga el túnel desde la app.
 
-    MECANISMO HONESTO: ni OpenVPN Connect ni OpenVPN GUI ofrecen un
-    comando de desconexión limpio para terceros; lo que sí cierra la
-    conexión de forma inmediata es terminar su proceso openvpn (el
-    cliente lo relanza al volver a conectar). SoftEther VPN Client usa
-    su propio servicio y NO se toca: su desconexión se hace en su
-    ventana. Devuelve cuántos procesos se cerraron."""
+    MECANISMO HONESTO: los clientes OpenVPN no ofrecen un comando de
+    desconexión limpio para terceros; lo que sí cierra la conexión
+    de forma inmediata es terminar su proceso openvpn (el cliente
+    lo relanza al volver a conectar). La conexión del motor de la
+    app se baja antes por su interfaz de gestión
+    (desconectar_openvpn); esto queda de respaldo. Devuelve cuántos
+    procesos se cerraron."""
     try:
         import psutil
     except ImportError:
@@ -146,390 +176,454 @@ def carpeta_perfiles_vpn() -> str:
     return ruta
 
 
-# --- SoftEther por vpncmd (v1.0.7) -------------------------------------------
-# La app maneja el SoftEther INCORPORADO (o uno que el usuario ya
-# tuviera) con su herramienta oficial de línea de comandos, vpncmd,
-# contra el servicio local del cliente: crea la conexión de VPN Gate,
-# la conecta en segundo plano (sin abrir la ventana de SoftEther),
-# comprueba el túnel y la desconecta. Los servidores de VPN Gate son
-# servidores SoftEther: aceptan la conexión SSL-VPN al hub «VPNGATE»
-# por el puerto 443 con usuario y contraseña «vpn» (así lo publica
-# el propio proyecto VPN Gate).
+# --- Motor OpenVPN incorporado (v1.0.10) --------------------------------------
+# El instalador oficial de OpenVPN (MSI) queda instalado por el
+# instalador de la app en «C:\Program Files\OpenVPN» (su servicio
+# interactivo + tarjeta TAP-Windows firmada) y una copia del propio
+# MSI viaja junto al .exe de la app, en «openvpn\», para el
+# auto-actualizador interno (winapi/openvpn_update.py).
+#
+# Conexión: la app escribe el perfil del servidor (el .ovpn que
+# publica VPN Gate, con las credenciales «vpn»/«vpn» en un archivo
+# propio) y lanza openvpn.exe SIN ventana con la interfaz de
+# gestión en un puerto local libre. El estado se lee de esa
+# interfaz: «CONNECTED,SUCCESS» = túnel arriba de verdad.
 
-NOMBRES_VPNCMD = ("vpncmd.exe", "vpncmd_x64.exe")
-NOMBRES_VPNCMGR = ("vpncmgr.exe", "vpncmgr_x64.exe")
-CARPETAS_SOFTETHER_FIJAS = (
-    r"C:\Program Files\SoftEther VPN Client",
-    r"C:\Program Files (x86)\SoftEther VPN Client",
-)
-CUENTA_VPNGATE = "AntivirusHogarVPN"
-NIC_VPNGATE = "VPN"
-HUB_VPNGATE = "VPNGATE"
-USUARIO_VPNGATE = "vpn"
-CLAVE_VPNGATE = "vpn"
-CONTRASENA_VPNGATE = "vpn"
-PUERTO_VPNGATE = 443
-# Literal EXACTO que AccountStatusGet imprime con el túnel arriba
-# (salidas reales documentadas del cliente 4.x).
-_MARCA_CONECTADO = "connection completed (session established)"
+_PATRON_INSTALADOR = re.compile(r"OpenVPN-(\d+)\.(\d+)\.(\d+)-I(\d+)-amd64\.msi$")
 
 
-def _carpetas_softether_candidatas() -> list[str]:
-    carpetas = []
+def carpeta_instalador_openvpn() -> str:
+    """Carpeta «openvpn» junto al .exe de la app (el MSI conservado)."""
     try:
         base = os.path.dirname(os.path.abspath(sys.executable))
-        carpetas.append(os.path.join(base, "softether"))
     except Exception:
-        pass
-    carpetas.extend(CARPETAS_SOFTETHER_FIJAS)
-    return carpetas
-
-
-def carpeta_softether() -> str:
-    """Carpeta de SoftEther (incorporada o instalada), o "" si no hay."""
-    for carpeta in _carpetas_softether_candidatas():
-        for nombre in NOMBRES_VPNCMD + NOMBRES_VPNCMGR:
-            if os.path.isfile(os.path.join(carpeta, nombre)):
-                return carpeta
-    return ""
-
-
-def _buscar_binario(nombres) -> str:
-    carpeta = carpeta_softether()
-    if not carpeta:
         return ""
-    for nombre in nombres:
-        ruta = os.path.join(carpeta, nombre)
+    return os.path.join(base, "openvpn")
+
+
+def ruta_instalador_openvpn() -> str:
+    """El instalador oficial de OpenVPN conservado junto a la app.
+
+    Si hubiera varios (no debería), manda el de versión mayor por
+    el nombre. "" si no hay ninguno (instalación sin el paquete).
+    """
+    carpeta = carpeta_instalador_openvpn()
+    if not carpeta or not os.path.isdir(carpeta):
+        return ""
+    candidatos = []
+    for nombre in os.listdir(carpeta):
+        m = _PATRON_INSTALADOR.match(nombre)
+        if m:
+            candidatos.append(
+                (tuple(int(g) for g in m.groups()),
+                 os.path.join(carpeta, nombre)))
+    if not candidatos:
+        return ""
+    candidatos.sort()
+    return candidatos[-1][1]
+
+
+def ruta_openvpn_exe() -> str:
+    """openvpn.exe del OpenVPN instalado (incorporado o del usuario)."""
+    for ruta in RUTAS_OPENVPN_EXE:
         if os.path.isfile(ruta):
             return ruta
     return ""
 
 
-def ruta_vpncmd() -> str:
-    return _buscar_binario(NOMBRES_VPNCMD)
+def openvpn_instalado() -> bool:
+    return bool(ruta_openvpn_exe())
 
 
-def ruta_vpncmgr() -> str:
-    return _buscar_binario(NOMBRES_VPNCMGR)
+def interpretar_version_openvpn(salida: str) -> str:
+    """Primera línea de `openvpn --version` → «2.7.9» (o "")."""
+    for linea in (salida or "").splitlines():
+        m = re.search(r"OpenVPN\s+(\d+\.\d+\.\d+)", linea)
+        if m:
+            return m.group(1)
+    return ""
 
 
-def softether_instalado() -> bool:
-    """¿Hay un SoftEther manejable por vpncmd (incorporado o propio)?"""
-    return bool(ruta_vpncmd())
-
-
-def _ejecutar_vpncmd(argumentos: list[str], timeout: int = 60) -> tuple[int, str]:
-    """Corre `vpncmd localhost /CLIENT /CMD <argumentos>` OCULTO.
-
-    Devuelve (código de salida, salida completa). Si vpncmd no está,
-    (-1, ""). Los tests sustituyen esta función por un simulador: es
-    la ÚNICA puerta a SoftEther de todo el módulo.
-    """
-    ruta = ruta_vpncmd()
+def version_openvpn() -> str:
+    """Versión del openvpn.exe instalado («2.7.9»), o "" si no se sabe."""
+    ruta = ruta_openvpn_exe()
     if not ruta:
-        return -1, ""
-    if not es_windows():
-        raise WindowsNoDisponible("SoftEther solo se maneja en Windows.")
+        return ""
     try:
         proc = subprocess.run(
-            [ruta, "localhost", "/CLIENT", "/CMD", *argumentos],
-            capture_output=True, text=True, errors="replace",
-            timeout=timeout,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
-    except subprocess.TimeoutExpired:
-        return -2, "vpncmd tardó demasiado en responder."
-    except OSError as exc:
-        return -1, f"No se pudo ejecutar vpncmd: {exc}"
-
-
-def _vpncmd_ok(codigo: int, salida: str) -> bool:
-    """¿El comando vpncmd terminó bien? (éxito literal o sin error)."""
-    bajo = (salida or "").lower()
-    if "error code" in bajo or "error occurred" in bajo:
-        return False
-    if codigo not in (0,):
-        return False
-    return True
-
-
-def _linea_error_vpncmd(salida: str) -> str:
-    """La línea de error de vpncmd, para el detalle técnico."""
-    for linea in (salida or "").splitlines():
-        if "error" in linea.lower():
-            return linea.strip()
-    return (salida or "").strip()[-300:]
-
-
-def ruta_controlador_nic() -> str:
-    """Ruta del .inf del controlador de la tarjeta virtual, o "".
-
-    v1.0.9: el paquete del controlador (Neo6_x64_VPN.inf/.sys/.cat,
-    el de Windows 10 x64 del hamcore oficial de SoftEther) viaja con
-    la app en «softether\\driver» y el INSTALADOR lo almacena en el
-    DriverStore con pnputil antes de crear la tarjeta. Aquí solo se
-    usa como respaldo: si al conectar la tarjeta falta, el paso
-    elevado lo vuelve a almacenar antes de NicCreate.
-    """
-    carpeta = carpeta_softether()
-    if not carpeta:
+            [ruta, "--version"], capture_output=True, text=True,
+            errors="replace", timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return interpretar_version_openvpn(
+            (proc.stdout or "") + (proc.stderr or ""))
+    except Exception:
         return ""
-    ruta = os.path.join(carpeta, "driver", "Neo6_x64_VPN.inf")
-    return ruta if os.path.isfile(ruta) else ""
 
 
-def crear_nic_elevada() -> dict:
-    """Crea la tarjeta virtual ELEVADO e INTERACTIVO (v1.0.9).
+def preparar_perfil_vpngate(contenido: str, ruta_credenciales: str) -> str:
+    """Prepara el .ovpn de VPN Gate para el motor de la app.
 
-    Historia: hasta la 1.0.7 la app lo intentaba sin elevar y OCULTO
-    y fallaba siempre; la 1.0.8 lo elevó pero el controlador de la
-    tarjeta NUNCA quedaba almacenado en el DriverStore de Windows y
-    NicCreate devolvía «Error code: 31 — Installation of the Virtual
-    Network Adapter device driver failed» incluso durante la
-    instalación. Desde la 1.0.9 el instalador almacena el
-    controlador con pnputil ANTES de NicCreate; este paso queda como
-    RESPALDO al conectar: si la tarjeta falta, se repite la receta
-    completa — pnputil /add-driver /install (si el paquete viaja con
-    la app) y NicCreate — en un PowerShell elevado INTERACTIVO (sin
-    -NonInteractive, en la sesión del usuario), para que el aviso de
-    confianza de Windows pueda aparecer y aceptarse.
-
-    La salida REAL de pnputil y de vpncmd se guarda en
-    «vpn\\salida-crear-nic.txt» (carpeta de datos) y su línea de
-    error va en el detalle: nada se descarta en silencio.
-
-    Devuelve {"ok", "detalle"}: ok solo si NicList trae la tarjeta
-    tras el intento elevado.
+    - Quita las líneas que la app controla (auth-user-pass,
+      management, log/log-append) para que no choquen con las suyas.
+    - Añade `auth-user-pass` apuntando al archivo de credenciales
+      de la app («vpn»/«vpn», lo que aceptan los servidores de
+      VPN Gate).
+    - Si el perfil fija un `cipher` y no trae `data-ciphers`,
+      añade `data-ciphers-fallback` con ese cifrado: en OpenVPN
+      2.5+ el `cipher` antiguo quedó en desuso y sin el respaldo
+      la negociación con servidores viejos de VPN Gate puede
+      fallar. No se toca nada más del perfil.
     """
-    ruta = ruta_vpncmd()
-    if not ruta:
-        return {"ok": False, "detalle": "vpncmd no encontrado."}
-    from .powershell import ejecutar_elevado_interactivo
+    salida = []
+    cifrado = ""
+    trae_data_ciphers = False
+    for linea in (contenido or "").splitlines():
+        limpia = linea.strip()
+        baja = limpia.lower()
+        if baja.startswith(("auth-user-pass", "management ",
+                            "management-", "log ", "log-append ")):
+            continue
+        if baja.startswith("cipher "):
+            partes = limpia.split(None, 1)
+            if len(partes) == 2:
+                cifrado = partes[1].strip()
+        if baja.startswith("data-ciphers"):
+            trae_data_ciphers = True
+        salida.append(linea.rstrip())
+    while salida and not salida[-1].strip():
+        salida.pop()
+    salida.append(f'auth-user-pass "{ruta_credenciales}"')
+    if cifrado and not trae_data_ciphers:
+        salida.append(f"data-ciphers-fallback {cifrado}")
+    return "\n".join(salida) + "\n"
 
-    inf = ruta_controlador_nic()
-    carpeta_salida = carpeta_perfiles_vpn()
-    ruta_salida = os.path.join(carpeta_salida, "salida-crear-nic.txt")
+
+# --- Sesión del motor (qué conexión lanzó la app) ------------------------------
+
+_PROCESO = None  # Popen de la conexión viva lanzada por la app
+
+
+def _ruta_sesion() -> str:
+    return os.path.join(carpeta_perfiles_vpn(), "openvpn_sesion.json")
+
+
+def _guardar_sesion(datos: dict) -> None:
+    import json as _json
+
     try:
-        os.remove(ruta_salida)  # nunca leer la salida de un intento viejo
+        with open(_ruta_sesion(), "w", encoding="utf-8") as f:
+            _json.dump(datos, f, ensure_ascii=False)
     except OSError:
         pass
-    partes = ["$partes = @()"]
-    if inf:
-        partes.append(
-            f"$partes += (& pnputil.exe /add-driver \"{inf}\" /install "
-            "2>&1 | Out-String)")
-    partes.append(
-        f"$partes += (& \"{ruta}\" localhost /CLIENT /CMD NicCreate "
-        f"{NIC_VPNGATE} 2>&1 | Out-String)")
-    partes.append(
-        f"Set-Content -Path \"{ruta_salida}\" -Encoding UTF8 "
-        "-Value ($partes -join \"`r`n\")")
-    script = "\n".join(partes)
+
+
+def _leer_sesion() -> dict:
+    import json as _json
+
     try:
-        lanzado = ejecutar_elevado_interactivo(script, timeout=240)
-    except Exception as exc:  # p. ej. el usuario canceló el aviso UAC
-        return {"ok": False,
-                "detalle": f"No se pudo elevar la creación de la "
-                           f"tarjeta: {exc}"}
-    salida_real = ""
+        with open(_ruta_sesion(), "r", encoding="utf-8") as f:
+            datos = _json.load(f)
+        return datos if isinstance(datos, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _borrar_sesion() -> None:
     try:
-        with open(ruta_salida, "r", encoding="utf-8",
-                  errors="replace") as f:
-            salida_real = f.read()
+        os.remove(_ruta_sesion())
     except OSError:
         pass
-    codigo, salida = _ejecutar_vpncmd(["NicList"], timeout=30)
-    presente = _vpncmd_ok(codigo, salida) and NIC_VPNGATE.lower() in [
-        n.lower() for n in _nombres_nic(salida)]
-    if presente:
-        return {"ok": True,
-                "detalle": "Tarjeta creada con el paso elevado "
-                           "interactivo y confirmada por NicList."}
-    detalle_real = _linea_error_vpncmd(salida_real) if salida_real \
-        else _linea_error_vpncmd(salida)
-    return {"ok": False,
-            "detalle": (f"El paso elevado interactivo "
-                        f"{'terminó' if lanzado else 'no terminó bien'} "
-                        f"y NicList sigue sin traer la tarjeta. "
-                        f"Salida real del paso elevado: {detalle_real}")}
 
 
-def interpretar_estado_cuenta(salida: str) -> bool:
-    """¿AccountStatusGet dice que el túnel está ARRIBA?
+def _puerto_libre() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
 
-    El literal del cliente con la sesión establecida es «Connection
-    Completed (Session Established)» en la fila «Session Status».
+
+# --- Puertas únicas a proceso y a la interfaz de gestión -----------------------
+# Los tests las sustituyen: son la ÚNICA vía del motor a openvpn.exe
+# y a su interfaz de gestión.
+
+def _lanzar_openvpn(argumentos: list[str], carpeta: str):
+    """Lanza openvpn.exe SIN ventana y devuelve el proceso (Popen)."""
+    if not es_windows():
+        raise WindowsNoDisponible("OpenVPN solo se maneja en Windows.")
+    return subprocess.Popen(
+        argumentos, cwd=carpeta,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def _mgmt_enviar(puerto: int, comando: str, timeout: int = 10) -> str:
+    """Envía un comando a la interfaz de gestión y lee su respuesta.
+
+    La respuesta de `state` termina en una línea «END». Las
+    notificaciones en tiempo real llegan como líneas «>STATE:…» y
+    también se recogen: el llamante interpreta el conjunto.
     """
-    return _MARCA_CONECTADO in (salida or "").lower()
+    with socket.create_connection(("127.0.0.1", int(puerto)),
+                                  timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        datos = b""
+        # Saludo inicial de la interfaz (línea >INFO:…).
+        try:
+            while b"\n" not in datos:
+                trozo = sock.recv(4096)
+                if not trozo:
+                    break
+                datos += trozo
+        except socket.timeout:
+            pass
+        sock.sendall((comando.strip() + "\r\n").encode("ascii"))
+        respuesta = b""
+        limite = time.time() + timeout
+        while time.time() < limite:
+            try:
+                trozo = sock.recv(4096)
+            except socket.timeout:
+                break
+            if not trozo:
+                break
+            respuesta += trozo
+            texto = respuesta.decode("utf-8", errors="replace")
+            if comando.strip().lower() == "state" and (
+                    "\nEND" in texto or texto.rstrip().endswith("END")):
+                break
+            if comando.strip().lower() != "state" and len(respuesta) > 0:
+                break
+        return (datos + respuesta).decode("utf-8", errors="replace")
 
 
-def _nombres_de_tabla(salida: str, cabeceras: tuple[str, ...]) -> list[str]:
-    """Primeras celdas de una tabla de vpncmd (NicList/AccountList).
+def interpretar_estado_mgmt(salida: str) -> dict:
+    """Salida de `state` → {"conectado", "estado", "ip_local"}.
 
-    Las tablas de vpncmd separan columnas con «|» y traen una fila
-    de cabecera y una de guiones: se saltan las cabeceras conocidas
-    y las filas de separación.
+    La línea de estado es «<tiempo>,<ESTADO>,<detalle>,<ip local>,
+    <ip remota>,…»; con el túnel arriba: «…,CONNECTED,SUCCESS,…».
+    Las notificaciones «>STATE:» llevan la misma línea tras el
+    prefijo. Sin línea de estado: conectado=False, estado="".
     """
-    nombres = []
+    estado = ""
+    ip_local = ""
     for linea in (salida or "").splitlines():
-        if "|" not in linea:
-            continue
-        primera = linea.split("|", 1)[0].strip()
-        if not primera or set(primera) <= set("-+ "):
-            continue
-        if any(primera.lower().startswith(c) for c in cabeceras):
-            continue
-        nombres.append(primera)
-    return nombres
+        texto = linea.strip()
+        if texto.startswith(">STATE:"):
+            texto = texto[len(">STATE:"):]
+        partes = texto.split(",")
+        if len(partes) >= 3 and partes[0].strip().isdigit():
+            estado = partes[1].strip().upper()
+            if len(partes) >= 4:
+                ip_local = partes[3].strip()
+    return {"conectado": estado == "CONNECTED"
+            and _MARCA_CONECTADO_MGMT in (salida or "").upper(),
+            "estado": estado, "ip_local": ip_local}
 
 
-def _nombres_nic(salida: str) -> list[str]:
-    return _nombres_de_tabla(
-        salida, ("virtual network adapter name", "name"))
+def _causa_del_registro(ruta_log: str) -> str:
+    """La línea de causa del registro de openvpn (para el detalle).
+
+    Busca por PRIORIDAD de causa, de la más específica a la más
+    genérica (autenticación, tarjeta TAP, TLS, red, error fatal):
+    un «AUTH_FAILED» seguido de «Exiting due to fatal error» debe
+    reportar la autenticación, que es lo accionable, no la
+    despedida genérica del proceso. Si ninguna marca aparece, la
+    última línea con contenido del registro.
+    """
+    try:
+        with open(ruta_log, "r", encoding="utf-8", errors="replace") as f:
+            lineas = [ln.strip() for ln in f if ln.strip()]
+    except OSError:
+        return ""
+    prioridades = ("auth_failed", "cannot open tun/tap", "tun/tap",
+                   "tls error", "tls handshake", "certificate",
+                   "private key", "connection reset", "no route to host",
+                   "network is unreachable", "fatal error", "error")
+    for marca in prioridades:
+        for linea in lineas:
+            if marca in linea.lower():
+                return linea[-300:]
+    return lineas[-1][-300:] if lineas else ""
 
 
-def _nombres_cuentas(salida: str) -> list[str]:
-    return _nombres_de_tabla(
-        salida, ("vpn connection setting name", "name"))
+def estado_openvpn() -> dict:
+    """{"instalado": bool, "conectado": bool, "hostname": str}.
 
-
-def estado_softether() -> dict:
-    """{"instalado": bool, "conectado": bool, "cuenta": str}."""
-    estado = {"instalado": False, "conectado": False,
-              "cuenta": CUENTA_VPNGATE}
-    if not softether_instalado():
+    «conectado» es REAL: la interfaz de gestión de la sesión de la
+    app dice CONNECTED,SUCCESS, o (si la app se reabrió y perdió el
+    control de la interfaz) hay un proceso openvpn vivo y una
+    sesión anotada. Seguro en cualquier plataforma: sin OpenVPN o
+    sin sesión devuelve enseguida.
+    """
+    estado = {"instalado": openvpn_instalado(), "conectado": False,
+              "hostname": ""}
+    sesion = _leer_sesion() if estado["instalado"] else {}
+    if not sesion:
         return estado
-    estado["instalado"] = True
-    codigo, salida = _ejecutar_vpncmd(
-        ["AccountStatusGet", CUENTA_VPNGATE], timeout=30)
-    if codigo >= 0 and interpretar_estado_cuenta(salida):
+    estado["hostname"] = str(sesion.get("hostname") or "")
+    puerto = sesion.get("puerto")
+    if puerto:
+        try:
+            salida = _mgmt_enviar(int(puerto), "state", timeout=5)
+            if interpretar_estado_mgmt(salida)["conectado"]:
+                estado["conectado"] = True
+                return estado
+        except Exception:
+            pass
+    # Respaldo: proceso vivo + sesión anotada (la app se reabrió).
+    if hay_tunel_openvpn():
         estado["conectado"] = True
     return estado
 
 
-def conectar_softether(hostname: str, puerto: int = PUERTO_VPNGATE,
-                       hub: str = HUB_VPNGATE,
-                       usuario: str = USUARIO_VPNGATE,
-                       contrasena: str = CONTRASENA_VPNGATE,
-                       espera: int = 45) -> dict:
-    """Crea/actualiza la conexión de VPN Gate y la conecta por vpncmd.
+def conectar_openvpn(contenido_ovpn: str, hostname: str,
+                     espera: int = 45) -> dict:
+    """Conecta con un servidor de VPN Gate por el motor OpenVPN.
 
-    Todo en segundo plano, sin abrir la ventana de SoftEther:
-    asegura la tarjeta virtual (la crea el INSTALADOR desde la
-    1.0.8; si faltara, aquí se crea ELEVADO y VISIBLE, nunca oculto,
-    porque instalar su driver es operación de administrador),
-    recrea la cuenta «AntivirusHogarVPN» contra el servidor elegido
-    (hub VPNGATE, usuario/contraseña «vpn», como publica VPN Gate),
-    la conecta y espera a que AccountStatusGet confirme el túnel.
+    Todo en segundo plano, sin abrir ninguna ventana de OpenVPN:
+    escribe el perfil preparado y las credenciales, lanza
+    openvpn.exe oculto con la interfaz de gestión en un puerto
+    local y espera a que el estado confirme el túnel
+    (CONNECTED,SUCCESS). Si openvpn muere por el camino o el túnel
+    no se confirma a tiempo, el detalle trae la causa REAL de su
+    registro, no un texto inventado.
 
-    Devuelve {"ok", "mensaje", "detalle", "datos"}: el mensaje es la
-    frase clara para el usuario; el detalle, la causa técnica.
+    Devuelve {"ok", "mensaje", "detalle", "datos"}.
     """
+    global _PROCESO
     hostname = (hostname or "").strip()
     if not hostname:
         return {"ok": False, "mensaje": "Falta el servidor al que conectar.",
                 "detalle": "", "datos": {}}
-    if not softether_instalado():
+    ruta_exe = ruta_openvpn_exe()
+    if not ruta_exe:
         return {"ok": False,
-                "mensaje": "SoftEther no está en este equipo.",
-                "detalle": "vpncmd no encontrado.", "datos": {}}
-
-    def _fallo(paso: str, salida: str) -> dict:
+                "mensaje": "OpenVPN no está en este equipo.",
+                "detalle": "openvpn.exe no encontrado.", "datos": {}}
+    if not (contenido_ovpn or "").strip():
         return {"ok": False,
-                "mensaje": (f"No se pudo conectar con SoftEther ({paso}). "
-                            "Revisa tu conexión a internet e inténtalo "
-                            "de nuevo; si el servidor no responde, elige "
-                            "otro de la lista."),
-                "detalle": _linea_error_vpncmd(salida), "datos": {}}
-
-    # 1. Tarjeta virtual: sin ella no hay túnel. Si ni siquiera se
-    # puede hablar con el cliente, casi siempre es su SERVICIO caído
-    # (refuerzo 3: cada error típico con su mensaje en español).
-    codigo, salida = _ejecutar_vpncmd(["NicList"], timeout=30)
-    if not _vpncmd_ok(codigo, salida):
+                "mensaje": "El servidor no trajo su perfil de conexión "
+                           "(.ovpn): elige otro de la lista.",
+                "detalle": "", "datos": {}}
+    carpeta = carpeta_perfiles_vpn()
+    ruta_cred = os.path.join(carpeta, "vpngate-credenciales.txt")
+    with open(ruta_cred, "w", encoding="utf-8", newline="\n") as f:
+        f.write(f"{USUARIO_VPNGATE}\n{CLAVE_VPNGATE}\n")
+    ruta_perfil = os.path.join(carpeta, "vpngate-activo.ovpn")
+    with open(ruta_perfil, "w", encoding="utf-8", newline="\n") as f:
+        f.write(preparar_perfil_vpngate(contenido_ovpn, ruta_cred))
+    ruta_log = os.path.join(carpeta, "openvpn-conexion.log")
+    try:
+        os.remove(ruta_log)  # nunca leer la causa de un intento viejo
+    except OSError:
+        pass
+    puerto = _puerto_libre()
+    argumentos = [ruta_exe, "--config", ruta_perfil,
+                  "--management", "127.0.0.1", str(puerto),
+                  "--log-append", ruta_log]
+    try:
+        _PROCESO = _lanzar_openvpn(argumentos, carpeta)
+    except Exception as exc:
         return {"ok": False,
-                "mensaje": ("El servicio de SoftEther no responde: "
-                            "parece caído o sin arrancar. Abre "
-                            "«Servicios» de Windows y comprueba que "
-                            "«SoftEther VPN Client» está en ejecución, "
-                            "o reinstala la app para repararlo."),
-                "detalle": _linea_error_vpncmd(salida), "datos": {}}
-    if NIC_VPNGATE.lower() not in [n.lower() for n in _nombres_nic(salida)]:
-        # v1.0.8: NUNCA oculto y sin elevar (así fallaba siempre en la
-        # 1.0.7): la creación va ELEVADA y VISIBLE solo en este paso.
-        res_nic = crear_nic_elevada()
-        if not res_nic.get("ok"):
-            return {"ok": False,
-                    "mensaje": ("No se pudo crear la tarjeta virtual "
-                                "de red de SoftEther. Se abrió el paso "
-                                "de administrador en tu sesión para "
-                                "almacenar su controlador y crearla, "
-                                "pero Windows no la dejó lista: acepta "
-                                "el aviso de Windows cuando aparezca "
-                                "e inténtalo de nuevo."),
-                    "detalle": res_nic.get("detalle", ""), "datos": {}}
-    # 2. Cuenta: se recrea para apuntar al servidor elegido.
-    codigo, salida = _ejecutar_vpncmd(["AccountList"], timeout=30)
-    if _vpncmd_ok(codigo, salida) and CUENTA_VPNGATE in _nombres_cuentas(salida):
-        _ejecutar_vpncmd(["AccountDisconnect", CUENTA_VPNGATE], timeout=30)
-        _ejecutar_vpncmd(["AccountDelete", CUENTA_VPNGATE], timeout=30)
-    codigo, salida = _ejecutar_vpncmd(
-        ["AccountCreate", CUENTA_VPNGATE,
-         f"/SERVER:{hostname}:{int(puerto)}", f"/HUB:{hub}",
-         f"/USERNAME:{usuario}", f"/NICNAME:{NIC_VPNGATE}"], timeout=30)
-    if not _vpncmd_ok(codigo, salida):
-        return _fallo("no se pudo crear la conexión", salida)
-    codigo, salida = _ejecutar_vpncmd(
-        ["AccountPasswordSet", CUENTA_VPNGATE,
-         f"/PASSWORD:{contrasena}", "/TYPE:standard"], timeout=30)
-    if not _vpncmd_ok(codigo, salida):
-        return _fallo("no se pudo fijar la contraseña de la conexión",
-                      salida)
-    # 3. Conectar y esperar la confirmación del túnel.
-    codigo, salida = _ejecutar_vpncmd(["AccountConnect", CUENTA_VPNGATE],
-                                      timeout=60)
-    if not _vpncmd_ok(codigo, salida):
-        bajo = (salida or "").lower()
-        if any(m in bajo for m in ("auth", "password", "contraseña",
-                                   "user name", "username")):
-            return {"ok": False,
-                    "mensaje": ("El servidor rechazó el inicio de "
-                                "sesión (autenticación): VPN Gate "
-                                "acepta usuario y contraseña «vpn»; "
-                                "si este servidor pide otra cosa, elige "
-                                "otro de la lista."),
-                    "detalle": _linea_error_vpncmd(salida), "datos": {}}
-        return {"ok": False,
-                "mensaje": (f"El servidor {hostname} no respondió o "
-                            "cortó la conexión. Suele ser un servidor "
-                            "apagado o saturado: elige otro de la "
-                            "lista e inténtalo de nuevo."),
-                "detalle": _linea_error_vpncmd(salida), "datos": {}}
+                "mensaje": "No se pudo arrancar el motor de OpenVPN.",
+                "detalle": str(exc), "datos": {}}
+    _guardar_sesion({"hostname": hostname, "puerto": puerto,
+                     "pid": getattr(_PROCESO, "pid", None),
+                     "desde": time.time()})
     limite = time.time() + max(5, int(espera))
-    ultimo = ""
     while time.time() < limite:
-        codigo, ultimo = _ejecutar_vpncmd(
-            ["AccountStatusGet", CUENTA_VPNGATE], timeout=30)
-        if codigo >= 0 and interpretar_estado_cuenta(ultimo):
+        if _PROCESO is not None and _PROCESO.poll() is not None:
+            causa = _causa_del_registro(ruta_log)
+            _borrar_sesion()
+            bajo = causa.lower()
+            if "auth" in bajo:
+                return {"ok": False,
+                        "mensaje": ("El servidor rechazó el inicio de "
+                                    "sesión (autenticación): VPN Gate "
+                                    "acepta usuario y contraseña «vpn»; "
+                                    "si este servidor pide otra cosa, "
+                                    "elige otro de la lista."),
+                        "detalle": causa, "datos": {}}
+            if "tun/tap" in bajo or "tap" in bajo:
+                return {"ok": False,
+                        "mensaje": ("OpenVPN no pudo abrir su tarjeta "
+                                    "virtual (TAP-Windows). Reinstala "
+                                    "la app para repararla: su "
+                                    "instalador vuelve a dejar la "
+                                    "tarjeta en su sitio."),
+                        "detalle": causa, "datos": {}}
+            return {"ok": False,
+                    "mensaje": (f"El servidor {hostname} no respondió o "
+                                "cortó la conexión. Suele ser un "
+                                "servidor apagado o saturado: elige "
+                                "otro de la lista e inténtalo de nuevo."),
+                    "detalle": causa, "datos": {}}
+        try:
+            salida = _mgmt_enviar(puerto, "state", timeout=5)
+        except Exception:
+            salida = ""
+        if salida and interpretar_estado_mgmt(salida)["conectado"]:
             return {"ok": True,
-                    "mensaje": (f"Conectado a {hostname} con SoftEther: "
+                    "mensaje": (f"Conectado a {hostname} con OpenVPN: "
                                 "el túnel está arriba y trabaja en "
                                 "segundo plano."),
                     "detalle": "",
-                    "datos": {"cuenta": CUENTA_VPNGATE, "nic": NIC_VPNGATE,
-                              "hostname": hostname, "via": "softether"}}
+                    "datos": {"hostname": hostname, "via": "openvpn",
+                              "puerto_mgmt": puerto}}
         time.sleep(2)
+    causa = _causa_del_registro(ruta_log)
     return {"ok": False,
-            "mensaje": ("SoftEther aceptó la orden de conectar, pero el "
+            "mensaje": ("OpenVPN aceptó la orden de conectar, pero el "
                         "túnel no se confirmó a tiempo. El servidor "
-                        "puede estar saturado: elige otro de la lista e "
-                        "inténtalo de nuevo."),
-            "detalle": _linea_error_vpncmd(ultimo), "datos": {}}
+                        "puede estar saturado: elige otro de la lista "
+                        "e inténtalo de nuevo."),
+            "detalle": causa, "datos": {}}
 
+
+def desconectar_openvpn() -> dict:
+    """Baja la conexión del motor por su interfaz de gestión.
+
+    Orden limpia primero (signal SIGTERM a la interfaz); si el
+    proceso no responde o la app se había reabierto, se termina el
+    proceso openvpn de la sesión (mecanismo de respaldo honesto).
+    """
+    global _PROCESO
+    sesion = _leer_sesion()
+    puerto = sesion.get("puerto")
+    senal_enviada = False
+    if puerto:
+        try:
+            _mgmt_enviar(int(puerto), "signal SIGTERM", timeout=5)
+            senal_enviada = True
+        except Exception:
+            senal_enviada = False
+    if _PROCESO is not None:
+        try:
+            _PROCESO.wait(timeout=8)
+        except Exception:
+            try:
+                _PROCESO.terminate()
+            except Exception:
+                pass
+        _PROCESO = None
+    elif senal_enviada:
+        # Sin mango del proceso (app reabierta): dar tiempo a que
+        # la señal baje el túnel y comprobar; si sigue vivo, respaldo.
+        for _ in range(4):
+            if not hay_tunel_openvpn():
+                break
+            time.sleep(1)
+    if hay_tunel_openvpn():
+        terminar_procesos_openvpn()
+    _borrar_sesion()
+    return {"ok": True,
+            "mensaje": "VPN desconectada: OpenVPN bajó el túnel.",
+            "detalle": "", "datos": {}}
+
+
+# --- Servicios y tarjeta (diagnóstico y re-sincronización) ---------------------
 
 def interpretar_sc_query(salida: str) -> dict:
-    """Salida de `sc query SEVPNCLIENT` → {"registrado", "corriendo"}.
+    """Salida de `sc query <servicio>` → {"registrado", "corriendo"}.
 
     Sin servicio, sc devuelve error 1060 («The specified service
     does not exist» / «no existe el servicio especificado»).
@@ -544,7 +638,7 @@ def interpretar_sc_query(salida: str) -> dict:
 
 
 def interpretar_sc_qc(salida: str) -> dict:
-    """Salida de `sc qc SEVPNCLIENT` → {"inicio": auto|manual|desactivado|""}."""
+    """Salida de `sc qc <servicio>` → {"inicio": auto|manual|desactivado|""}."""
     bajo = (salida or "").lower()
     if "auto_start" in bajo or "inicio automático" in bajo \
             or "inicio automatico" in bajo:
@@ -558,8 +652,8 @@ def interpretar_sc_qc(salida: str) -> dict:
     return {"inicio": inicio}
 
 
-def estado_servicio_softether() -> dict:
-    """¿El servicio SEVPNCLIENT está registrado y cómo está?
+def estado_servicio(nombre: str) -> dict:
+    """¿El servicio está registrado y cómo está?
 
     {"registrado": bool|None, "corriendo": bool, "inicio": str}
     registrado=None si ni siquiera se pudo consultar (no Windows).
@@ -568,11 +662,11 @@ def estado_servicio_softether() -> dict:
 
     estado = {"registrado": None, "corriendo": False, "inicio": ""}
     try:
-        _rc, out, err = ejecutar_comando(["sc", "query", "SEVPNCLIENT"],
+        _rc, out, err = ejecutar_comando(["sc", "query", nombre],
                                          timeout=30)
         estado.update(interpretar_sc_query(out + err))
         if estado["registrado"]:
-            _rc, out, err = ejecutar_comando(["sc", "qc", "SEVPNCLIENT"],
+            _rc, out, err = ejecutar_comando(["sc", "qc", nombre],
                                              timeout=30)
             estado.update(interpretar_sc_qc(out + err))
     except Exception:
@@ -580,90 +674,56 @@ def estado_servicio_softether() -> dict:
     return estado
 
 
-def diagnostico_softether() -> dict:
-    """Mini-diagnóstico de integración (puerta de diagnóstico VPN).
+def interpretar_adaptadores_tap(salida: str) -> bool:
+    """¿La lista de adaptadores (Get-NetAdapter) trae la TAP-Windows?
 
-    Reúne la evidencia de que el SoftEther incorporado está bien
-    integrado: vpncmd localizado en la ruta REAL de instalación,
-    servicio registrado/arrancable, tarjeta virtual presente y
-    cuentas consultables. No conecta nada: solo comprueba.
+    La tarjeta del OpenVPN comunitario se describe como «TAP-Windows
+    Adapter V9» (tap-windows6) —y en instalaciones con DCO puede
+    aparecer además «OpenVPN Data Channel Offload»—: basta que la
+    salida nombre TAP-Windows u OpenVPN en una descripción.
     """
-    diag = {"instalado": False, "ruta_vpncmd": "", "servicio": {},
-            "nic": None, "cuentas": None, "conectado": False}
-    diag["ruta_vpncmd"] = ruta_vpncmd()
-    diag["instalado"] = bool(diag["ruta_vpncmd"])
+    bajo = (salida or "").lower()
+    return "tap-windows" in bajo or "openvpn" in bajo
+
+
+def hay_tap_windows() -> bool:
+    """¿La tarjeta virtual de OpenVPN está presente en el equipo?"""
+    from .powershell import ejecutar_powershell
+
+    try:
+        salida = ejecutar_powershell(
+            "Get-NetAdapter | ForEach-Object { "
+            "$_.Name + '|' + $_.InterfaceDescription }",
+            timeout=30)
+    except Exception:
+        return False
+    return interpretar_adaptadores_tap(salida)
+
+
+def diagnostico_openvpn() -> dict:
+    """Mini-diagnóstico de integración del motor OpenVPN.
+
+    Reúne la evidencia de que el OpenVPN incorporado está bien
+    integrado: openvpn.exe localizado en su ruta real, su versión,
+    el servicio interactivo registrado, la tarjeta TAP presente y
+    si hay túnel. No conecta nada: solo comprueba.
+    """
+    diag = {"instalado": False, "ruta_exe": "", "version": "",
+            "servicio": {}, "tap": None, "conectado": False,
+            "instalador_conservado": ""}
+    diag["ruta_exe"] = ruta_openvpn_exe()
+    diag["instalado"] = bool(diag["ruta_exe"])
+    diag["instalador_conservado"] = ruta_instalador_openvpn()
     if not diag["instalado"]:
         return diag
-    diag["servicio"] = estado_servicio_softether()
-    codigo, salida = _ejecutar_vpncmd(["NicList"], timeout=30)
-    if _vpncmd_ok(codigo, salida):
-        diag["nic"] = NIC_VPNGATE.lower() in [
-            n.lower() for n in _nombres_nic(salida)]
-    codigo, salida = _ejecutar_vpncmd(["AccountList"], timeout=30)
-    if _vpncmd_ok(codigo, salida):
-        diag["cuentas"] = _nombres_cuentas(salida)
-    diag["conectado"] = estado_softether()["conectado"]
+    diag["version"] = version_openvpn()
+    diag["servicio"] = estado_servicio(SERVICIO_INTERACTIVO_OPENVPN)
+    try:
+        diag["tap"] = hay_tap_windows()
+    except Exception:
+        diag["tap"] = None
+    diag["conectado"] = estado_openvpn()["conectado"]
     return diag
-
-
-def asegurar_cuenta_vpngate(hostname: str) -> dict:
-    """Deja la tarjeta y la cuenta de VPN Gate creadas SIN conectar.
-
-    La usa la re-sincronización tras una actualización de SoftEther
-    (punto 7): si la actualización borró la configuración, la app la
-    recrea igual que en la instalación inicial.
-    """
-    codigo, salida = _ejecutar_vpncmd(["NicList"], timeout=30)
-    if not _vpncmd_ok(codigo, salida):
-        return {"ok": False,
-                "mensaje": "El servicio de SoftEther no responde.",
-                "detalle": _linea_error_vpncmd(salida)}
-    if NIC_VPNGATE.lower() not in [n.lower() for n in _nombres_nic(salida)]:
-        codigo, salida = _ejecutar_vpncmd(["NicCreate", NIC_VPNGATE],
-                                          timeout=120)
-        if not _vpncmd_ok(codigo, salida):
-            return {"ok": False,
-                    "mensaje": "No se pudo crear la tarjeta virtual.",
-                    "detalle": _linea_error_vpncmd(salida)}
-    codigo, salida = _ejecutar_vpncmd(["AccountList"], timeout=30)
-    if _vpncmd_ok(codigo, salida) \
-            and CUENTA_VPNGATE in _nombres_cuentas(salida):
-        return {"ok": True, "mensaje": "La conexión ya estaba creada.",
-                "detalle": ""}
-    codigo, salida = _ejecutar_vpncmd(
-        ["AccountCreate", CUENTA_VPNGATE,
-         f"/SERVER:{hostname}:{PUERTO_VPNGATE}", f"/HUB:{HUB_VPNGATE}",
-         f"/USERNAME:{USUARIO_VPNGATE}", f"/NICNAME:{NIC_VPNGATE}"],
-        timeout=30)
-    if not _vpncmd_ok(codigo, salida):
-        return {"ok": False,
-                "mensaje": "No se pudo crear la conexión de VPN Gate.",
-                "detalle": _linea_error_vpncmd(salida)}
-    codigo, salida = _ejecutar_vpncmd(
-        ["AccountPasswordSet", CUENTA_VPNGATE,
-         f"/PASSWORD:{CLAVE_VPNGATE}", "/TYPE:standard"], timeout=30)
-    if not _vpncmd_ok(codigo, salida):
-        return {"ok": False,
-                "mensaje": "No se pudo fijar la contraseña de la conexión.",
-                "detalle": _linea_error_vpncmd(salida)}
-    return {"ok": True, "mensaje": "Conexión de VPN Gate recreada.",
-            "detalle": ""}
-
-
-def desconectar_softether() -> dict:
-    """Baja la conexión de la app por vpncmd (AccountDisconnect)."""
-    if not softether_instalado():
-        return {"ok": False, "mensaje": "SoftEther no está en este equipo.",
-                "detalle": "", "datos": {}}
-    codigo, salida = _ejecutar_vpncmd(
-        ["AccountDisconnect", CUENTA_VPNGATE], timeout=30)
-    if _vpncmd_ok(codigo, salida):
-        return {"ok": True,
-                "mensaje": "VPN desconectada: SoftEther bajó el túnel.",
-                "detalle": "", "datos": {}}
-    return {"ok": False,
-            "mensaje": "No se pudo desconectar SoftEther desde la app.",
-            "detalle": _linea_error_vpncmd(salida), "datos": {}}
 
 
 _ = sys  # (compatibilidad de imports en empaquetado)

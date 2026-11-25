@@ -232,9 +232,10 @@ def verificar_integridad_propia(carpeta: str | None = None) -> dict:
 
     El instalador deja {app}\\componentes.json con las rutas
     relativas que deben existir (el .exe, el icono, el script de
-    exclusión y, si fue incorporado, SoftEther). Si un antivirus se
-    llevó algo, aquí se ve. Sin manifiesto (instalaciones
-    anteriores), se comprueba lo básico: el propio ejecutable.
+    exclusión y, si fue incorporado, el instalador de OpenVPN). Si
+    un antivirus se llevó algo, aquí se ve. Sin manifiesto
+    (instalaciones anteriores), se comprueba lo básico: el propio
+    ejecutable.
     """
     base = carpeta or carpeta_instalacion()
     esperados: list[str] = []

@@ -1,14 +1,14 @@
-"""v1.0.7 — Notas de la revisión de la 1.0.6 en la PC real + SoftEther.
+"""v1.0.7 — Notas de la revisión de la 1.0.6 en la PC real.
 
 1. Discos: el desenlace de «Optimizar volúmenes» se extrae también
    del registro de eventos de Windows y de la salida detallada
    completa: si consta que terminó, «Optimización finalizada»; si
    falló, la causa verdadera de esas fuentes.
-2. VPN Gate: SoftEther incorporado manejado por vpncmd (simulado:
-   en CI no hay VPN real) — crear la conexión, conectar, estado
-   conectado con el literal real del cliente, desconectar y errores
-   con mensaje claro en español; el botón del servidor conectado se
-   pone verde y dice «Conectado».
+2. VPN Gate: la sección 2 era el motor SoftEther por vpncmd —
+   RETIRADO en la 1.0.10 con el cambio de motor a OpenVPN; aquí
+   quedan los equivalentes de la capa de servicios con el motor
+   nuevo (los del motor en sí viven en tests/test_v1010.py) y la
+   página con el botón verde «Conectado».
 3. El descargador crea solo su carpeta (en la PC real faltaba
    %LOCALAPPDATA%\\AntivirusHogarPC\\actualizaciones y el botón de
    actualizar fallaba por eso).
@@ -25,14 +25,18 @@ def test_notas_y_version_107():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core import notas_version
 
-    # v1.0.9: la versión vigente sube; las notas de la 1.0.8 y la
-    # 1.0.7 quedan en el historial.
-    assert config.VERSION == "1.0.9"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.9"
-    notas = notas_version.notas_de("1.0.9")
+    # v1.0.10: la versión vigente sube (cambio de motor VPN); las
+    # notas de la 1.0.9, la 1.0.8 y la 1.0.7 quedan en el historial.
+    assert config.VERSION == "1.0.10"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.10"
+    notas = notas_version.notas_de("1.0.10")
     assert notas is not None and len(notas["novedades"]) >= 3
     texto = " ".join(notas["novedades"])
-    assert "SoftEther" in texto and "tarjeta virtual" in texto
+    assert "OpenVPN" in texto and "SoftEther" in texto
+    notas109 = notas_version.notas_de("1.0.9")
+    assert notas109 is not None and len(notas109["novedades"]) >= 3
+    texto109 = " ".join(notas109["novedades"])
+    assert "SoftEther" in texto109 and "tarjeta virtual" in texto109
     notas108 = notas_version.notas_de("1.0.8")
     assert notas108 is not None and len(notas108["novedades"]) >= 3
     notas107 = notas_version.notas_de("1.0.7")
@@ -40,22 +44,22 @@ def test_notas_y_version_107():
     assert "Optimización finalizada" in " ".join(notas107["novedades"])
 
 
-def test_instalador_lleva_softether_incorporado():
+def test_instalador_lleva_openvpn_incorporado():
     import os
 
     raiz = os.path.join(os.path.dirname(__file__), "..")
     with open(os.path.join(raiz, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
         iss = f.read()
-    assert '#define AppVersion "1.0.9"' in iss
-    assert "softether\\client\\*" in iss          # el payload, a {app}\softether
-    assert "SEVPNCLIENT" in iss                  # registra el servicio
-    assert "SoftEtherServicioPropio" in iss      # marca: solo retira el suyo
+    assert '#define AppVersion "1.0.10"' in iss
+    # El payload de OpenVPN, a {app}\openvpn, y su instalación silenciosa.
+    assert "openvpn\\OpenVPN-2.7.9-I002-amd64.msi" in iss
+    assert "msiexec" in iss
     with open(os.path.join(raiz, ".github", "workflows",
                            "build-windows.yml"), encoding="utf-8") as f:
         yml = f.read()
-    assert "softether-vpnclient-v4.44-9807" in yml  # descarga oficial fijada
-    assert "56249368" in yml                        # tamaño verificado
+    assert "OpenVPN-2.7.9-I002-amd64.msi" in yml  # descarga oficial fijada
+    assert "5939200" in yml                        # tamaño verificado
 
 
 # === 1. Discos: desenlace real de la optimización ==============================
@@ -140,150 +144,34 @@ def test_eventos_el_mas_reciente_manda():
     assert "error de prueba" in res["causa"]
 
 
-# === 2. SoftEther por vpncmd (simulado) ========================================
+# === 2. Servicios VPN con el motor OpenVPN (simulado) =========================
 
-_SALIDA_CONECTADO = (
-    "AccountStatusGet command - Get Current VPN Connection Setting Status\n"
-    "Item                                      |Value\n"
-    "------------------------------------------+----\n"
-    "VPN Connection Setting Name               |AntivirusHogarVPN\n"
-    "Session Status                            |Connection Completed "
-    "(Session Established)\n"
-    "Server Name                               |vpn123.opengw.net\n"
-    "Port Number                               |TCP Port 443\n"
-    "The command completed successfully.\n")
-
-_OK = "The command completed successfully.\n"
-
-
-class _VpncmdFalso:
-    """Simula el cliente SoftEther local: NIC, cuenta y sesión."""
-
-    def __init__(self, fallar_conexion=False):
-        # v1.0.8: la tarjeta virtual la crea el INSTALADOR; al
-        # conectar, la app la encuentra ya presente en NicList.
-        self.nic = True
-        self.cuenta = False
-        self.conectado = False
-        self.fallar_conexion = fallar_conexion
-        self.comandos = []
-
-    def __call__(self, argumentos, timeout=60):
-        comando = argumentos[0]
-        self.comandos.append(comando)
-        if comando == "NicList":
-            filas = ("Virtual Network Adapter Name|Status\n"
-                     "----------------------------+------\n")
-            if self.nic:
-                filas += "VPN|Enabled\n"
-            return 0, filas + _OK
-        if comando == "NicCreate":
-            self.nic = True
-            return 0, _OK
-        if comando == "AccountList":
-            filas = "VPN Connection Setting Name|Status\n---\n"
-            if self.cuenta:
-                filas += "AntivirusHogarVPN|Disconnected\n"
-            return 0, filas + _OK
-        if comando == "AccountCreate":
-            assert "/SERVER:vpn123.opengw.net:443" in argumentos[2]
-            assert "/HUB:VPNGATE" in argumentos[3]
-            assert "/USERNAME:vpn" in argumentos[4]
-            assert "/NICNAME:VPN" in argumentos[5]
-            self.cuenta = True
-            return 0, _OK
-        if comando == "AccountPasswordSet":
-            assert "/PASSWORD:vpn" in argumentos[2]
-            assert "/TYPE:standard" in argumentos[3]
-            return 0, _OK
-        if comando == "AccountConnect":
-            if self.fallar_conexion:
-                return 2, ("AccountConnect command\n"
-                           "Error Code: 2\n"
-                           "Connection to the server failed.\n")
-            self.conectado = True
-            return 0, _OK
-        if comando == "AccountStatusGet":
-            if self.conectado:
-                return 0, _SALIDA_CONECTADO
-            return 0, ("Session Status                            |"
-                       "Not Connected\n" + _OK)
-        if comando == "AccountDisconnect":
-            self.conectado = False
-            return 0, _OK
-        if comando == "AccountDelete":
-            self.cuenta = False
-            return 0, _OK
-        raise AssertionError(f"comando inesperado: {argumentos}")
-
-
-def _softether_falso(monkeypatch, falso):
-    from antivirus_hogar_pc.winapi import vpn_win
-
-    monkeypatch.setattr(vpn_win, "ruta_vpncmd",
-                        lambda: r"C:\falso\vpncmd.exe")
-    monkeypatch.setattr(vpn_win, "_ejecutar_vpncmd", falso)
-    return vpn_win
-
-
-def test_interpretar_estado_cuenta_literal_real():
-    from antivirus_hogar_pc.winapi.vpn_win import interpretar_estado_cuenta
-
-    assert interpretar_estado_cuenta(_SALIDA_CONECTADO) is True
-    assert interpretar_estado_cuenta("Session Status | Not Connected") is False
-    assert interpretar_estado_cuenta("") is False
-
-
-def test_conectar_softether_flujo_completo(monkeypatch):
-    vpn_win = _softether_falso(monkeypatch, _VpncmdFalso())
-    res = vpn_win.conectar_softether("vpn123.opengw.net", espera=5)
-    assert res["ok"] is True
-    assert res["datos"]["via"] == "softether"
-    falso = vpn_win._ejecutar_vpncmd
-    assert "NicList" in falso.comandos        # la tarjeta ya venía del instalador (v1.0.8)
-    assert "AccountCreate" in falso.comandos  # creó la conexión VPNGATE
-    assert "AccountConnect" in falso.comandos
-    estado = vpn_win.estado_softether()
-    assert estado == {"instalado": True, "conectado": True,
-                      "cuenta": "AntivirusHogarVPN"}
-    desc = vpn_win.desconectar_softether()
-    assert desc["ok"] is True
-    assert vpn_win.estado_softether()["conectado"] is False
-
-
-def test_conectar_softether_error_de_vpncmd_en_espanol(monkeypatch):
-    vpn_win = _softether_falso(
-        monkeypatch, _VpncmdFalso(fallar_conexion=True))
-    res = vpn_win.conectar_softether("vpn123.opengw.net", espera=5)
-    assert res["ok"] is False
-    # Refuerzo 3 de la 1.0.7: cada error típico con su mensaje
-    # específico en español (aquí: el servidor no respondió).
-    assert "no respondió" in res["mensaje"]
-    assert "Error Code: 2" in res["detalle"]  # la causa técnica, al detalle
-
-
-def test_servicios_conectar_vpn_usa_softether(monkeypatch, tmp_path):
+def test_servicios_conectar_vpn_usa_openvpn(monkeypatch, tmp_path):
     from antivirus_hogar_pc.modules.net import servicios_red as srv
 
     monkeypatch.setattr(srv.config, "carpeta_datos", lambda: str(tmp_path))
-    monkeypatch.setattr(srv.vpn_win, "softether_instalado", lambda: True)
+    monkeypatch.setattr(srv.vpn_win, "openvpn_instalado", lambda: True)
     monkeypatch.setattr(
-        srv.vpn_win, "conectar_softether",
-        lambda hostname: {"ok": True, "mensaje": "", "detalle": "",
-                          "datos": {"via": "softether"}})
+        srv.vpn_win, "conectar_openvpn",
+        lambda contenido, hostname: {"ok": True, "mensaje": "",
+                                     "detalle": "",
+                                     "datos": {"via": "openvpn"}})
 
     class _Serv:
         hostname = "vpn123.opengw.net"
         pais = "Japan"
         pais_corto = "JP"
 
+        def generar_ovpn(self):
+            return "client\nremote vpn123.opengw.net 443\n"
+
     r = srv.conectar_vpn(_Serv())
     assert r.ok is True
-    assert r.datos["conectado"] is True and r.datos["via"] == "softether"
-    assert srv._leer_estado_vpn().get("via") == "softether"
+    assert r.datos["conectado"] is True and r.datos["via"] == "openvpn"
+    assert srv._leer_estado_vpn().get("via") == "openvpn"
 
 
-def test_servicios_estado_y_desconexion_softether(monkeypatch, tmp_path):
+def test_servicios_estado_y_desconexion_openvpn(monkeypatch, tmp_path):
     from antivirus_hogar_pc.modules.net import servicios_red as srv
 
     monkeypatch.setattr(srv.config, "carpeta_datos", lambda: str(tmp_path))
@@ -292,94 +180,19 @@ def test_servicios_estado_y_desconexion_softether(monkeypatch, tmp_path):
                         lambda timeout=15: "1.2.3.4")
     monkeypatch.setattr(srv.vpn_win, "hay_tunel_openvpn", lambda: False)
     monkeypatch.setattr(
-        srv.vpn_win, "estado_softether",
+        srv.vpn_win, "estado_openvpn",
         lambda: {"instalado": True, "conectado": True,
-                 "cuenta": "AntivirusHogarVPN"})
+                 "hostname": "vpn123.opengw.net"})
     monkeypatch.setattr(
-        srv.vpn_win, "desconectar_softether",
+        srv.vpn_win, "desconectar_openvpn",
         lambda: {"ok": True, "mensaje": "", "detalle": "", "datos": {}})
 
     estado = srv.estado_vpn()
     assert estado.ok and estado.datos["conectada"] is True
-    assert estado.datos["conectada_softether"] is True
+    assert estado.datos["conectada_openvpn"] is True
 
     r = srv.desconectar_vpn()
-    assert r.ok is True and "SoftEther" in r.mensaje
-
-
-def test_pagina_boton_se_pone_verde_conectado(monkeypatch):
-    pytest.importorskip("PySide6.QtWidgets")
-    from PySide6.QtCore import QEventLoop, QTimer
-    from PySide6.QtWidgets import QApplication
-
-    app = QApplication.instance() or QApplication([])
-
-    def _esperar(ms=700):
-        loop = QEventLoop()
-        QTimer.singleShot(ms, loop.quit)
-        loop.exec()
-        app.processEvents()
-
-    from antivirus_hogar_pc.contracts import ContextoModulo, ResultadoModulo
-    from antivirus_hogar_pc.modules.net import page as netpage
-    from antivirus_hogar_pc.modules.net import servicios_red as srv
-
-    monkeypatch.setattr(srv, "informe_wifi",
-                        lambda: ResultadoModulo(ok=False, mensaje="sin wifi"))
-    monkeypatch.setattr(
-        srv, "descargar_servidores_completos",
-        lambda: ResultadoModulo(ok=False, mensaje="sin red (prueba)"))
-    monkeypatch.setattr(srv, "estado_vpn",
-                        lambda: ResultadoModulo(ok=True, datos={}))
-    monkeypatch.setattr(
-        srv, "conectar_vpn",
-        lambda servidor: ResultadoModulo(
-            ok=True, mensaje="túnel arriba",
-            datos={"conectado": True, "via": "softether"}))
-
-    widget = netpage.crear_pagina_red(ContextoModulo(servicios=None))
-    pagina = widget._pagina_controladora
-    widget.show()
-    _esperar(1200)  # autocargas; la semilla puebla la tabla
-    assert pagina._tabla_vpn.rowCount() >= 30
-    hostname = pagina._visibles[0].hostname
-    monkeypatch.setattr(
-        srv, "estado_vpn",
-        lambda: ResultadoModulo(ok=True, datos={
-            "conectada": True, "servidor": hostname, "pais": "Japan",
-            "clientes": [], "ip": ""}))
-
-    # v1.0.9: la celda de acción es un contenedor; la fila conectada
-    # lleva «Conectado» (verde) y «Desconectar» (rojo) lado a lado.
-    from PySide6.QtWidgets import QPushButton
-
-    celda = pagina._tabla_vpn.cellWidget(0, 5)
-    botones = {b.text(): b for b in celda.findChildren(QPushButton)}
-    assert set(botones) == {"Conectar"}
-    botones["Conectar"].click()
-    _esperar(900)
-    celda = pagina._tabla_vpn.cellWidget(0, 5)
-    botones = {b.text(): b for b in celda.findChildren(QPushButton)}
-    assert set(botones) == {"Conectado", "Desconectar"}
-    assert "Conectado" in pagina._lbl_vpn.text()
-    assert pagina._servidor_conectado == hostname
-
-    # Cierre ORDENADO (lección de la corrida CI 45493532868: la suite
-    # pasaba 225/225 pero el proceso salía con código 1 — un _Trabajo
-    # o temporizador de la página seguía vivo al caer el intérprete y
-    # la caída al cierre es una lotería de tiempos). Se espera a que
-    # los hilos terminen, se destruye el widget (su señal destroyed
-    # suelta los trabajos) y se vacía la cola de eventos.
-    import gc as _gc
-
-    _esperar(600)
-    widget.close()
-    widget.deleteLater()
-    _esperar(300)
-    app.processEvents()
-    del widget, pagina
-    _gc.collect()
-    app.processEvents()
+    assert r.ok is True and "OpenVPN" in r.mensaje
 
 
 # === 3. La carpeta de descargas se crea sola ===================================

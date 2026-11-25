@@ -29,6 +29,17 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.10",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "CAMBIO DE MOTOR VPN: SoftEther sale de la app y entra OpenVPN. La causa, probada en la PC real: el controlador de la tarjeta virtual de SoftEther (del año 2018) lo bloquea Windows al instalar el dispositivo, y ninguna versión de la app puede forzarlo. El instalador de la app ahora instala en silencio el OpenVPN oficial (el de la comunidad), cuyo servicio y cuya tarjeta virtual TAP-Windows traen controladores firmados y aceptados por Windows.",
+            "La VPN se usa IGUAL que antes, desde la misma pantalla de «Red y VPN»: la misma lista de servidores de VPN Gate por países, el botón «Conectar» que se pone verde y dice «Conectado» con el botón rojo «Desconectar» a su lado, y el túnel trabajando en segundo plano, sin abrir ningún otro programa. Lo que cambia es solo el motor de debajo.",
+            "Al actualizar desde la 1.0.9, el instalador retira limpiamente los restos de SoftEther (su servicio, su carpeta y su controlador) sin tocar nada más.",
+            "OpenVPN siempre al día, SIN romperse: cada 3 días la app comprueba en segundo plano si hay una versión más nueva en las fuentes oficiales; la descarga y la verifica ANTES de aplicarla (tamaño oficial, instalador válido y firma de OpenVPN). Nunca se aplica con una conexión VPN activa (espera a que desconectes), y tras aplicarla comprueba que OpenVPN sigue sano: si algo quedara mal, vuelve SOLA a la versión anterior que funcionaba y deja la causa en el registro de actividad.",
+            "Red y VPN: los botones «Conectar» de la tabla de servidores ya se leen completos (la fila era más baja que el botón y se cortaban por abajo).",
+        ],
+    },
+    {
         "version": "1.0.9",
         "fecha": "25/11/2026",
         "novedades": [

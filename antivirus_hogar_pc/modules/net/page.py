@@ -723,6 +723,14 @@ class _PaginaRed(QWidget):
         self._tabla_vpn = QTableWidget(0, 6)
         self._tabla_vpn.setHorizontalHeaderLabels(
             ["País", "Servidor", "Velocidad", "Ping", "Sesiones", "Acción"])
+        # v1.0.10: altura de fila suficiente para el botón «Conectar»
+        # completo. El tema da al botón ≈37 px (texto 13 px + padding
+        # 8 px arriba/abajo + bordes) y el contenedor de la celda
+        # añade 2 px por lado: con la altura por defecto de Qt
+        # (~30 px) el botón se veía CORTADO por abajo (reportado por
+        # el usuario en la 1.0.9). 42 px lo deja entero, y
+        # _repintar_servidores remata con resizeRowsToContents().
+        self._tabla_vpn.verticalHeader().setDefaultSectionSize(42)
         lay_v.addWidget(self._tabla_vpn)
         # Globo terráqueo girando sobre la celda de esquina de la
         # tabla (v1.0.8, pedido del usuario): tapa el cuadro blanco
@@ -734,12 +742,12 @@ class _PaginaRed(QWidget):
         self._tabla_vpn.verticalHeader().sectionResized.connect(
             lambda *_: self._situar_globo_vpn())
         lay_v.addWidget(etiqueta(
-            "Con SoftEther (incluido con la app) la conexión se hace desde "
+            "Con OpenVPN (incluido con la app) la conexión se hace desde "
             "aquí: pulsa «Conectar» en un servidor y el túnel sube en "
             "segundo plano; el botón de esa fila se pone verde y dice "
             "«Conectado», y a su lado aparece el botón rojo «Desconectar» "
             "para bajar el túnel desde la misma fila. "
-            "Sin SoftEther, la app genera el perfil .ovpn y se lo entrega "
+            "Sin OpenVPN, la app genera el perfil .ovpn y se lo entrega "
             "a tu cliente VPN."))
         fila_ip = QHBoxLayout()
         self._lbl_ip = etiqueta("Tu IP pública: sin consultar.")
@@ -1035,6 +1043,14 @@ class _PaginaRed(QWidget):
                 fila_botones.addWidget(boton)
             tabla.setCellWidget(i, 5, celda)
         tabla.resizeColumnsToContents()
+        # v1.0.10: red de seguridad de la altura de fila — tras
+        # poblar, cada fila se ajusta a su contenido (el botón
+        # «Conectar» completo, sin corte inferior) y ninguna baja
+        # de 42 px aunque el ajuste al contenido dé menos.
+        tabla.resizeRowsToContents()
+        for i in range(tabla.rowCount()):
+            if tabla.rowHeight(i) < 42:
+                tabla.setRowHeight(i, 42)
         if self._servidor_conectado:
             # v1.0.9: con dos botones en la fila conectada, la columna
             # de acción no debe quedarse estrecha y apretarlos.
@@ -1046,7 +1062,7 @@ class _PaginaRed(QWidget):
 
         def _al_conectar(r: ResultadoModulo) -> None:
             if r.ok and (r.datos or {}).get("conectado"):
-                # v1.0.7: túnel confirmado por SoftEther → el botón de
+                # v1.0.7: túnel confirmado por el motor → el botón de
                 # ESE servidor se pone verde y dice «Conectado».
                 self._servidor_conectado = servidor.hostname
                 self._repintar_servidores()
@@ -1180,7 +1196,7 @@ class _PaginaRed(QWidget):
         lineas = [
             "Clientes VPN instalados: " + (", ".join(clientes) if clientes else "ninguno"),
             "IP pública actual: " + (ip if ip else "sin consultar / no disponible"),
-            ("Con SoftEther (incluido con la app) el túnel lo levanta y "
+            ("Con OpenVPN (incluido con la app) el túnel lo levanta y "
              "lo baja la propia app desde aquí; con otro cliente, la app "
              "le entrega el perfil y «Desconectar VPN» cierra su proceso "
              "de OpenVPN."),
