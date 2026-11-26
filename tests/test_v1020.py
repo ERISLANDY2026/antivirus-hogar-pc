@@ -466,9 +466,9 @@ def test_version_1020_en_config_notas_e_instalador():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
 
-    assert config.VERSION == "1.0.20"
-    assert NOTAS_VERSION[0]["version"] == "1.0.20"
+    assert config.VERSION == "1.0.21"
+    assert NOTAS_VERSION[0]["version"] == "1.0.21"
     assert len(NOTAS_VERSION[0]["novedades"]) >= 3
     with open(os.path.join(RAIZ, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
-        assert '#define AppVersion "1.0.20"' in f.read()
+        assert '#define AppVersion "1.0.21"' in f.read()
