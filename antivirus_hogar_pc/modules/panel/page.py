@@ -317,6 +317,12 @@ def crear_pagina(ctx: ContextoModulo):
         fila.addWidget(lbl_fila, 1)
         boton_fila = None
         navegador_fila = None
+        if ctx is not None and ctx.al_navegar is not None:
+            boton_fila = QPushButton(t("Revisar"))
+            boton_fila.clicked.connect(
+                lambda _=False, b=boton_fila:
+                ctx.al_navegar(b.property("destino") or "panel"))
+            fila.addWidget(boton_fila)
         contenedor.setVisible(False)
         lay_pendientes.addWidget(contenedor)
         filas_pendientes.append({
@@ -360,8 +366,8 @@ def crear_pagina(ctx: ContextoModulo):
             color = theme.AMBAR if pendiente.aviso else theme.TEXTO_SUAVE
             fila_p["etiqueta"].setText(_texto_pendiente(pendiente))
             fila_p["etiqueta"].setStyleSheet(f"color: {color};")
-            if fila_p["navegador"] is not None:
-                fila_p["navegador"].fijar_destino(pendiente.destino)
+            if fila_p["boton"] is not None:
+                fila_p["boton"].setProperty("destino", pendiente.destino)
             fila_p["contenedor"].setVisible(True)
 
     # --- Puesta a punto de un clic (v1.0.16, frente 1) -------------------------
