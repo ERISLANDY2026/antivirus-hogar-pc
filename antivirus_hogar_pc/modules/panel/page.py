@@ -317,11 +317,6 @@ def crear_pagina(ctx: ContextoModulo):
         fila.addWidget(lbl_fila, 1)
         boton_fila = None
         navegador_fila = None
-        if ctx is not None and ctx.al_navegar is not None:
-            boton_fila = QPushButton(t("Revisar"))
-            navegador_fila = _NavegadorPendiente(ctx, parent=boton_fila)
-            boton_fila.clicked.connect(navegador_fila.ir)
-            fila.addWidget(boton_fila)
         contenedor.setVisible(False)
         lay_pendientes.addWidget(contenedor)
         filas_pendientes.append({
@@ -367,7 +362,7 @@ def crear_pagina(ctx: ContextoModulo):
             fila_p["etiqueta"].setStyleSheet(f"color: {color};")
             if fila_p["navegador"] is not None:
                 fila_p["navegador"].fijar_destino(pendiente.destino)
-            fila_p["contenedor"].setVisible(False)  # DIAG P10: nunca mostrar
+            fila_p["contenedor"].setVisible(True)
 
     # --- Puesta a punto de un clic (v1.0.16, frente 1) -------------------------
     tarjeta_puesta, lay_puesta = tarjeta(t("Puesta a punto"))
