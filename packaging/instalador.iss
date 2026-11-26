@@ -394,28 +394,31 @@ end;
   del radar a 509x746) y aqui se escala ENTERO al alto de la
   pagina conservando su proporcion — nunca se recorta ningun
   pedazo. La barra y las etiquetas de la pagina se estrechan
-  para dejarle su sitio a la derecha. }
+  para dejarle su sitio a la derecha. La superficie de la
+  pagina se obtiene del padre de la propia barra de progreso
+  (TWizardPage no expone Surface en el script de Inno 6). }
 var
   ImgEspartano: TBitmapImage;
 
 procedure InitializeWizard();
 var
   AnchoImg: Integer;
+  Superficie: TWinControl;
 begin
   ExtractTemporaryFile('espartano_instalador.bmp');
+  Superficie := WizardForm.ProgressGauge.Parent;
   ImgEspartano := TBitmapImage.Create(WizardForm);
-  ImgEspartano.Parent := WizardForm.InstallingPage.Surface;
+  ImgEspartano.Parent := Superficie;
   ImgEspartano.Bitmap.LoadFromFile(
     ExpandConstant('{tmp}\espartano_instalador.bmp'));
   ImgEspartano.AutoSize := False;
   ImgEspartano.Stretch := True;
-  ImgEspartano.Height :=
-    WizardForm.InstallingPage.SurfaceHeight - ScaleY(14);
+  ImgEspartano.Height := Superficie.Height - ScaleY(14);
   { Proporcion del BMP: 509/746. }
   AnchoImg := Round(ImgEspartano.Height * 509 / 746);
   ImgEspartano.Width := AnchoImg;
   ImgEspartano.Top := ScaleY(7);
-  ImgEspartano.Left := WizardForm.InstallingPage.SurfaceWidth
+  ImgEspartano.Left := Superficie.Width
     - AnchoImg - ScaleX(6);
   WizardForm.ProgressGauge.Width := ImgEspartano.Left
     - WizardForm.ProgressGauge.Left - ScaleX(16);

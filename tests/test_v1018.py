@@ -1,4 +1,4 @@
-"""v1.0.18 — Las OCHO notas del usuario tras probar la 1.0.17.
+"""v1.0.18 — Las ONCE notas del usuario tras probar la 1.0.17.
 
 - Nota 1: ningún trabajo en segundo plano puede elevar OpenVPN
   (cero UAC espontáneos): el lanzador con solo_servicio jamás
@@ -22,6 +22,16 @@
   código Inno) y el grupo OpenVPN verificado en su script.
 - Nota 8: el activo animado nuevo (640×960, 240 cuadros) — su
   decodificación con Qt la vigila test_v1017; aquí, su peso.
+- Nota 9: firmas al detectar conexión, una vez al día: la
+  decisión pura (ya actualizado hoy / sin conexión / ejecutar)
+  y la tarea de las 09:00 intacta como respaldo.
+- Nota 10: drivers verificados en TODAS las fuentes: el
+  veredicto final es la versión MÁS RECIENTE entre Catálogo,
+  Windows Update y almacén, con su fuente; Panasonic entra en
+  URLS_OEM con su URL oficial.
+- Nota 11: adaptatividad: el enlace OEM sale de la marca
+  detectada del equipo anfitrión (Panasonic es una entrada más,
+  nada queda amarrado a la Toughbook).
 """
 import hashlib
 import http.server
@@ -403,7 +413,7 @@ def test_interno_iss_espartano_y_bmp_valido():
     assert "espartano_instalador.bmp" in iss
     assert "dontcopy" in iss
     assert "InitializeWizard" in iss
-    assert "InstallingPage" in iss
+    assert "ProgressGauge.Parent" in iss
     ruta_bmp = os.path.join(RAIZ, "packaging",
                             "espartano_instalador.bmp")
     with open(ruta_bmp, "rb") as f:
@@ -441,3 +451,200 @@ def test_version_1018_en_json_del_canal_no_tocado():
 
     assert config.VERSION == "1.0.18"
     json.dumps({"version": config.VERSION})  # serializable
+
+
+# ---------------------------------------------------------------------------
+# NOTA 9 — firmas al detectar conexión, una vez al día
+# ---------------------------------------------------------------------------
+
+def _ts(dia: int, hora: int = 10) -> float:
+    import datetime as _dt
+
+    return _dt.datetime(2026, 11, dia, hora, 0, 0).timestamp()
+
+
+def test_nota9_ya_actualizado_hoy_no_se_repite():
+    from antivirus_hogar_pc.core import programaciones as prog
+
+    hoy = {"cuando": _ts(26, 8), "ok": True, "resumen": "ok"}
+    assert prog.firmas_actualizadas_hoy(hoy, _ts(26, 21)) is True
+    llamadas = []
+    res = prog.intentar_firmas_por_conexion(
+        _ts(26, 21), hoy, lambda: llamadas.append("red") or True,
+        lambda: llamadas.append("ejecutar") or True)
+    assert res == "ya"
+    assert llamadas == []  # ni sonda ni ejecución: hoy ya está hecho
+
+
+def test_nota9_ayer_o_fallo_hoy_todavia_toca():
+    from antivirus_hogar_pc.core import programaciones as prog
+
+    ayer = {"cuando": _ts(25, 9), "ok": True, "resumen": "ok"}
+    fallo_hoy = {"cuando": _ts(26, 9), "ok": False, "resumen": "falló"}
+    assert prog.firmas_actualizadas_hoy(ayer, _ts(26, 10)) is False
+    assert prog.firmas_actualizadas_hoy(fallo_hoy, _ts(26, 10)) is False
+    assert prog.firmas_actualizadas_hoy(None, _ts(26, 10)) is False
+    assert prog.firmas_actualizadas_hoy({}, _ts(26, 10)) is False
+
+
+def test_nota9_sin_conexion_no_ejecuta_y_con_conexion_una_vez():
+    from antivirus_hogar_pc.core import programaciones as prog
+
+    ejecuciones = []
+    res = prog.intentar_firmas_por_conexion(
+        _ts(26, 7), None, lambda: False,
+        lambda: ejecuciones.append(1) or True)
+    assert res == "sin_conexion" and ejecuciones == []
+    res = prog.intentar_firmas_por_conexion(
+        _ts(26, 7), None, lambda: True,
+        lambda: ejecuciones.append(1) or True)
+    assert res == "hecho" and ejecuciones == [1]
+    res = prog.intentar_firmas_por_conexion(
+        _ts(26, 7), None, lambda: True, lambda: False)
+    assert res == "fallo"
+
+
+def test_nota9_la_tarea_de_las_0900_sigue_de_respaldo():
+    # La programación «firmas» sigue existiendo, activa y diaria:
+    # es el respaldo del disparador por conexión, no su víctima.
+    from antivirus_hogar_pc.core import programaciones as prog
+
+    tareas = {p.id: p for p in prog.programaciones_por_defecto()}
+    assert tareas["firmas"].activa is True
+    assert tareas["firmas"].frecuencia == "diaria"
+    assert tareas["firmas"].hora == "09:00"
+    # Y el vigilante está cableado en el arranque de la app.
+    fuente_main = _leer("antivirus_hogar_pc/ui/main.py")
+    assert "_firmas_por_conexion" in fuente_main
+    assert "intentar_firmas_por_conexion" in fuente_main
+
+
+# ---------------------------------------------------------------------------
+# NOTA 10 — drivers: TODAS las fuentes, manda la versión más reciente
+# ---------------------------------------------------------------------------
+
+def _drv_pc(version="1.0"):
+    from antivirus_hogar_pc.core.drivers_logic import DriverInstalado
+
+    return DriverInstalado(
+        dispositivo="Adaptador de red", version=version,
+        fecha="01/01/2020", fabricante="Realtek", inf="oem1.inf",
+        device_id=r"PCI\VEN_10EC&DEV_8168&SUBSYS_1&REV_1\4&1",
+        firmado=True)
+
+
+def _veredicto(d, estado, fuente, candidata=""):
+    from antivirus_hogar_pc.core.drivers_logic import EstadoDriver
+
+    return EstadoDriver(driver=d, estado=estado, fuente=fuente,
+                        version_candidata=candidata,
+                        detalle=f"veredicto de {fuente}")
+
+
+def test_nota10_veredicto_mas_reciente_entre_las_fuentes():
+    from antivirus_hogar_pc.core.drivers_logic import (
+        veredicto_mas_reciente)
+
+    d = _drv_pc("1.0")
+    catalogo = _veredicto(d, "hay_uno_mas_nuevo",
+                          "Catálogo de Microsoft", "2.0")
+    wu = _veredicto(d, "hay_uno_mas_nuevo", "Windows Update", "3.5")
+    almacen = _veredicto(d, "hay_uno_mas_nuevo",
+                         "Almacén de drivers de Windows", "2.5")
+    ganador = veredicto_mas_reciente(d, [catalogo, wu, almacen])
+    assert ganador.estado == "hay_uno_mas_nuevo"
+    assert ganador.fuente == "Windows Update"  # la 3.5, la mayor
+    assert ganador.version_candidata == "3.5"
+    assert "más reciente entre todas las fuentes" in ganador.detalle
+    # Sin novedad en ninguna pero con confirmación: «al día».
+    al_dia = _veredicto(d, "al_dia", "Catálogo de Microsoft")
+    assert veredicto_mas_reciente(
+        d, [al_dia, None, None]).estado == "al_dia"
+    # Ninguna fuente confirmó nada: sin confirmar.
+    assert veredicto_mas_reciente(d, [None, None, None]) is None
+    # A igualdad de versión manda el orden de prioridad (Catálogo).
+    empate = veredicto_mas_reciente(d, [catalogo, _veredicto(
+        d, "hay_uno_mas_nuevo", "Windows Update", "2.0"), None])
+    assert empate.fuente == "Catálogo de Microsoft"
+
+
+def test_nota10_paso2_consulta_las_tres_fuentes_para_cada_driver(monkeypatch):
+    from antivirus_hogar_pc.core.drivers_logic import EstadoDriver
+    from antivirus_hogar_pc.modules.system import servicios_sistema as svc
+    from antivirus_hogar_pc.winapi import drivers_win
+
+    d = _drv_pc("1.0")
+    monkeypatch.setattr(
+        svc, "_confirmar_por_catalogo",
+        lambda drv: EstadoDriver(
+            driver=drv, estado="hay_uno_mas_nuevo",
+            fuente="Catálogo de Microsoft", version_candidata="2.0",
+            detalle="El Catálogo publica la 2.0."))
+    monkeypatch.setattr(
+        drivers_win, "buscar_drivers_windows_update",
+        lambda *a, **k: [{"titulo": "Realtek 4.0",
+                          "id_hardware": [r"PCI\VEN_10EC&DEV_8168"],
+                          "version": "4.0", "fecha": "2024-05-05"}])
+    monkeypatch.setattr(
+        drivers_win, "paquetes_almacen_drivers",
+        lambda: [{"inf": "oem9.inf", "version": "3.0",
+                  "proveedor": "Realtek", "clase": "Net",
+                  "fecha": "2023-01-01", "dispositivos": ["Adaptador"]}])
+    res = svc.escanear_drivers_paso2_buscar([d])
+    estado = res.datos["estados"][0]
+    # Las TRES fuentes respondieron y manda la mayor: WU 4.0.
+    assert res.datos["conteos_fuentes"] == {
+        "catalogo": 1, "windows_update": 1, "almacen": 1}
+    assert estado.estado == "hay_uno_mas_nuevo"
+    assert estado.fuente == "Windows Update"
+    assert estado.version_candidata == "4.0"
+    # El mensaje lo dice: revisión en todas las fuentes.
+    assert "todas las fuentes" in res.mensaje
+
+
+def test_nota10_panasonic_en_urls_oem_con_su_url_oficial():
+    from antivirus_hogar_pc.core import drivers_logic as dl
+
+    clave, nombre, url = dl.enlace_oem("Panasonic Corporation")
+    assert clave == "panasonic"
+    assert "TOUGHBOOK" in nombre
+    assert url == ("https://global-pc-support.connect.panasonic.com"
+                   "/driver/deployment-support-tools/driver-pack")
+
+
+# ---------------------------------------------------------------------------
+# NOTA 11 — adaptatividad: nada amarrado a la Toughbook
+# ---------------------------------------------------------------------------
+
+def test_nota11_el_oem_sale_de_la_marca_detectada():
+    from antivirus_hogar_pc.core import drivers_logic as dl
+
+    # Cada equipo recibe SU fuente oficial según su marca.
+    assert dl.enlace_oem("Dell Inc.")[0] == "dell"
+    assert dl.enlace_oem("Hewlett-Packard")[0] == "hp"
+    assert dl.enlace_oem("LENOVO")[0] == "lenovo"
+    assert dl.enlace_oem("Panasonic Corporation")[0] == "panasonic"
+    assert dl.enlace_oem("Marca Inventada XYZ") is None
+    # Los enlaces por driver combinan chips + la marca del equipo
+    # anfitrión que se le pase, sea la que sea.
+    enlaces = dl.enlaces_para_driver(
+        _drv_pc(), fabricante_pc="Panasonic Corporation")
+    textos = " ".join(n for _u, n in enlaces)
+    assert "Panasonic" in textos and "Realtek" in textos
+    enlaces_dell = dl.enlaces_para_driver(
+        _drv_pc(), fabricante_pc="Dell Inc.")
+    assert "Dell" in " ".join(n for _u, n in enlaces_dell)
+    assert "Panasonic" not in " ".join(n for _u, n in enlaces_dell)
+
+
+def test_nota11_las_notas_de_version_cuentan_las_tres_mejoras():
+    # Framing MEJORAS: la entrada 1.0.18 cuenta firmas por
+    # conexión, drivers multifuente y adaptatividad.
+    from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
+
+    entrada = next(n for n in NOTAS_VERSION
+                   if n["version"] == "1.0.18")
+    todo = " ".join(entrada["novedades"])
+    assert "FIRMAS FRESCAS AL CONECTAR" in todo
+    assert "DRIVERS VERIFICADOS EN TODAS LAS FUENTES" in todo
+    assert "SE ADAPTA A CUALQUIER PC" in todo
