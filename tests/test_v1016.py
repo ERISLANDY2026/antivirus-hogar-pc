@@ -482,6 +482,25 @@ def app_qt():
     yield app
 
 
+def _destruir(widget, app):
+    """Destrucción completa dentro del propio test: sin esto, un
+    deleteLater pendiente (y un hilo vivo) contamina el proceso
+    compartido de la suite — processEvents() no siempre vacía
+    los DeferredDelete y las páginas de otros tests sobreviven
+    (visto en CI: el conteo de tarjetas del Programador del
+    test_v106 salía 12 en vez de 6 por la ventana de este
+    archivo)."""
+    import gc
+
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    widget.deleteLater()
+    app.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    gc.collect()
+
+
 def test_ahorro_bateria_pausa_y_reanuda_sin_tocar_el_interruptor(app_qt):
     from antivirus_hogar_pc.ui import animacion
 
@@ -517,7 +536,11 @@ def test_ventana_con_escala_grande_cabe_en_la_pantalla_de_la_toughbook(
         ventana.resize(1366, 768)
         assert ventana.width() <= 1366 and ventana.height() <= 768
     finally:
-        ventana.deleteLater()
+        panel = ventana._paginas.get("panel")
+        hilo = getattr(panel, "_hilo_informe", None)
+        if hilo is not None:
+            hilo.wait(10000)  # no destruir la ventana con el hilo vivo
+        _destruir(ventana, app_qt)
 
 
 def test_fila_estado_usa_el_recurso_3d_y_respaldo_svg(app_qt):
@@ -533,6 +556,8 @@ def test_fila_estado_usa_el_recurso_3d_y_respaldo_svg(app_qt):
     fila2 = fila_estado("boton", "estatico", "Otro", "Sin recurso 3D.")
     tipos2 = [type(w) for w in fila2.findChildren(QWidget)]
     assert IconoAnimado in tipos2 and IconoEstado3D not in tipos2
+    _destruir(fila, app_qt)
+    _destruir(fila2, app_qt)
 
 
 def test_panel_trae_pendientes_y_puesta_a_punto(app_qt, tmp_path):
@@ -552,4 +577,4 @@ def test_panel_trae_pendientes_y_puesta_a_punto(app_qt, tmp_path):
         if hilo is not None:
             hilo.wait(10000)  # no dejar el QThread corriendo al salir
     finally:
-        pagina.deleteLater()
+        _destruir(pagina, app_qt)
