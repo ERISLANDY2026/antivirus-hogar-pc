@@ -367,63 +367,6 @@ def crear_pagina(ctx: ContextoModulo):
     lay_puesta.addLayout(fila_puesta)
     layout.addWidget(tarjeta_puesta)
 
-    import threading as _threading
-
-    estado_puesta: dict = {"trabajador": None,
-                           "cancelar": _threading.Event()}
-
-    def _puesta_progreso(frac: float, etapa: str, texto: str) -> None:
-        barra_puesta.setValue(int(frac * 1000))
-        lbl_etapa_puesta.setText(
-            f"{etapa} — {texto}" if etapa and texto != etapa else texto)
-
-    def _puesta_lista(resultado: dict) -> None:
-        boton_puesta.setEnabled(True)
-        boton_cancelar_puesta.setEnabled(False)
-        estado_puesta["trabajador"] = None
-        lineas = []
-        from antivirus_hogar_pc.core.puesta_a_punto import ETAPAS
-
-        for clave, titulo in ETAPAS:
-            res = (resultado.get("resultados") or {}).get(clave)
-            if res is None:
-                continue
-            marca = "✓" if res.get("ok") else "✗"
-            lineas.append(f"{marca} {titulo}: {res.get('resumen', '')}")
-        lbl_veredicto_puesta.setText(
-            resultado.get("veredicto", "")
-            + ("\n" + "\n".join(lineas) if lineas else ""))
-        lbl_etapa_puesta.setText("")
-        if servicios is not None:
-            servicios.registrar_actividad(
-                "puesta-a-punto", resultado.get("veredicto", ""))
-        lanzar_lectura()
-
-    def _lanzar_puesta() -> None:
-        if estado_puesta["trabajador"] is not None:
-            return
-        estado_puesta["cancelar"] = _threading.Event()
-        barra_puesta.setValue(0)
-        lbl_veredicto_puesta.setText("")
-        lbl_etapa_puesta.setText(t("Empezando la puesta a punto…"))
-        boton_puesta.setEnabled(False)
-        boton_cancelar_puesta.setEnabled(True)
-        trabajador = _TrabajadorPuestaAPunto(
-            servicios, estado_puesta["cancelar"], parent=pagina)
-        trabajador.progreso.connect(_puesta_progreso)
-        trabajador.listo.connect(_puesta_lista)
-        trabajador.finished.connect(trabajador.deleteLater)
-        estado_puesta["trabajador"] = trabajador
-        trabajador.start()
-
-    def _cancelar_puesta() -> None:
-        estado_puesta["cancelar"].set()
-        lbl_etapa_puesta.setText(t("Cancelando…"))
-
-    boton_puesta.clicked.connect(_lanzar_puesta)
-    boton_cancelar_puesta.clicked.connect(_cancelar_puesta)
-
-
     # --- Rutina automática al arrancar (v1.0.5) --------------------------------
     tarjeta_rutina, lay_rutina = tarjeta(t("Rutina automática al arrancar"))
     lbl_rutina = etiqueta(t(
