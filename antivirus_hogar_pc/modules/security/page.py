@@ -11,11 +11,12 @@ import os
 import string
 import sys
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -213,6 +214,87 @@ def _fila_hallazgo(hallazgo: Hallazgo, ctx: ContextoModulo, al_resolver) -> QWid
 
 
 # ---------------------------------------------------------------------------
+def _texto_veredicto(p, coincidencias, yara_disponible, vt,
+                     coincide_huellas: bool) -> str:
+    """Veredicto legible del análisis a fondo (v1.0.21).
+
+    Cada señal se enseña con su fundamento y su límite: «conocido»
+    (CIRCL) jamás se presenta como «seguro».
+    """
+    s = p.senales
+    lineas: list[str] = []
+    if coincide_huellas:
+        lineas.append(t("La huella de este archivo COINCIDE con la base "
+                        "de malware conocido."))
+    else:
+        lineas.append(t("La huella no coincide con la base local de "
+                        "malware conocido."))
+    niveles = {
+        "conocido": t("Veredicto: archivo CONOCIDO (figura en la base "
+                      "de software conocido de CIRCL). Conocido no "
+                      "significa seguro."),
+        "normal": t("Veredicto: sin señales de alarma en las "
+                    "comprobaciones hechas."),
+        "precaucion": t("Veredicto: PRECAUCIÓN — hay señales que "
+                        "aconsejan no abrirlo sin estar seguro de su "
+                        "origen."),
+        "riesgo": t("Veredicto: RIESGO — varias señales apuntan a un "
+                    "archivo peligroso. No lo abras."),
+    }
+    lineas.append(niveles.get(p.nivel, p.nivel))
+    motivos = {
+        "circl_conocido": t("CIRCL hashlookup lo conoce{nombre}: "
+                            "conocido, no «seguro».",
+                            nombre=f" ({s.circl_nombre})"
+                            if s.circl_nombre else ""),
+        "circl_no_conocido": t("CIRCL no conoce esta huella (eso no "
+                               "significa que sea malo)."),
+        "circl_sin_respuesta": t("CIRCL no respondió (sin conexión o "
+                                 "error en la consulta)."),
+        "firma_valida": t("Firma digital válida: {firmante}.",
+                          firmante=s.firmante),
+        "firma_invalida": t("Firma digital INVÁLIDA o caducada: "
+                            "{firmante}.", firmante=s.firmante),
+        "firma_ausente": t("Archivo ejecutable SIN firma digital."),
+        "motw_internet": t("Windows lo marcó como descargado de "
+                           "Internet{origen}.",
+                           origen=f": {s.motw_origen}"
+                           if s.motw_origen else ""),
+        "entropia_alta": t("Entropía alta ({valor:.2f}): contenido "
+                           "muy comprimido o cifrado (señal "
+                           "secundaria).", valor=s.entropia),
+        "entropia_muy_alta": t("Entropía MUY alta ({valor:.2f}): "
+                               "contenido muy comprimido o cifrado "
+                               "(señal secundaria).", valor=s.entropia),
+    }
+    for codigo in p.motivos:
+        if codigo in motivos:
+            lineas.append("· " + motivos[codigo])
+    if not yara_disponible:
+        lineas.append(t("El segundo motor (reglas YARA) no está "
+                        "disponible en esta instalación."))
+    for c in coincidencias:
+        lineas.append(t("Regla YARA: {regla} (autor: {autor}; "
+                        "licencia: {licencia}).",
+                        regla=c.regla, autor=c.autor or "—",
+                        licencia=c.licencia or "—"))
+    if vt is not None:
+        if vt.estado == "ok":
+            lineas.append(t("VirusTotal (con tu clave, solo la "
+                            "huella): {maliciosos} de {total} motores "
+                            "lo marcan malicioso.",
+                            maliciosos=vt.maliciosos, total=vt.total))
+        elif vt.estado == "no_encontrado":
+            lineas.append(t("VirusTotal no conoce esta huella."))
+        elif vt.estado == "clave_invalida":
+            lineas.append(t("Tu clave de VirusTotal no fue aceptada "
+                            "por el servicio."))
+        else:
+            lineas.append(t("VirusTotal no respondió a la consulta "
+                            "por huella."))
+    return "\n".join(lineas)
+
+
 # Página: Escanear
 # ---------------------------------------------------------------------------
 
@@ -276,6 +358,100 @@ def crear_pagina_escaner(ctx: ContextoModulo):
     b_refrescar_c = QPushButton(t("Actualizar lista"))
     lay_c.addWidget(b_refrescar_c)
     layout.addWidget(tarjeta_cuarentena)
+
+    # --- tarjeta de memorias USB (v1.0.21) ------------------------------------
+    tarjeta_usb, lay_u = tarjeta(t("Memorias USB"))
+    lbl_usb = etiqueta(t("Sin memorias USB conectadas."))
+    lay_u.addWidget(lbl_usb)
+    lay_u.addWidget(etiqueta(t(
+        "Al conectar una memoria USB, la app te OFRECE escanearla con "
+        "Microsoft Defender (MpCmdRun): nunca la escanea sin tu "
+        "permiso. El escaneo lo hace Defender, no la app."), suave=True))
+    contenedor_usb = QVBoxLayout()
+    lay_u.addLayout(contenedor_usb)
+    b_usb_refrescar = QPushButton(t("Revisar memorias USB"))
+    lay_u.addWidget(b_usb_refrescar)
+    layout.addWidget(tarjeta_usb)
+    usb_conocidas: set[str] = set()
+
+    def _limpiar_usb():
+        while contenedor_usb.count():
+            item = contenedor_usb.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def escanear_usb(raiz: str):
+        def trabajo():
+            codigo, salida = defender.escanear_usb_mpcmdrun(raiz)
+            return ResultadoModulo(codigo in (0, 2), salida,
+                                   datos={"codigo": codigo})
+
+        def al_terminar(res: ResultadoModulo):
+            codigo = (res.datos or {}).get("codigo")
+            if codigo == 0:
+                QMessageBox.information(
+                    pagina, t("Memorias USB"),
+                    t("Defender terminó el escaneo de {raiz} sin "
+                      "encontrar amenazas.", raiz=raiz))
+            elif codigo == 2:
+                QMessageBox.warning(
+                    pagina, t("Memorias USB"),
+                    t("Defender ENCONTRÓ amenazas en {raiz}. Revisa el "
+                      "historial de protección de Windows para ver qué "
+                      "hizo con ellas.", raiz=raiz))
+            else:
+                QMessageBox.warning(
+                    pagina, t("Memorias USB"),
+                    t("El escaneo de {raiz} no se pudo completar: "
+                      "{detalle}", raiz=raiz,
+                      detalle=res.mensaje or "MpCmdRun no respondió."))
+
+        trabajador = _Trabajador(trabajo, pagina)
+        trabajador.terminado.connect(al_terminar)
+        _guardar_ref(pagina, trabajador)
+        trabajador.start()
+
+    def refrescar_usb(avisar_nuevas: bool = False):
+        from antivirus_hogar_pc.winapi import unidades
+
+        try:
+            actuales = unidades.unidades_extraibles()
+        except Exception:
+            actuales = []
+        raices = {u["raiz"] for u in actuales}
+        nuevas = raices - usb_conocidas
+        usb_conocidas.clear()
+        usb_conocidas.update(raices)
+        _limpiar_usb()
+        if not actuales:
+            lbl_usb.setText(t("Sin memorias USB conectadas."))
+            return
+        if avisar_nuevas and nuevas:
+            lbl_usb.setText(t(
+                "Memoria USB detectada: {lista}. ¿La escaneas con "
+                "Defender?", lista=", ".join(sorted(nuevas))))
+        else:
+            lbl_usb.setText(t("Memorias USB conectadas: {lista}.",
+                              lista=", ".join(sorted(raices))))
+        for unidad in actuales:
+            fila = QHBoxLayout()
+            fila.addWidget(etiqueta(unidad["etiqueta"]))
+            b_esc = QPushButton(t("Escanear con Defender"))
+            b_esc.clicked.connect(
+                lambda _=False, r=unidad["raiz"]: escanear_usb(r))
+            fila.addWidget(b_esc)
+            fila.addStretch(1)
+            contenedor = QWidget()
+            contenedor.setLayout(fila)
+            contenedor_usb.addWidget(contenedor)
+
+    b_usb_refrescar.clicked.connect(lambda: refrescar_usb())
+    refrescar_usb()
+    temporizador_usb = QTimer(pagina)
+    temporizador_usb.setInterval(5000)
+    temporizador_usb.timeout.connect(lambda: refrescar_usb(True))
+    temporizador_usb.start()
     layout.addStretch(1)
 
     estado = {"trabajador": None, "ultimo_revisados": 0, "ultimo_total": 0}
@@ -447,16 +623,53 @@ def crear_pagina_escaner(ctx: ContextoModulo):
         except OSError as exc:
             QMessageBox.warning(pagina, "Analizar archivo", f"No se pudo leer: {exc}")
             return
-        if hallazgo is None:
+        hallazgos = [hallazgo] if hallazgo else []
+        _mostrar_hallazgos(hallazgos)
+        # Análisis a fondo (v1.0.21) en segundo plano: puntuación
+        # de descargas (CIRCL por huella + firma + marca de origen
+        # + entropía), segundo motor YARA y, si el usuario guardó
+        # SU clave, consulta por huella a VirusTotal. Nada sube el
+        # archivo a ningún sitio: solo viajan huellas.
+        def trabajo():
+            from antivirus_hogar_pc.core import puntuacion as punt
+            from antivirus_hogar_pc.core import virustotal, yara_scan
+
+            p = punt.evaluar(ruta)
+            coincidencias = yara_scan.escanear_archivo(ruta)
+            estado_yara = yara_scan.estado_motor()
+            vt = None
+            clave = (servicios.ajustes.clave_virustotal
+                     if servicios.ajustes else "")
+            if clave:
+                vt = virustotal.consultar_hash(p.senales.sha256, clave)
+            return ResultadoModulo(True, "", datos={
+                "puntuacion": p, "yara": coincidencias,
+                "yara_disponible": estado_yara.disponible,
+                "vt": vt})
+
+        def al_terminar_fondo(res: ResultadoModulo):
+            datos = res.datos if isinstance(res.datos, dict) else {}
+            p = datos.get("puntuacion")
+            if p is None:
+                return
+            coincidencias = datos.get("yara") or []
+            if coincidencias:
+                extras = [Hallazgo(
+                    ruta=ruta, sha256=p.senales.sha256,
+                    md5=p.senales.md5,
+                    etiqueta=f"YARA: {c.regla}",
+                    tamano=p.senales.tamano) for c in coincidencias]
+                _mostrar_hallazgos(hallazgos + extras)
             QMessageBox.information(
-                pagina, "Analizar archivo",
-                "Este archivo NO coincide con la base de malware conocido.\n\n"
-                "Ojo: la base local solo conoce malware ya catalogado; "
-                "para un análisis completo usa «Escanear con Defender».")
-            _limpiar_layout(lay_h)
-            lay_h.addWidget(etiqueta("Sin hallazgos en el archivo analizado."))
-        else:
-            _mostrar_hallazgos([hallazgo])
+                pagina, t("Análisis a fondo"),
+                _texto_veredicto(p, coincidencias,
+                                 datos.get("yara_disponible", False),
+                                 datos.get("vt"), bool(hallazgo)))
+
+        trabajador = _Trabajador(trabajo, pagina)
+        trabajador.terminado.connect(al_terminar_fondo)
+        _guardar_ref(pagina, trabajador)
+        trabajador.start()
 
     b_rapido.clicked.connect(escaneo_rapido)
     b_completo.clicked.connect(escaneo_completo)
@@ -583,10 +796,21 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
 
         def trabajo():
             from antivirus_hogar_pc.core.threats_update import (
-                actualizar_firmas_multifuente, escribir_archivo_dominios)
+                actualizar_bases_consulta, actualizar_firmas_multifuente,
+                escribir_archivo_dominios)
             resultado = actualizar_firmas_multifuente(
                 servicios.ajustes.auth_key_abusech)
             resumen = resultado.resumen()
+            # v1.0.21: las bases de CONSULTA con atribución
+            # (Phishing.Database MIT y Feodo CC0) se refrescan en
+            # la misma pasada; no entran en el hosts.
+            consulta = actualizar_bases_consulta()
+            if consulta.get("phishing_db") or consulta.get("feodo"):
+                resumen += t(
+                    " Bases de consulta: {phishing} dominios de "
+                    "Phishing.Database y {feodo} indicadores de Feodo "
+                    "Tracker.", phishing=consulta.get("phishing_db", 0),
+                    feodo=consulta.get("feodo", 0))
             if not resultado.ok:
                 return ResultadoModulo(
                     False,
@@ -724,6 +948,58 @@ def crear_pagina_proteccion(ctx: ContextoModulo):
     b_semanal_on.clicked.connect(lambda: semanal(True))
     b_semanal_off.clicked.connect(lambda: semanal(False))
     refrescar_semanal()
+
+    # --- consulta de dominios e IPs con su fuente (v1.0.21) -------------------
+    tarjeta_consulta, lay_q = tarjeta(t("Consulta de dominios e IPs"))
+    lay_q.addWidget(etiqueta(t(
+        "Pregunta por un dominio, una IP o una dirección completa y la "
+        "app dice si figura en sus bases y DE QUÉ FUENTE sale: "
+        "Phishing.Database (MIT), Feodo Tracker (CC0, IPs de mando y "
+        "control) o la base de bloqueo. Es solo consulta: no bloquea "
+        "ni cambia nada."), suave=True))
+    fila_q = QHBoxLayout()
+    campo_consulta = QLineEdit()
+    campo_consulta.setPlaceholderText(t("ejemplo.com, 1.2.3.4 o https://…"))
+    b_consultar = QPushButton(t("Consultar"))
+    fila_q.addWidget(campo_consulta, 1)
+    fila_q.addWidget(b_consultar)
+    lay_q.addLayout(fila_q)
+    lbl_consulta = etiqueta("")
+    lay_q.addWidget(lbl_consulta)
+    layout.addWidget(tarjeta_consulta)
+
+    def consultar_dominio():
+        from antivirus_hogar_pc.core import dominios_consulta
+
+        valor = campo_consulta.text().strip()
+        if not valor:
+            return
+
+        def trabajo():
+            fuente = dominios_consulta.fuente_de(valor)
+            conteos = dominios_consulta.conteos()
+            return ResultadoModulo(True, "", datos={
+                "fuente": fuente, "conteos": conteos})
+
+        def al_terminar(res: ResultadoModulo):
+            datos = res.datos if isinstance(res.datos, dict) else {}
+            fuente = datos.get("fuente")
+            if fuente:
+                lbl_consulta.setText(t(
+                    "«{valor}» FIGURA en la base de: {fuente}.",
+                    valor=valor, fuente=fuente))
+            else:
+                lbl_consulta.setText(t(
+                    "«{valor}» no figura en ninguna base de la app.",
+                    valor=valor))
+
+        trabajador = _Trabajador(trabajo, pagina)
+        trabajador.terminado.connect(al_terminar)
+        _guardar_ref(pagina, trabajador)
+        trabajador.start()
+
+    b_consultar.clicked.connect(consultar_dominio)
+    campo_consulta.returnPressed.connect(consultar_dominio)
     return pagina
 
 

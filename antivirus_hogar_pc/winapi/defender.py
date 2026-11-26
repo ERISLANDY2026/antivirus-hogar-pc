@@ -287,3 +287,155 @@ def comprobar_al_arranque(registrar) -> dict:
                    "oficial y revisa la exclusión de Defender.")
     return {"aviso": aviso, "exclusion": resultado,
             "integridad": integridad}
+
+
+# --- Reglas ASR y exclusiones (v1.0.21) ---------------------------------------
+# Lectura de MpPreference: primero SIN elevar (si el sistema lo
+# permite, cero UAC); si no, la interfaz ofrece «leer como
+# administrador» y la lectura elevada deja el JSON en un archivo
+# de la carpeta de datos que la app recoge. Ninguna lectura de
+# fondo eleva por su cuenta.
+
+def _script_lectura_asr() -> str:
+    return (
+        "$p = Get-MpPreference; "
+        "[PSCustomObject]@{ ids = @($p.AttackSurfaceReductionRules_Ids); "
+        "acciones = @($p.AttackSurfaceReductionRules_Actions) } "
+        "| ConvertTo-Json -Compress")
+
+
+def _script_lectura_exclusiones() -> str:
+    return (
+        "$p = Get-MpPreference; "
+        "[PSCustomObject]@{ ruta = @($p.ExclusionPath); "
+        "extension = @($p.ExclusionExtension); "
+        "proceso = @($p.ExclusionProcess); "
+        "ip = @($p.ExclusionIpAddress) } | ConvertTo-Json -Compress")
+
+
+def _leer_mp_preference(script: str, nombre: str,
+                        elevado: bool) -> dict | None:
+    """Ejecuta el script de lectura y devuelve el dict o None."""
+    if not elevado:
+        try:
+            datos = ejecutar_powershell_json(script)
+            return datos if isinstance(datos, dict) else None
+        except Exception:
+            return None
+    from .. import config
+
+    destino = os.path.join(config.carpeta_datos(), nombre)
+    try:
+        os.remove(destino)
+    except OSError:
+        pass
+    destino_ps = destino.replace("'", "''")
+    completo = (f"({script}) | Set-Content -LiteralPath '{destino_ps}' "
+                "-Encoding UTF8")
+    try:
+        if not ejecutar_elevado(completo):
+            return None
+    except Exception:
+        return None
+    try:
+        import json
+
+        with open(destino, "r", encoding="utf-8-sig") as fh:
+            datos = json.load(fh)
+        os.remove(destino)
+        return datos if isinstance(datos, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def leer_estado_asr(elevado: bool = False) -> dict | None:
+    """{"ids": [...], "acciones": [...]} de MpPreference, o None."""
+    return _leer_mp_preference(_script_lectura_asr(),
+                               "lectura_asr.json", elevado)
+
+
+def leer_exclusiones(elevado: bool = False) -> dict | None:
+    """{"ruta": [...], "extension": [...], "proceso": [...],
+    "ip": [...]} de MpPreference, o None si no se pudo leer."""
+    datos = _leer_mp_preference(_script_lectura_exclusiones(),
+                                "lectura_exclusiones.json", elevado)
+    if datos is None:
+        return None
+    return {clave: [str(v) for v in como_lista(datos.get(clave))]
+            for clave in ("ruta", "extension", "proceso", "ip")}
+
+
+def fijar_regla_asr(guid: str, modo: str, confirmar: bool) -> dict:
+    """Fija UNA regla ASR en el modo pedido (auditoría/bloqueo/
+    desactivada), vía Set-MpPreference elevado.
+
+    GUARDA: sin confirmación expresa del usuario en la app
+    (confirmar=True) NO se ejecuta nada. La decisión pura (qué
+    acción corresponde) vive en core.asr.
+    Devuelve {"ok": bool, "codigo": str, "mensaje": str}.
+    """
+    from ..core import asr as core_asr
+
+    if not confirmar:
+        return {"ok": False, "codigo": "sin_confirmacion",
+                "mensaje": "Regla ASR no aplicada: falta la "
+                           "confirmación del usuario."}
+    regla = core_asr.regla_por_guid(guid)
+    if regla is None or modo not in core_asr.MODOS_VALIDOS:
+        return {"ok": False, "codigo": "regla_invalida",
+                "mensaje": "Regla ASR o modo no reconocido."}
+    if modo == "auditoria" and not regla.get("auditoria"):
+        return {"ok": False, "codigo": "sin_auditoria",
+                "mensaje": "Esta regla no admite modo auditoría; "
+                           "no se aplicó nada."}
+    accion = core_asr.accion_para_modo(modo)
+    script = (
+        "Set-MpPreference -AttackSurfaceReductionRules_Ids "
+        f"'{regla['guid']}' -AttackSurfaceReductionRules_Actions {accion}")
+    try:
+        ok = ejecutar_elevado(script)
+    except Exception as exc:
+        return {"ok": False, "codigo": "error",
+                "mensaje": f"No se pudo aplicar: {exc}"}
+    if not ok:
+        return {"ok": False, "codigo": "cancelado",
+                "mensaje": "La aplicación de la regla se canceló "
+                           "(UAC no aceptado)."}
+    return {"ok": True, "codigo": "ok",
+            "mensaje": f"Regla ASR fijada en modo «{modo}»."}
+
+
+# --- Escaneo de memorias USB con MpCmdRun (v1.0.21) ---------------------------
+
+def escanear_usb_mpcmdrun(unidad: str) -> tuple[int, str]:
+    """MpCmdRun -Scan -ScanType 3 -File <unidad> sobre una unidad
+    extraíble. 0 = sin amenazas, 2 = amenazas encontradas.
+
+    Es el escaneo de Defender con su configuración (él decide la
+    remediación según su política), lanzado SOLO cuando el usuario
+    acepta la oferta o pulsa el botón: nunca automático en silencio.
+    """
+    from .powershell import ejecutar_comando
+
+    raiz = (unidad or "").strip()
+    if not raiz:
+        return -1, "Unidad no indicada."
+    if not raiz.endswith("\\"):
+        raiz += "\\"
+    codigo, salida, error = ejecutar_comando(
+        [ruta_mpcmdrun(), "-Scan", "-ScanType", "3", "-File", raiz],
+        timeout=3600)
+    return codigo, (salida or error or "").strip()
+
+
+def carpetas_protegidas_cfa(elevado: bool = False) -> list[str]:
+    """Carpetas protegidas por CFA según MpPreference (solo lectura)."""
+    script = (
+        "$p = Get-MpPreference; "
+        "[PSCustomObject]@{ carpetas = "
+        "@($p.ControlledFolderAccessProtectedFolders) } "
+        "| ConvertTo-Json -Compress")
+    datos = _leer_mp_preference(script, "lectura_cfa.json", elevado)
+    if not datos:
+        return []
+    return [str(v) for v in como_lista(datos.get("carpetas")) if str(v)]

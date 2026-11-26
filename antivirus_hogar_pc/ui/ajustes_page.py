@@ -174,5 +174,45 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
         "barra lateral y las páginas ya abiertas) termina de "
         "ajustarse al reabrir la ventana."), suave=True))
     layout.addWidget(tarjeta_vista)
+
+    # --- Protección avanzada (v1.0.21) ---------------------------------------
+    tarjeta_av, lay_av = tarjeta(t("Protección avanzada"))
+    lay_av.addWidget(etiqueta(t(
+        "Clave de VirusTotal (opcional): con TU clave, el análisis de un "
+        "archivo puede consultar su huella en VirusTotal. Solo viaja la "
+        "huella (SHA-256): la app jamás sube archivos. Sin clave, la "
+        "consulta queda sin configurar y no se usa."), suave=True))
+    campo_vt = QLineEdit(ajustes.clave_virustotal if ajustes else "")
+    campo_vt.setEchoMode(QLineEdit.EchoMode.Password)
+    lay_av.addWidget(campo_vt)
+    boton_vt = boton_principal(t("Guardar clave de VirusTotal"), "primario")
+
+    def _guardar_vt() -> None:
+        if ajustes is not None:
+            ajustes.clave_virustotal = campo_vt.text().strip()
+            ajustes.guardar()
+
+    boton_vt.clicked.connect(_guardar_vt)
+    lay_av.addWidget(boton_vt)
+    lay_av.addWidget(etiqueta(t(
+        "Anti-ransomware propio: siembra archivos señuelo en las carpetas "
+        "protegidas y vigila ráfagas de cambios con pinta de cifrado. "
+        "Detecta y avisa; no promete interceptarlo todo, y contener un "
+        "proceso solo ocurre si TÚ lo ordenas en el aviso."), suave=True))
+    combo_ransom = QComboBox()
+    combo_ransom.addItem(t("Solo avisar (recomendado)"), "avisar")
+    combo_ransom.addItem(t("Apagado"), "apagado")
+    if ajustes is not None:
+        indice = combo_ransom.findData(ajustes.antiransomware_modo)
+        combo_ransom.setCurrentIndex(max(0, indice))
+
+    def _ransom() -> None:
+        if ajustes is not None:
+            ajustes.antiransomware_modo = combo_ransom.currentData()
+            ajustes.guardar()
+
+    combo_ransom.currentIndexChanged.connect(_ransom)
+    lay_av.addWidget(combo_ransom)
+    layout.addWidget(tarjeta_av)
     layout.addStretch(1)
     return pagina

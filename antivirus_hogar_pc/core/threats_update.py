@@ -277,3 +277,64 @@ def escribir_archivo_dominios(ruta: str, dominios: list[str]) -> int:
         for d in unicos:
             f.write(d + "\n")
     return len(unicos)
+
+
+# --- Bases de CONSULTA con atribución (v1.0.21) -------------------------------
+# Phishing.Database (MIT) y Feodo Tracker (CC0) alimentan la base
+# de consulta de core.dominios_consulta: NO entran en la fusión del
+# hosts (Feodo son IPs C2, inútiles en un hosts; Phishing.Database
+# ya aporta a la fusión por su propia fuente de texto). Aquí se
+# guardan APARTE, con su fuente, para poder decir de dónde sale
+# cada dominio/IP al consultar.
+import json as _json
+import os as _os
+
+from .. import config as _config
+
+URL_FEODO_JSON = "https://feodotracker.abuse.ch/downloads/ipblocklist.json"
+
+
+def actualizar_bases_consulta() -> dict:
+    """Refresca dominios_phishing_db.txt y dominios_feodo.txt en la
+    carpeta de datos. Devuelve conteos por base (0 si falló)."""
+    from . import dominios_consulta
+
+    salida = {"phishing_db": 0, "feodo": 0}
+    carpeta = _config.carpeta_datos()
+    try:
+        _os.makedirs(carpeta, exist_ok=True)
+    except OSError:
+        return salida
+    # Phishing.Database ACTIVE (MIT): la misma descarga que ya usa
+    # la cadena de fusión, guardada además como base de consulta.
+    try:
+        texto = _peticion(URL_PHISHING_DATABASE, timeout=120)
+    except Exception:
+        texto = ""
+    if texto:
+        dominios = parsear_dominios_texto(texto)
+        if dominios:
+            ruta = _os.path.join(carpeta, "dominios_phishing_db.txt")
+            with open(ruta, "w", encoding="utf-8") as fh:
+                fh.write("# Phishing.Database — phishing-domains-ACTIVE.txt\n")
+                fh.write("# Licencia: MIT. Base de CONSULTA (no va al hosts).\n")
+                for d in dominios:
+                    fh.write(d + "\n")
+            salida["phishing_db"] = len(dominios)
+    # Feodo Tracker (CC0): IPs C2 + hostnames si los hay.
+    try:
+        crudo = _peticion(URL_FEODO_JSON, timeout=60)
+        registros = _json.loads(crudo)
+    except Exception:
+        registros = None
+    if isinstance(registros, list):
+        ips, hosts = dominios_consulta.extraer_feodo(registros)
+        ruta = _os.path.join(carpeta, "dominios_feodo.txt")
+        with open(ruta, "w", encoding="utf-8") as fh:
+            fh.write("# Feodo Tracker — ipblocklist (IPs C2)\n")
+            fh.write("# Licencia: CC0. Base de CONSULTA (no va al hosts).\n")
+            for valor in ips + hosts:
+                fh.write(valor + "\n")
+        salida["feodo"] = len(ips) + len(hosts)
+    dominios_consulta.invalidar_cache()
+    return salida

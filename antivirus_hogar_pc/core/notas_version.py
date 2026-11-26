@@ -29,6 +29,20 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.21",
+        "fecha": "26/11/2026",
+        "novedades": [
+            "ANÁLISIS A FONDO DE CADA ARCHIVO: «Analizar ESTE archivo» ya no mira solo la huella — ahora puntúa el archivo con su fundamento: si su huella figura en la base de software conocido de CIRCL (conocido, que NO es lo mismo que seguro), si su firma digital es válida, ausente o inválida, si Windows lo marcó como descargado de Internet y su entropía como señal secundaria. Todo sin subir el archivo a ningún sitio: solo viaja la huella.",
+            "SEGUNDO MOTOR DE ESCANEO (REGLAS YARA): junto al de huellas trabaja un motor de reglas con el paquete «core» de YARA Forge (5.078 reglas públicas con control de calidad). Cuando una regla caza algo, la alerta enseña QUÉ regla fue, su autor y su licencia.",
+            "BASE DE DOMINIOS AMPLIADA, CON SU FUENTE: la consulta de dominios e IPs de la pantalla Protección suma Phishing.Database (392.000 dominios de phishing, licencia MIT) y Feodo Tracker (IPs de mando y control, CC0), y cada respuesta dice de qué fuente sale. Son bases de consulta: el archivo hosts no se infla y el bloqueador sigue con su copia de seguridad y su restauración de siempre.",
+            "DEFENDER A FONDO EN INICIO: tarjeta nueva con las reglas ASR de Defender (preset conservador: Office, macros, USB, robo de credenciales…) que se aplican DE UNA EN UNA, con tu confirmación, primero en auditoría cuando la regla lo permite y reversibles desde la misma tarjeta; y la auditoría de exclusiones, que lista las activas y señala las riesgosas — solo lectura: la app no borra exclusiones por su cuenta.",
+            "ANTI-RANSOMWARE PROPIO (SOLO AVISAR): la app siembra archivos señuelo en tus carpetas protegidas y vigila ráfagas de cambios con pinta de cifrado. Si algo huele mal, te avisa claro; suspender el proceso sospechoso solo ocurre si TÚ lo ordenas en el aviso. Es detección y contención en modo usuario, no una intercepción garantizada — y se apaga en Ajustes si no lo quieres.",
+            "DRIVERS VULNERABLES (BYOVD): la pantalla de Drivers puede cruzar la huella de cada driver instalado con la lista pública LOLDrivers (CC0) de drivers vulnerables o maliciosos conocidos: si uno de los tuyos figura, queda marcado como actualización prioritaria.",
+            "MEMORIAS USB BAJO TU PERMISO: al conectar una USB, la app te OFRECE escanearla con Microsoft Defender (MpCmdRun) — nunca la escanea sin tu permiso, y el escaneo lo hace Defender.",
+            "VIRUSTOTAL SOLO POR HUELLA Y CON TU CLAVE: en Ajustes puedes guardar TU clave de VirusTotal; el análisis a fondo consultará entonces solo la huella del archivo (jamás se sube el archivo). Sin clave, la función queda sin configurar y no se usa.",
+        ],
+    },
+    {
         "version": "1.0.20",
         "fecha": "26/11/2026",
         "novedades": [

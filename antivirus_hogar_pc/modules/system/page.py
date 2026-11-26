@@ -214,7 +214,67 @@ def crear_pagina_drivers(ctx: ContextoModulo):
     contenedor_enlaces = QVBoxLayout()
     lay_f.addLayout(contenedor_enlaces)
     layout.addWidget(tarjeta_fuentes)
+
+    # --- chequeo BYOVD de drivers (v1.0.21) ------------------------------------
+    tarjeta_byovd, lay_by = tarjeta(t("Drivers vulnerables (BYOVD)"))
+    lay_by.addWidget(etiqueta(t(
+        "Un driver legítimo pero vulnerable es una puerta al núcleo "
+        "de Windows (BYOVD). Esta revisión cruza la HUELLA de cada "
+        "driver instalado con la lista pública LOLDrivers (CC0). "
+        "Un candidato de actualización solo se puede juzgar cuando "
+        "su archivo ya está en disco: antes de descargar no hay "
+        "huella que cruzar."), suave=True))
+    btn_byovd = QPushButton(t("Revisar los drivers instalados"))
+    lay_by.addWidget(btn_byovd)
+    lbl_byovd = etiqueta("")
+    lay_by.addWidget(lbl_byovd)
+    contenedor_byovd = QVBoxLayout()
+    lay_by.addLayout(contenedor_byovd)
+    layout.addWidget(tarjeta_byovd)
     layout.addStretch(1)
+
+    def _al_terminar_byovd(res: ResultadoModulo):
+        btn_byovd.setEnabled(True)
+        _vaciar(contenedor_byovd)
+        if not res.ok:
+            lbl_byovd.setText(res.mensaje)
+            return
+        datos = res.datos or {}
+        lbl_byovd.setText(t(
+            "Revisados {n} drivers contra {total} huellas conocidas "
+            "(LOLDrivers).", n=datos.get("revisados", 0),
+            total=datos.get("total", 0)))
+        if not datos.get("hallazgos"):
+            contenedor_byovd.addWidget(etiqueta(t(
+                "Ningún driver instalado figura en la lista de "
+                "vulnerables o maliciosos conocidos.")))
+        for h in datos.get("hallazgos", []):
+            contenedor_byovd.addWidget(etiqueta(
+                "⚠ " + t("Driver {categoria} conocido: {nombre}. "
+                         "Actualizarlo es prioritario: no lo dejes "
+                         "para después.",
+                         categoria=h["categoria"], nombre=h["nombre"])))
+
+    def _revisar_byovd():
+        def trabajo():
+            from antivirus_hogar_pc.core import byovd
+            from antivirus_hogar_pc.winapi import unidades
+
+            archivos = unidades.archivos_sys_instalados()
+            if not archivos:
+                return ResultadoModulo(
+                    False, t("No se encontró la carpeta de drivers "
+                             "de Windows en este equipo."))
+            return ResultadoModulo(True, "", datos={
+                "revisados": len(archivos),
+                "total": byovd.total_base(),
+                "hallazgos": byovd.auditar_archivos(archivos)})
+
+        btn_byovd.setEnabled(False)
+        lbl_byovd.setText(t("Revisando los drivers instalados…"))
+        gestor.lanzar(trabajo, _al_terminar_byovd)
+
+    btn_byovd.clicked.connect(_revisar_byovd)
 
     def _pintar_enlaces():
         _vaciar(contenedor_enlaces)

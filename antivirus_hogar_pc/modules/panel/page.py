@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -32,6 +33,42 @@ from antivirus_hogar_pc.winapi import es_windows
 
 from .datos import animaciones_windows_permitidas, leer_datos_panel, recoger_informe
 
+
+
+# Motivos de riesgo de la auditoría de exclusiones (v1.0.21):
+# código de core.exclusiones → texto para la persona.
+_MOTIVOS_EXCLUSION = {
+    "raiz_unidad": "es la raíz de una unidad entera: Defender no mira nada ahí",
+    "carpeta_sistema": "es una carpeta del sistema",
+    "appdata": "es AppData, donde se esconde mucho malware",
+    "temporal": "es una carpeta temporal, vía típica de entrada",
+    "perfil_completo": "es el perfil de usuario completo",
+    "programdata": "es ProgramData entera",
+    "carpeta_amplia": "es una carpeta muy amplia",
+    "extension_ejecutable": "es una extensión ejecutable: cualquier archivo así queda sin mirar",
+    "proceso_sensible": "es un proceso que el malware suele abusar",
+    "comodin": "usa comodines: puede cubrir más de lo que parece",
+    "red_completa": "cubre toda la red",
+    "ip_excluida": "es una dirección IP excluida del análisis",
+}
+
+
+class _TrabajadorGenerico(QThread):
+    """Ejecuta una función cualquiera fuera del hilo de la interfaz
+    (v1.0.21: lectura/aplicación de reglas ASR y exclusiones)."""
+
+    listo = Signal(object)
+
+    def __init__(self, funcion, parent=None):
+        super().__init__(parent)
+        self._funcion = funcion
+
+    def run(self) -> None:
+        try:
+            resultado = self._funcion()
+        except Exception as exc:
+            resultado = ResultadoModulo(False, f"Error inesperado: {exc}")
+        self.listo.emit(resultado)
 
 
 class _TrabajadorInforme(QThread):
@@ -713,6 +750,139 @@ def crear_pagina(ctx: ContextoModulo):
         _t = locals().get(_nombre)
         if _t is not None:
             _t.setProperty("cristal", "true")
+
+    # --- Defender a fondo: reglas ASR y exclusiones (v1.0.21) ----------------
+    # Lectura SOLO al pulsar el botón (nada de fondo, cero UAC
+    # espontáneo). Las reglas ASR se aplican de una en una, con
+    # confirmación dentro de la app y reversibles desde aquí.
+    tarjeta_asr, lay_asr = tarjeta(t("Defender a fondo: reglas ASR y exclusiones"))
+    lay_asr.addWidget(etiqueta(t(
+        "Las reglas ASR reducen la superficie de ataque de Defender "
+        "(Office, macros, USB, robo de credenciales). Preset "
+        "conservador: cada regla se aplica de una en una, primero en "
+        "auditoría si lo permite, y siempre puedes quitarla aquí. "
+        "La auditoría de exclusiones es solo lectura: la app no "
+        "borra exclusiones por su cuenta."), suave=True))
+    b_leer_asr = QPushButton(t("Leer reglas ASR y exclusiones"))
+    lay_asr.addWidget(b_leer_asr)
+    b_leer_asr_admin = QPushButton(t("Leer como administrador"))
+    b_leer_asr_admin.setVisible(False)
+    lay_asr.addWidget(b_leer_asr_admin)
+    contenedor_asr = QVBoxLayout()
+    lay_asr.addLayout(contenedor_asr)
+    layout.addWidget(tarjeta_asr)
+    estado_asr: dict = {"trabajador": None}
+
+    def _limpiar_asr():
+        while contenedor_asr.count():
+            item = contenedor_asr.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _aplicar_asr(regla: dict, modo: str):
+        textos = {
+            "auditoria": t("La regla quedará en modo AUDITORÍA: "
+                           "Defender anota lo que bloquearía, pero no "
+                           "bloquea nada todavía."),
+            "bloqueo": t("La regla quedará en modo BLOQUEO: Defender "
+                         "empezará a bloquear lo que la regla cubre."),
+            "desactivada": t("La regla quedará DESACTIVADA: Defender "
+                             "dejará de aplicarla."),
+        }
+        respuesta = QMessageBox.question(
+            pagina, t("Reglas ASR"),
+            t("¿Aplicar esta regla?\n\n{nombre}\n\n{detalle}\n\n"
+              "Windows pedirá permiso de administrador (UAC). El "
+              "cambio es reversible desde esta misma tarjeta.",
+              nombre=t(regla["nombre"]), detalle=textos[modo]))
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+
+        def trabajo():
+            from antivirus_hogar_pc.winapi import defender as def_win
+
+            res = def_win.fijar_regla_asr(regla["guid"], modo,
+                                          confirmar=True)
+            return ResultadoModulo(bool(res.get("ok")),
+                                   str(res.get("mensaje", "")))
+
+        def al_terminar(res: ResultadoModulo):
+            QMessageBox.information(pagina, t("Reglas ASR"), res.mensaje)
+            _leer_asr(False)
+
+        trabajador = _TrabajadorGenerico(trabajo, parent=pagina)
+        trabajador.listo.connect(al_terminar)
+        trabajador.finished.connect(trabajador.deleteLater)
+        estado_asr["trabajador"] = trabajador
+        trabajador.start()
+
+    def _pintar_asr(datos: dict):
+        from antivirus_hogar_pc.core import asr as core_asr
+        from antivirus_hogar_pc.core import exclusiones as core_ex
+
+        _limpiar_asr()
+        if datos.get("asr") is None and datos.get("exclusiones") is None:
+            contenedor_asr.addWidget(etiqueta(t(
+                "No se pudo leer sin permisos de administrador. "
+                "Pulsa «Leer como administrador» si quieres verlo.")))
+            b_leer_asr_admin.setVisible(True)
+            return
+        b_leer_asr_admin.setVisible(False)
+        auditoria = core_ex.auditar(datos.get("exclusiones"))
+        if not auditoria:
+            contenedor_asr.addWidget(etiqueta(t(
+                "Exclusiones de Defender: ninguna activa.")))
+        else:
+            bajas = 0
+            for e in auditoria:
+                if e["nivel"] == "baja":
+                    bajas += 1
+                    continue
+                motivo = _MOTIVOS_EXCLUSION.get(e["motivo"], "")
+                contenedor_asr.addWidget(etiqueta(
+                    "⚠ " + t("Exclusión ({tipo}): {valor}",
+                             tipo=e["tipo"], valor=e["valor"])
+                    + (f" — {t(motivo)}" if motivo else "")))
+            if bajas:
+                contenedor_asr.addWidget(etiqueta(t(
+                    "Y {n} exclusión(es) sin riesgo aparente.",
+                    n=bajas), suave=True))
+        estado_reglas = core_asr.interpretar_estado(datos.get("asr"))
+        for regla in core_asr.REGLAS_ASR:
+            fila = QHBoxLayout()
+            fila.addWidget(etiqueta(t(regla["nombre"])), 1)
+            fila.addWidget(etiqueta(
+                t("Modo: {modo}", modo=estado_reglas[regla["guid"]])))
+            for modo, texto_boton in (
+                    ("auditoria", t("Auditoría")),
+                    ("bloqueo", t("Bloqueo")),
+                    ("desactivada", t("Quitar"))):
+                boton = QPushButton(texto_boton)
+                boton.clicked.connect(
+                    lambda _=False, r=regla, m=modo: _aplicar_asr(r, m))
+                fila.addWidget(boton)
+            contenedor = QWidget()
+            contenedor.setLayout(fila)
+            contenedor_asr.addWidget(contenedor)
+
+    def _leer_asr(elevado: bool):
+        def trabajo():
+            from antivirus_hogar_pc.winapi import defender as def_win
+
+            return ResultadoModulo(True, "", datos={
+                "asr": def_win.leer_estado_asr(elevado),
+                "exclusiones": def_win.leer_exclusiones(elevado)})
+
+        trabajador = _TrabajadorGenerico(trabajo, parent=pagina)
+        trabajador.listo.connect(
+            lambda res: _pintar_asr(res.datos or {}))
+        trabajador.finished.connect(trabajador.deleteLater)
+        estado_asr["trabajador"] = trabajador
+        trabajador.start()
+
+    b_leer_asr.clicked.connect(lambda: _leer_asr(False))
+    b_leer_asr_admin.clicked.connect(lambda: _leer_asr(True))
 
     boton_actualizar.clicked.connect(lanzar_lectura)
     lanzar_lectura()

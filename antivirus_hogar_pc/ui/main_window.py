@@ -7,10 +7,11 @@ perezosamente al navegar por primera vez.
 """
 import os
 
-from PySide6.QtCore import QEvent, QSize, Qt
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QMainWindow,
-                               QPushButton, QScrollArea, QStackedWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel,
+                               QMainWindow, QMessageBox, QPushButton,
+                               QScrollArea, QStackedWidget, QVBoxLayout,
+                               QWidget)
 
 from ..contracts import ContextoModulo
 from ..core import i18n
@@ -26,6 +27,24 @@ from .programar_page import crear_pagina_programar
 from .version_page import crear_pagina_version
 
 ANCHO_BARRA = 254  # v1.0.5: caben iconos de 36 px y «Programador de tareas»
+
+
+class _TrabajadorVigia(QThread):
+    """Una pasada del vigilante anti-ransomware (v1.0.21) fuera del
+    hilo de la interfaz: señuelos + foto de carpetas + ráfagas."""
+
+    listo = Signal(object)
+
+    def __init__(self, funcion, parent=None):
+        super().__init__(parent)
+        self._funcion = funcion
+
+    def run(self) -> None:
+        try:
+            resultado = self._funcion()
+        except Exception:
+            resultado = None
+        self.listo.emit(resultado)
 
 # Icono de registro de cada módulo → icono 3D de navegación (v1.0.5).
 _ICONO_NAV_POR_REGISTRO = {
@@ -280,6 +299,19 @@ class VentanaPrincipal(QMainWindow):
         self._id_actual = ""
         self.al_cambiar_idioma = None
 
+        # Vigilante anti-ransomware propio (v1.0.21): señuelos en
+        # las carpetas protegidas + vigilancia de ráfagas. Nace en
+        # modo «solo avisar» (Ajustes): detecta y avisa; suspender
+        # un proceso solo ocurre si el usuario lo ordena en el
+        # aviso. Sin elevación y sin tocar Defender.
+        self._vigia: dict = {"fotos": {}, "trabajador": None,
+                             "alerta_viva": False}
+        self._temporizador_ransomware = QTimer(self)
+        self._temporizador_ransomware.setInterval(30000)
+        self._temporizador_ransomware.timeout.connect(
+            self._chequeo_ransomware)
+        self._temporizador_ransomware.start()
+
         primero = sorted(self._registros.values(), key=lambda r: r.orden)
         if primero:
             self.ir_a(primero[0].id)
@@ -328,6 +360,138 @@ class VentanaPrincipal(QMainWindow):
         """Salida de verdad (la opción «Salir» del menú de la bandeja)."""
         self._saliendo = True
         self.close()
+
+    # -- vigilante anti-ransomware (v1.0.21) ----------------------------------
+    def _carpetas_vigiladas(self) -> list[str]:
+        """Las carpetas protegidas por CFA si se pueden leer; si
+        no, las carpetas personales típicas del usuario."""
+        try:
+            from ..winapi import defender
+
+            carpetas = defender.carpetas_protegidas_cfa()
+            if carpetas:
+                return list(carpetas)
+        except Exception:
+            pass
+        candidatas = [
+            os.path.expanduser(os.path.join("~", "Documents")),
+            os.path.expanduser(os.path.join("~", "Desktop")),
+            self.servicios.carpeta_descargas(),
+        ]
+        return [c for c in candidatas if c and os.path.isdir(c)]
+
+    def _chequeo_ransomware(self) -> None:
+        if getattr(self.servicios.ajustes, "antiransomware_modo",
+                   "avisar") != "avisar":
+            return
+        trabajador = self._vigia.get("trabajador")
+        if trabajador is not None and trabajador.isRunning():
+            return
+        fotos_previas = dict(self._vigia["fotos"])
+        carpetas = self._carpetas_vigiladas()
+        if not carpetas:
+            return
+
+        def trabajo():
+            from ..core import antiransomware as ar
+
+            tocados = ar.verificar_senuelos()
+            ar.crear_senuelos(carpetas)
+            fotos: dict = {}
+            for carpeta in carpetas:
+                fotos.update(ar.foto_carpeta(carpeta))
+            alerta = None
+            if fotos_previas:
+                alerta = ar.analizar_cambios(fotos_previas, fotos)
+            if alerta is not None:
+                alerta.procesos = ar.procesos_recientes()
+            return {"fotos": fotos, "senuelos_tocados": tocados,
+                    "alerta": alerta}
+
+        trabajador = _TrabajadorVigia(trabajo, parent=self)
+        trabajador.listo.connect(self._al_chequeo_ransomware)
+        trabajador.finished.connect(trabajador.deleteLater)
+        self._vigia["trabajador"] = trabajador
+        trabajador.start()
+
+    def _al_chequeo_ransomware(self, resultado) -> None:
+        if not isinstance(resultado, dict):
+            return
+        self._vigia["fotos"] = resultado.get("fotos", {})
+        if self._vigia["alerta_viva"]:
+            return
+        tocados = resultado.get("senuelos_tocados") or []
+        alerta = resultado.get("alerta")
+        if tocados:
+            self._aviso_ransomware(
+                t("Un archivo señuelo cambió o desapareció: algo "
+                  "está tocando una carpeta protegida."),
+                alerta.procesos if alerta else [])
+        elif alerta is not None:
+            self._aviso_ransomware(
+                t("Posible cifrado masivo en marcha: {detalle}",
+                  detalle=alerta.detalle), alerta.procesos)
+
+    def _aviso_ransomware(self, texto: str, procesos: list) -> None:
+        self._vigia["alerta_viva"] = True
+        try:
+            self.servicios.registrar_actividad("antiransomware", texto)
+        except Exception:
+            pass
+        if self._bandeja is not None:
+            try:
+                self._bandeja.avisar(t("Antivirus Hogar PC"), texto)
+            except Exception:
+                pass
+        caja = QMessageBox(self)
+        caja.setIcon(QMessageBox.Icon.Warning)
+        caja.setWindowTitle(t("Posible ransomware"))
+        caja.setText(texto + "\n\n" + t(
+            "Esto es una detección en modo usuario: puede ser un "
+            "programa legítimo comprimiendo muchos archivos, pero "
+            "si no reconoces la actividad, actúa ahora: desconecta "
+            "la red y revisa qué programa lo está haciendo."))
+        boton_procesos = None
+        if procesos:
+            boton_procesos = caja.addButton(
+                t("Ver procesos recientes"),
+                QMessageBox.ButtonRole.ActionRole)
+        caja.addButton(t("Entendido"), QMessageBox.ButtonRole.AcceptRole)
+        caja.exec()
+        if boton_procesos is not None and caja.clickedButton() is boton_procesos:
+            self._dialogo_procesos_sospechosos(procesos)
+        self._vigia["alerta_viva"] = False
+
+    def _dialogo_procesos_sospechosos(self, procesos: list) -> None:
+        dialogo = QDialog(self)
+        dialogo.setWindowTitle(t("Procesos recientes"))
+        lay = QVBoxLayout(dialogo)
+        lay.addWidget(QLabel(t(
+            "Procesos que arrancaron en los últimos minutos. "
+            "Suspender uno lo congela sin cerrarlo (reversible "
+            "desde el Administrador de tareas); hazlo solo si no "
+            "lo reconoces.")))
+        for proc in procesos[:12]:
+            fila = QHBoxLayout()
+            fila.addWidget(QLabel(
+                f"{proc.get('nombre', '?')} (PID {proc.get('pid', '?')})"
+                f" — {proc.get('exe', '')}"), 1)
+            boton = QPushButton(t("Suspender"))
+
+            def suspender(_=False, pid=proc.get("pid"), b=boton):
+                from ..core import antiransomware as ar
+
+                if pid and ar.suspender_proceso(int(pid)):
+                    b.setText(t("Suspendido"))
+                    b.setEnabled(False)
+
+            boton.clicked.connect(suspender)
+            fila.addWidget(boton)
+            lay.addLayout(fila)
+        cerrar = QPushButton(t("Cerrar"))
+        cerrar.clicked.connect(dialogo.accept)
+        lay.addWidget(cerrar)
+        dialogo.exec()
 
     def closeEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
         if self._bandeja is not None and not self._saliendo:

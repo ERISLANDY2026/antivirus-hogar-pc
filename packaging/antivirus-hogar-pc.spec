@@ -51,15 +51,34 @@ if _faltantes:
         "La compilación se detiene: el .exe saldría sin módulos."
     )
 
+# Segundo motor YARA (v1.0.21): los bindings traen su librería
+# nativa DENTRO del paquete; collect_all la recoge con sus datos.
+# Si un motor no está instalado en el entorno de construcción, se
+# sigue con el otro: la app degrada igual (core.yara_scan), y la
+# CI verifica que AL MENOS UNO llegó al dist final.
+from PyInstaller.utils.hooks import collect_all as _collect_all
+
+_yara_datas: list = []
+_yara_binaries: list = []
+_yara_hidden: list = []
+for _paquete in ("yara_x", "yara"):
+    try:
+        _d, _b, _h = _collect_all(_paquete)
+        _yara_datas += _d
+        _yara_binaries += _b
+        _yara_hidden += _h
+    except Exception:
+        pass
+
 a = Analysis(
     [os.path.join(RAIZ, "AntivirusHogarPC.py")],
     pathex=[RAIZ],
-    binaries=[],
+    binaries=_yara_binaries,
     datas=[
         (os.path.join(RAIZ, "antivirus_hogar_pc", "assets"),
          os.path.join("antivirus_hogar_pc", "assets")),
-    ],
-    hiddenimports=hiddenimports,
+    ] + _yara_datas,
+    hiddenimports=hiddenimports + _yara_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

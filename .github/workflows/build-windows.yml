@@ -73,6 +73,18 @@ jobs:
           if (-not $plugins) { throw "Falta el plugin qwebp en el build congelado: el espartano animado no se movería" }
           $plugins | ForEach-Object { Write-Host "Plugin WebP congelado: $($_.FullName) ($($_.Length) bytes)" }
 
+      # Puerta v1.0.21: el segundo motor (YARA) debe llegar al build
+      # congelado — al menos UNO de los dos bindings oficiales con
+      # su librería nativa — y el paquete de reglas de YARA Forge
+      # incluido debe compilar con el motor presente en el entorno.
+      - name: Verificar el motor YARA dentro del build congelado (v1.0.21)
+        shell: pwsh
+        run: |
+          $yara = Get-ChildItem -Path "dist" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "yara" -and $_.Extension -in ".pyd", ".dll" }
+          if (-not $yara) { throw "Ningún motor YARA (nativo .pyd/.dll) llegó al build congelado: el segundo motor quedaría muerto" }
+          $yara | ForEach-Object { Write-Host "YARA congelado: $($_.FullName) ($($_.Length) bytes)" }
+          python -c "import glob; from antivirus_hogar_pc.core import yara_scan; e = yara_scan.estado_motor(); print('Motor YARA:', e.disponible, e.motor, e.motivo); assert e.disponible, e.motivo"
+
       - name: Instalar Inno Setup
         run: choco install innosetup -y --no-progress
 

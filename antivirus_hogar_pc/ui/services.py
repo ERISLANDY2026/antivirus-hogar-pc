@@ -62,6 +62,15 @@ class Ajustes:
     escala_interfaz: str = "normal"
     # Programaciones (v1.0.5): lista de dicts de core.programaciones.
     programaciones: list = field(default_factory=list)
+    # VirusTotal por huella, BYOK (v1.0.21): clave PROPIA del
+    # usuario para consultar SOLO hashes. Vacía = función «sin
+    # configurar», inerte: no se consulta nada ni se sube jamás
+    # un archivo (core.virustotal solo hace GET por huella).
+    clave_virustotal: str = ""
+    # Anti-ransomware propio (v1.0.21): «avisar» (de nacimiento:
+    # señuelos + vigilancia de ráfagas, solo avisa; la contención
+    # la ordena el usuario en el aviso) o «apagado».
+    antiransomware_modo: str = "avisar"
 
     _ruta: str = field(default="", repr=False)
 

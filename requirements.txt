@@ -12,3 +12,8 @@ pySMART>=1.2
 # QFluentWidgets (GPLv3).
 # Solo para construir el .exe (en Windows):
 #   pyinstaller>=6.0
+# Segundo motor de escaneo por reglas (v1.0.21): YARA-X es el motor
+# preferido y yara-python el respaldo oficial; la app usa el que
+# esté disponible y degrada sin romperse si falta su módulo nativo.
+yara-x==1.25.0
+yara-python==4.5.4

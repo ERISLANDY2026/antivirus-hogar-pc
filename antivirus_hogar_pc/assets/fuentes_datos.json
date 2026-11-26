@@ -1,0 +1,45 @@
+{
+ "generado": "2026-11-26",
+ "fuentes": [
+  {
+   "archivo": "dominios_fusionados.txt",
+   "fuente": "StevenBlack/hosts + semilla Android v6 (URLhaus/OpenPhish históricos)",
+   "licencia": "MIT (StevenBlack) / ver cabecera del archivo",
+   "uso": "bloqueo hosts (a elección del usuario) y consulta"
+  },
+  {
+   "archivo": "dominios_phishing_db.txt",
+   "fuente": "Phishing.Database — phishing-domains-ACTIVE",
+   "licencia": "MIT",
+   "url": "https://github.com/Phishing-Database/Phishing.Database",
+   "dominios": 392164,
+   "uso": "solo consulta (no se escribe al hosts)"
+  },
+  {
+   "archivo": "dominios_feodo.txt",
+   "fuente": "Feodo Tracker — ipblocklist (abuse.ch)",
+   "licencia": "CC0",
+   "url": "https://feodotracker.abuse.ch/downloads/",
+   "ips": 5,
+   "hostnames": 3,
+   "uso": "solo consulta (no se escribe al hosts)"
+  },
+  {
+   "archivo": "byovd_loldrivers.txt",
+   "fuente": "LOLDrivers",
+   "licencia": "CC0",
+   "url": "https://www.loldrivers.io/",
+   "hashes": 2221,
+   "uso": "chequeo BYOVD de drivers por SHA-256"
+  },
+  {
+   "archivo": "yara/yara-rules-core.yar",
+   "fuente": "YARA Forge — paquete core 20261122",
+   "licencia": "la de cada regla (autor y licencia en su meta)",
+   "url": "https://github.com/YARAHQ/yara-forge",
+   "reglas": 5078,
+   "uso": "segundo motor de escaneo por reglas"
+  }
+ ],
+ "nota_abusech": "URLhaus/MalwareBazaar/ThreatFox (abuse.ch) exigen Auth-Key y su uso gratuito es solo sin ánimo de lucro (términos del 4-nov-2025): la app NO añade redistribución nueva de esas fuentes; lo ya incluido en versiones anteriores se queda como está."
+}
