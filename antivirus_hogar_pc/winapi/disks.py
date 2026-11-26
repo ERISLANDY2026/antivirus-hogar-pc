@@ -332,48 +332,68 @@ def _script_defrag(letra: str, es_ssd: bool, ruta_salida: str,
     salida completa a archivo y código de salida al resultado.
     El archivo de resultado lleva líneas CLAVE=valor:
     PRECHECK=OK|TRIM_DESHABILITADO|SERVICIO_DESHABILITADO y
-    EXITCODE=<n>. Nunca queda vacío (finally)."""
+    EXITCODE=<n>. Nunca queda vacío (finally).
+
+    v1.0.18 (nota 3): el resultado se escribe de forma ATÓMICA y
+    verificable — primero a un hermano «.tmp» y después se
+    renombra encima (el renombrado en el mismo volumen es
+    atómico: quien vigila ve el archivo solo cuando está
+    COMPLETO, nunca a mitad de escritura) — y la salida de error
+    de defrag.exe va a su PROPIO archivo (antes el script pasaba
+    «$salida.err», que PowerShell lee como una propiedad nula:
+    el error estándar se perdía o el propio Start-Process
+    fallaba). Si el proceso no deja código, el script lo dice
+    tal cual (EXITCODE=SIN_CODIGO) para que mande el testigo
+    independiente: el registro de eventos de Windows."""
     def q(ruta: str) -> str:
         return "'" + ruta.replace("'", "''") + "'"
 
+    ruta_error = ruta_salida + ".err"
     modo = "/L" if es_ssd else "/D"
     return (
         "$ErrorActionPreference = 'Continue'\n"
         f"$resultado = {q(ruta_resultado)}\n"
         f"$salida = {q(ruta_salida)}\n"
+        f"$salidaErr = {q(ruta_error)}\n"
+        # Escritura ATÓMICA del resultado: .tmp + renombrado.
+        "function Guardar-Resultado([string]$contenido) {\n"
+        "  $tmp = $resultado + '.tmp'\n"
+        "  [System.IO.File]::WriteAllText($tmp, $contenido)\n"
+        "  Move-Item -LiteralPath $tmp -Destination $resultado "
+        "-Force\n"
+        "}\n"
         "try {\n"
         # (a) TRIM habilitado en el sistema (solo SSD): si está
         # deshabilitado, defrag /L no puede aplicar ReTrim.
         + (("  $fsutil = fsutil behavior query DisableDeleteNotify "
             "2>&1 | Out-String\n"
             "  if ($fsutil -match 'DisableDeleteNotify\\s*=\\s*1') {\n"
-            "    'PRECHECK=TRIM_DESHABILITADO' | Out-File -FilePath "
-            "$resultado -Encoding ascii\n"
+            "    Guardar-Resultado 'PRECHECK=TRIM_DESHABILITADO'\n"
             "    exit\n"
             "  }\n") if es_ssd else "")
         # (b) El servicio del optimizador debe poder arrancar.
         + "  $svc = Get-Service -Name defragsvc -ErrorAction SilentlyContinue\n"
         "  if ($svc -and $svc.StartType -eq 'Disabled') {\n"
-        "    'PRECHECK=SERVICIO_DESHABILITADO' | Out-File -FilePath "
-        "$resultado -Encoding ascii\n"
+        "    Guardar-Resultado 'PRECHECK=SERVICIO_DESHABILITADO'\n"
         "    exit\n"
         "  }\n"
         f"  $p = Start-Process -FilePath defrag.exe -ArgumentList "
         f"'{letra}:','{modo}','/U','/V' -NoNewWindow -Wait -PassThru "
         "-RedirectStandardOutput $salida -RedirectStandardError "
-        "$salida.err\n"
-        "  ('PRECHECK=OK' + [Environment]::NewLine + "
-        "'EXITCODE=' + $p.ExitCode) | Out-File -FilePath $resultado "
-        "-Encoding ascii\n"
+        "$salidaErr\n"
+        "  if ($null -eq $p.ExitCode) {\n"
+        "    Guardar-Resultado ('PRECHECK=OK' + "
+        "[Environment]::NewLine + 'EXITCODE=SIN_CODIGO')\n"
+        "  } else {\n"
+        "    Guardar-Resultado ('PRECHECK=OK' + "
+        "[Environment]::NewLine + 'EXITCODE=' + $p.ExitCode)\n"
+        "  }\n"
         "} catch {\n"
-        "  ('PRECHECK=ERROR_SCRIPT' + [Environment]::NewLine + "
-        "'ERROR=' + $_.Exception.Message) | Out-File -FilePath "
-        "$resultado -Encoding utf8\n"
+        "  Guardar-Resultado ('PRECHECK=ERROR_SCRIPT' + "
+        "[Environment]::NewLine + 'ERROR=' + $_.Exception.Message)\n"
         "} finally {\n"
-        "  if (-not (Test-Path $resultado) -or "
-        "(Get-Item $resultado).Length -eq 0) {\n"
-        "    'PRECHECK=SIN_RESULTADO' | Out-File -FilePath "
-        "$resultado -Encoding utf8\n"
+        "  if (-not (Test-Path $resultado)) {\n"
+        "    Guardar-Resultado 'PRECHECK=SIN_RESULTADO'\n"
         "  }\n"
         "}\n"
     )
@@ -382,7 +402,8 @@ def _script_defrag(letra: str, es_ssd: bool, ruta_salida: str,
 def interpretar_resultado_defrag(resultado_crudo: str,
                                  salida_defrag: str,
                                  letra: str,
-                                 nombre_op: str) -> dict:
+                                 nombre_op: str,
+                                 eventos=None) -> dict:
     """Veredicto CIERTO a partir del resultado de defrag.exe.
 
     Sin comodines: cada desenlace posible nombra su causa real.
@@ -393,6 +414,19 @@ def interpretar_resultado_defrag(resultado_crudo: str,
     - EXITCODE=0 -> «Optimización finalizada».
     - EXITCODE!=0 -> la causa sale de las líneas de error de la
       salida de defrag; sin líneas, del propio código.
+
+    v1.0.18 (nota 3): si el ayudante elevado no dejó un código
+    utilizable (era el «terminó sin dejar el código de salida»
+    que el usuario vio en su Toughbook), manda el TESTIGO
+    INDEPENDIENTE: el registro de eventos de Windows
+    (``eventos``, interpretado por
+    interpretar_eventos_optimizacion). Éxito en el registro ->
+    «Optimización finalizada»; fallo en el registro -> su causa.
+    Sin código y sin eventos, el desenlace se marca
+    ``sin_evidencia`` para que optimizar_volumen RECAPTURE
+    dentro del mismo clic antes de decir nada; el mensaje de
+    ese desenlace nombra las fuentes comprobadas, jamás la
+    frase eliminada.
     """
     datos: dict[str, str] = {}
     for linea in (resultado_crudo or "").splitlines():
@@ -452,9 +486,38 @@ def interpretar_resultado_defrag(resultado_crudo: str,
                    f"completó. defrag.exe terminó con el código "
                    f"{codigo} sin dejar más explicación en su salida.")
     else:
-        mensaje = (f"La optimización de la unidad {letra}: el "
-                   "proceso elevado terminó sin dejar el código de "
-                   "salida de defrag.exe (resultado ilegible).")
+        # v1.0.18: sin código utilizable manda el testigo
+        # independiente (registro de eventos de Windows).
+        por_eventos = interpretar_eventos_optimizacion(
+            eventos, letra)
+        if por_eventos is not None:
+            texto_evento = por_eventos.get("causa") or ""
+            if texto_evento:
+                detalle += f"\nEvento de Windows: {texto_evento}"
+            if por_eventos["ok"]:
+                return {"ok": True,
+                        "mensaje": (f"Optimización finalizada. El "
+                                    f"registro de eventos de "
+                                    f"Windows confirma que la "
+                                    f"unidad {letra}: quedó "
+                                    f"optimizada ({nombre_op})."),
+                        "detalle": detalle}
+            causa_evento = (texto_evento
+                            or "el registro de eventos no dio el motivo.")
+            return {"ok": False,
+                    "mensaje": (f"La optimización de la unidad "
+                                f"{letra}: no se completó. Causa "
+                                f"según el registro de eventos de "
+                                f"Windows: {causa_evento[:220]}"),
+                    "detalle": detalle}
+        mensaje = (f"La optimización de la unidad {letra}: no se "
+                   "pudo confirmar el resultado. El ayudante "
+                   "elevado no dejó un resultado verificable y el "
+                   "registro de eventos de Windows no registra "
+                   "esta optimización; el detalle completo quedó "
+                   "guardado en el registro de actividad.")
+        return {"ok": False, "mensaje": mensaje,
+                "detalle": detalle, "sin_evidencia": True}
     return {"ok": False, "mensaje": mensaje, "detalle": detalle}
 
 
@@ -518,6 +581,7 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
     carpeta = tempfile.mkdtemp(prefix="ahpc-opt-")
     ruta_salida = os.path.join(carpeta, "salida-defrag.txt")
     ruta_resultado = os.path.join(carpeta, "resultado.txt")
+    inicio = time.time()
     try:
         script = _script_defrag(letra, es_ssd, ruta_salida, ruta_resultado)
         try:
@@ -549,13 +613,50 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
                 if muerto_desde is None:
                     muerto_desde = time.time()
                 elif time.time() - muerto_desde > 5:
+                    # v1.0.18: antes de declarar el fracaso, el
+                    # testigo independiente: defrag pudo terminar
+                    # y anotarlo en el registro de eventos aunque
+                    # el ayudante muriera sin dejar resultado.
+                    eventos_muerte = consultar_eventos_optimizacion(
+                        letra, inicio)
+                    por_eventos = interpretar_eventos_optimizacion(
+                        eventos_muerte, letra)
+                    if por_eventos is not None and por_eventos["ok"]:
+                        return {"ok": True,
+                                "mensaje": (f"Optimización "
+                                            f"finalizada. El "
+                                            f"registro de eventos "
+                                            f"de Windows confirma "
+                                            f"que la unidad "
+                                            f"{letra}: quedó "
+                                            f"optimizada "
+                                            f"({nombre_op})."),
+                                "detalle": "El proceso elevado "
+                                           "terminó sin archivo "
+                                           "de resultado; el "
+                                           "registro de eventos "
+                                           "confirma el éxito."}
+                    if por_eventos is not None:
+                        return {"ok": False,
+                                "mensaje": (f"La optimización de "
+                                            f"la unidad {letra}: "
+                                            "no se completó. Causa "
+                                            "según el registro de "
+                                            "eventos de Windows: "
+                                            f"{(por_eventos.get('causa') or 'sin motivo en el evento.')[:220]}"),
+                                "detalle": "El proceso elevado "
+                                           "terminó sin archivo "
+                                           "de resultado."}
                     return {"ok": False,
                             "mensaje": (f"La optimización de la unidad "
                                         f"{letra}: el proceso elevado de "
-                                        "Windows terminó antes de que "
-                                        "defrag.exe dejara su resultado."),
+                                        "Windows terminó sin dejar un "
+                                        "resultado verificable y el "
+                                        "registro de eventos no "
+                                        "registra esta optimización."),
                             "detalle": "Proceso elevado finalizado sin "
-                                       "archivo de resultado."}
+                                       "archivo de resultado ni "
+                                       "eventos."}
             time.sleep(intervalo)
         else:
             return {"ok": False,
@@ -571,8 +672,27 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
             time.sleep(0.2)
             resultado = _leer_texto_tolerante(ruta_resultado).strip()
         salida = _leer_texto_tolerante(ruta_salida)
+        error_txt = _leer_texto_tolerante(ruta_salida + ".err")
+        if error_txt:
+            salida = (salida + "\n" + error_txt).strip()
         desenlace = interpretar_resultado_defrag(
             resultado, salida, letra, nombre_op)
+        if desenlace.get("sin_evidencia"):
+            # v1.0.18 (nota 3): RECAPTURA dentro del mismo clic —
+            # se espera un margen, se releen los archivos (la
+            # escritura atómica pudo llegar tras la vigilancia) y
+            # se consulta el testigo independiente (el registro
+            # de eventos) antes de dar ningún veredicto.
+            time.sleep(3)
+            resultado2 = _leer_texto_tolerante(ruta_resultado).strip()
+            salida2 = _leer_texto_tolerante(ruta_salida)
+            error2 = _leer_texto_tolerante(ruta_salida + ".err")
+            if error2:
+                salida2 = (salida2 + "\n" + error2).strip()
+            eventos = consultar_eventos_optimizacion(letra, inicio)
+            desenlace = interpretar_resultado_defrag(
+                resultado2 or resultado, salida2 or salida,
+                letra, nombre_op, eventos=eventos)
         if desenlace["ok"] and al_progreso is not None:
             try:
                 al_progreso("Completado", 100)

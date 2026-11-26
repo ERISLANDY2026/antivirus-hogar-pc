@@ -161,6 +161,115 @@ def verificar_sha256(ruta: str, esperado: str) -> bool:
     return sha256_archivo(ruta).lower() == esperado.lower()
 
 
+# --- Descarga de la actualización con identidad propia (v1.0.18) --------------
+class ErrorHuellaActualizacion(Exception):
+    """La descarga completó pero su huella no coincide ni tras
+    re-descargar limpia dentro del mismo intento (nota 2)."""
+
+
+def _ruta_parcial(carpeta: str, version: str) -> str:
+    """El parcial de UNA actualización concreta: su nombre lleva
+    la versión, así un parcial de otra versión jamás se mezcla."""
+    segura = "".join(c if (c.isalnum() or c in ".-_") else "_"
+                     for c in (version or "sin-version"))
+    return os.path.join(carpeta, f"actualizacion-{segura}.part")
+
+
+def _ruta_identidad(ruta_parcial: str) -> str:
+    return ruta_parcial + ".identidad.json"
+
+
+def _leer_identidad(ruta_parcial: str) -> dict:
+    try:
+        with open(_ruta_identidad(ruta_parcial), "r",
+                  encoding="utf-8") as f:
+            datos = json.load(f)
+        return datos if isinstance(datos, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _guardar_identidad(ruta_parcial: str, url: str, sha256: str,
+                       version: str) -> None:
+    with open(_ruta_identidad(ruta_parcial), "w",
+              encoding="utf-8") as f:
+        json.dump({"url": url, "sha256": sha256.lower(),
+                   "version": version}, f)
+
+
+def _borrar_parcial(ruta_parcial: str) -> None:
+    for ruta in (ruta_parcial, _ruta_identidad(ruta_parcial)):
+        try:
+            os.remove(ruta)
+        except OSError:
+            pass
+
+
+def descargar_actualizacion(url: str, sha256: str, version: str,
+                            carpeta: str,
+                            nombre_final: str | None = None,
+                            reintentos: int = 3) -> str:
+    """Descarga el instalador de la actualización EN UN SOLO CLIC
+    (v1.0.18, nota 2 del usuario: «la mayoría de las veces falla
+    por huella y hay que pulsar otra vez»).
+
+    La causa era el parcial compartido: un corte del hotspot se
+    reanudaba o mezclaba con restos de otra descarga y la huella
+    final no cuadraba. Ahora la descarga lleva IDENTIDAD PROPIA:
+
+    - El parcial se llama por versión y guarda su identidad
+      (URL + huella esperada) en un archivo hermano. Solo se
+      reanuda si la identidad coincide EXACTA con lo pedido; un
+      parcial ajeno o sin identidad se descarta y se baja limpio.
+    - Si la huella del parcial completo no coincide, se descarta
+      y se RE-DESCARGA LIMPIA dentro de la misma llamada (el
+      usuario no pulsa nada más). Solo si la segunda descarga
+      completa también trae otra huella se levanta
+      ErrorHuellaActualizacion: eso ya es un canal corrupto, no
+      un corte de red.
+    - Los fallos de red de la descarga (tras sus reintentos con
+      reanudación) se propagan tal cual: un clic termina en
+      instalación verificada o en un error real de red.
+
+    Devuelve la ruta final (el parcial verificado, renombrado).
+    """
+    if not sha256:
+        raise ErrorHuellaActualizacion(
+            "La actualización no trae huella esperada.")
+    os.makedirs(carpeta, exist_ok=True)
+    nombre = nombre_final or nombre_instalador(url)
+    destino = os.path.join(carpeta, nombre)
+    parcial = _ruta_parcial(carpeta, version)
+    identidad = _leer_identidad(parcial)
+    if not (os.path.isfile(parcial)
+            and identidad.get("url") == url
+            and str(identidad.get("sha256") or "").lower()
+            == sha256.lower()
+            and identidad.get("version") == version):
+        # Parcial ajeno, de otra versión o sin identidad: jamás
+        # se reanuda sobre él; la descarga empieza limpia.
+        _borrar_parcial(parcial)
+    for intento in range(2):
+        if not os.path.isfile(parcial):
+            _guardar_identidad(parcial, url, sha256, version)
+        descargar_archivo(url, parcial, reintentos=reintentos)
+        if verificar_sha256(parcial, sha256):
+            os.replace(parcial, destino)
+            try:
+                os.remove(_ruta_identidad(parcial))
+            except OSError:
+                pass
+            return destino
+        # Huella mala con la descarga «completa»: parcial fuera
+        # y re-descarga limpia DENTRO del mismo clic.
+        _borrar_parcial(parcial)
+        if intento == 1:
+            raise ErrorHuellaActualizacion(
+                "La huella no coincide ni tras re-descargar el "
+                "instalador completo dos veces.")
+    raise ErrorHuellaActualizacion("Descarga no completada.")
+
+
 def comprobar_actualizacion(url_version: str, version_actual: str) -> InfoActualizacion | None:
     """Devuelve la info si hay una versión más nueva; None si no la hay.
 

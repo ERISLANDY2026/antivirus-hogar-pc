@@ -1087,7 +1087,8 @@ def _lanzar_elevado(argumentos: list[str], carpeta: str):
 
 
 def _lanzar_openvpn(argumentos: list[str], carpeta: str,
-                    ruta_salida_arranque: str = ""):
+                    ruta_salida_arranque: str = "",
+                    solo_servicio: bool = False):
     """Puerta única de lanzamiento del motor (v1.0.12).
 
     Orden: (1) el **Interactive Service** —la vía del GUI
@@ -1111,11 +1112,21 @@ def _lanzar_openvpn(argumentos: list[str], carpeta: str,
     puerta previa decidió para este intento (si la puerta dice
     «elevado» —p. ej. la sesión aún no refleja el grupo—, se
     lanza elevado PRIMERO y el servicio queda de reserva).
+
+    v1.0.18 (nota 1 del usuario): con ``solo_servicio=True`` la
+    vía elevada DESAPARECE del orden — ningún trabajo en segundo
+    plano (sondas del arranque, reconexión automática) puede
+    provocar un aviso de administrador (UAC) por su cuenta: si
+    el servicio interactivo no responde o no autoriza, el
+    lanzamiento falla aquí y el llamante espera en silencio.
     """
     if not es_windows():
         raise WindowsNoDisponible("OpenVPN solo se maneja en Windows.")
-    orden = (("elevado", "servicio") if _VIA_PREFERIDA == "elevado"
-             else ("servicio", "elevado"))
+    if solo_servicio:
+        orden = ("servicio",)
+    else:
+        orden = (("elevado", "servicio") if _VIA_PREFERIDA == "elevado"
+                 else ("servicio", "elevado"))
     errores = {}
     for via in orden:
         try:
@@ -1141,6 +1152,11 @@ def _lanzar_openvpn(argumentos: list[str], carpeta: str,
                 f"({errores['elevado']}); OpenVPN se lanzó por "
                 "su servicio interactivo.")
         return proceso
+    if solo_servicio:
+        raise _ErrorServicioOpenVPN(
+            "El servicio interactivo de OpenVPN no se pudo usar "
+            f"({errores.get('servicio')}): la vía elevada está "
+            "prohibida para el trabajo en segundo plano (v1.0.18).")
     raise _ErrorServicioOpenVPN(
         "No se pudo arrancar OpenVPN ni por su servicio "
         f"interactivo ({errores.get('servicio')}) ni elevado "
@@ -1843,7 +1859,8 @@ def _muerte_probada(proceso, puerto, ruta_log: str = "") -> bool:
 def conectar_openvpn(contenido_ovpn: str, hostname: str,
                      espera: int = 45, usuario: str | None = None,
                      clave: str | None = None,
-                     sonda: bool = False) -> dict:
+                     sonda: bool = False,
+                     solo_servicio: bool = False) -> dict:
     """Conecta con un servidor de VPN Gate por el motor OpenVPN.
 
     v1.0.14: `usuario`/`clave` son las credenciales DE LA FUENTE
@@ -1909,6 +1926,20 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
     if not puerta["listo"]:
         return {"ok": False, "mensaje": puerta["motivo"],
                 "detalle": "", "datos": {"familia": "local"}}
+    if solo_servicio and puerta.get("via") != "servicio":
+        # v1.0.18 (nota 1): el trabajo en segundo plano JAMÁS se
+        # eleva. Si la puerta previa solo deja la vía elevada
+        # (servicio parado o sesión sin el grupo reflejado), la
+        # operación se difiere en silencio: ni un solo UAC sale
+        # de aquí. El llamante lo deja «sin verificar» o lo
+        # reintenta más tarde.
+        return {"ok": False,
+                "mensaje": "El servicio interactivo de OpenVPN no "
+                           "está disponible para esta sesión "
+                           "todavía: el trabajo en segundo plano "
+                           "no se eleva y espera en silencio.",
+                "detalle": puerta.get("aviso", ""),
+                "datos": {"familia": "local", "diferido": True}}
     aviso_puerta = puerta.get("aviso", "")
     carpeta = carpeta_perfiles_vpn()
     ruta_cred = os.path.join(carpeta, "vpngate-credenciales.txt")
@@ -1942,7 +1973,13 @@ def conectar_openvpn(contenido_ovpn: str, hostname: str,
     # que el lanzador prueba primero.
     _VIA_PREFERIDA = puerta.get("via", "") or ""
     try:
-        _PROCESO = _lanzar_openvpn(argumentos, carpeta, ruta_salida)
+        if solo_servicio:
+            _PROCESO = _lanzar_openvpn(
+                argumentos, carpeta, ruta_salida,
+                solo_servicio=True)
+        else:
+            _PROCESO = _lanzar_openvpn(argumentos, carpeta,
+                                       ruta_salida)
     except Exception as exc:
         _VIA_PREFERIDA = ""
         return {"ok": False,

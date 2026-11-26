@@ -2,7 +2,13 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.17.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.18.exe
+;
+; v1.0.18: el espartano elegido por el usuario aparece DE PIE
+; junto a la barra de la página de instalación (imagen FIJA,
+; sin animación: packaging\espartano_instalador.bmp, 509x746,
+; el espartano completo a cuerpo entero compuesto sobre el
+; verde profundo del radar; ver InitializeWizard en [Code]).
 ;
 ; v1.0.10: el instalador lleva INCORPORADO el instalador oficial
 ; de OpenVPN Community (MSI en packaging\openvpn\, ver su
@@ -22,7 +28,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.17"
+#define AppVersion "1.0.18"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 
@@ -108,6 +114,10 @@ Source: "exclusion_defender.ps1"; DestDir: "{app}"; Flags: ignoreversion
 ; que el Interactive Service acepte los perfiles de la app, que
 ; viven fuera de su carpeta de configuración.
 Source: "grupo_openvpn.ps1"; DestDir: "{app}"; Flags: ignoreversion
+; v1.0.18 (nota 7): el espartano del asistente de instalación.
+; NO se instala: se extrae en tiempo de ejecución (dontcopy) y
+; se enseña en la página de instalación (ver InitializeWizard).
+Source: "espartano_instalador.bmp"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\{#AppNombre}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\icono.ico"
@@ -293,7 +303,7 @@ end;
 
 procedure PrepararMotorOpenVPN();
 begin
-  LogOpenVPN := 'Antivirus Hogar PC v1.0.16 - motor VPN OpenVPN ' +
+  LogOpenVPN := 'Antivirus Hogar PC v1.0.18 - motor VPN OpenVPN ' +
     'durante la instalacion.' + #13#10 + #13#10;
   RetirarRestosSoftEther();
   InstalarOpenVPN();
@@ -374,6 +384,44 @@ begin
     AplicarExclusionDefender();
     EscribirManifiestoComponentes();
   end;
+end;
+
+{ v1.0.18 (nota 7 del usuario): el espartano elegido aparece DE
+  PIE junto a la barra de la pagina de instalacion, mientras el
+  asistente copia los archivos. Imagen FIJA (el usuario descarto
+  la animacion por cuadros): el BMP trae el espartano COMPLETO
+  (1274x1866 de origen, compuesto sin recorte sobre el verde
+  del radar a 509x746) y aqui se escala ENTERO al alto de la
+  pagina conservando su proporcion — nunca se recorta ningun
+  pedazo. La barra y las etiquetas de la pagina se estrechan
+  para dejarle su sitio a la derecha. }
+var
+  ImgEspartano: TBitmapImage;
+
+procedure InitializeWizard();
+var
+  AnchoImg: Integer;
+begin
+  ExtractTemporaryFile('espartano_instalador.bmp');
+  ImgEspartano := TBitmapImage.Create(WizardForm);
+  ImgEspartano.Parent := WizardForm.InstallingPage.Surface;
+  ImgEspartano.Bitmap.LoadFromFile(
+    ExpandConstant('{tmp}\espartano_instalador.bmp'));
+  ImgEspartano.AutoSize := False;
+  ImgEspartano.Stretch := True;
+  ImgEspartano.Height :=
+    WizardForm.InstallingPage.SurfaceHeight - ScaleY(14);
+  { Proporcion del BMP: 509/746. }
+  AnchoImg := Round(ImgEspartano.Height * 509 / 746);
+  ImgEspartano.Width := AnchoImg;
+  ImgEspartano.Top := ScaleY(7);
+  ImgEspartano.Left := WizardForm.InstallingPage.SurfaceWidth
+    - AnchoImg - ScaleX(6);
+  WizardForm.ProgressGauge.Width := ImgEspartano.Left
+    - WizardForm.ProgressGauge.Left - ScaleX(16);
+  WizardForm.StatusLabel.Width := WizardForm.ProgressGauge.Width;
+  WizardForm.FilenameLabel.Width :=
+    WizardForm.ProgressGauge.Width;
 end;
 
 [UninstallDelete]

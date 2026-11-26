@@ -29,6 +29,20 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.18",
+        "fecha": "26/11/2026",
+        "novedades": [
+            "CERO AVISOS DE ADMINISTRADOR AL ABRIR LA APP: todo el trabajo de la VPN en segundo plano va ahora SOLO por el servicio interactivo de OpenVPN, que no pide permisos — y el instalador deja tu usuario verificado dentro del grupo «OpenVPN Administrators» para que esa vía funcione en tu sesión. Si el servicio no estuviera disponible, la app espera en silencio: nunca más los avisos de «OpenVPN Daemon» en cadena al arrancar.",
+            "LA VPN SOLO SE CONECTA CUANDO TÚ PULSAS «CONECTAR»: la app nunca abre un túnel por su cuenta ni cambia tu IP sin tu orden. La reconexión automática se queda, pero solo actúa sobre un túnel que TÚ abriste en esa sesión y se cayó solo.",
+            "VERIFICACIÓN DE SERVIDORES AL ARRANCAR: al abrir la app, la tabla de «Red y VPN» comprueba sola TODOS los servidores con la prueba real —sin abrir ningún túnel ni tocar tu tráfico— y la columna de verificación se va llenando en vivo con su sello y su hora. Lo no comprobado dice «Sin verificar», sin inventar veredictos.",
+            "ACTUALIZAR CON UN SOLO CLIC: la descarga de cada actualización lleva su propia identidad (versión y huella), nunca se mezcla con restos de otra descarga, y si la huella no cuadrara, la app vuelve a descargar limpia dentro del mismo clic. Un clic termina en instalación verificada o en un error real de red: se acabó el «falla por huella, pulsa otra vez».",
+            "OPTIMIZAR VOLÚMENES CON VEREDICTO CONFIRMADO: el resultado de defrag.exe llega por un canal atómico y verificable, con el registro de eventos de Windows como testigo independiente, y si la evidencia tardara, la app la recaptura dentro del mismo clic. El mensaje «terminó sin dejar el código de salida» ha desaparecido: el veredicto sale solo con evidencia, y si algo falla, con su causa.",
+            "TU ESPARTANO, MÁS NÍTIDO Y TAMBIÉN EN EL INSTALADOR: la animación de Inicio se re-hizo desde su video original con más resolución (640 de ancho frente a 440) y el doble de fluidez (24 cuadros por segundo frente a 12), con los bordes de la llave de color afinados: se acabó el aspecto difuso y ruidoso. Y el mismo espartano, fijo y a cuerpo completo, te acompaña de pie junto a la barra mientras el instalador copia los archivos.",
+            "PANEL IZQUIERDO REORDENADO: el selector de idioma vive ahora arriba, justo debajo del encabezado —que luce el icono de la aplicación, el escudo con tu espartano dorado— y al final del panel tienes la nueva entrada «Historial de la aplicación».",
+            "«VERSIÓN DE LA APP» LIMPIA: esa página enseña solo tu versión actual —qué es la app y qué trae de nuevo—. El historial completo de versiones, desde el desarrollo hasta hoy, se mudó a su propia pantalla: «Historial de la aplicación», la última entrada del panel izquierdo.",
+        ],
+    },
+    {
         "version": "1.0.17",
         "fecha": "26/11/2026",
         "novedades": [

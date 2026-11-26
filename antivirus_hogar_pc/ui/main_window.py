@@ -5,6 +5,8 @@ declare su registro (modules/<paquete>/registro.py) y figure en
 PAQUETES_MODULOS de modules/__init__.py. Las páginas se crean
 perezosamente al navegar por primera vez.
 """
+import os
+
 from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QMainWindow,
                                QPushButton, QStackedWidget, QVBoxLayout,
@@ -16,6 +18,7 @@ from ..core.i18n import t
 from ..modules import crear_pagina, descubrir_modulos, errores_descubrimiento
 from . import theme
 from .ajustes_page import crear_pagina_ajustes
+from .historial_page import crear_pagina_historial
 from .iconos_nav import LADO, AnimadorIconoNav, icono_nav
 from .services import ServiciosApp
 from .programar_page import crear_pagina_programar
@@ -69,12 +72,56 @@ class VentanaPrincipal(QMainWindow):
         lay_barra = QVBoxLayout(barra)
         lay_barra.setContentsMargins(12, 16, 12, 12)
         lay_barra.setSpacing(6)
-        self._lbl_titulo = QLabel("🛡  " + t("Antivirus Hogar"))
+        # v1.0.18 (nota 6): el encabezado lleva el ICONO DE LA
+        # APLICACIÓN (el escudo con el espartano dorado, el mismo
+        # del ejecutable) a tamaño legible, en vez del escudito
+        # de texto que había junto al nombre.
+        import os
+
+        from PySide6.QtGui import QPixmap
+
+        from .. import config as _config
+
+        fila_titulo = QHBoxLayout()
+        fila_titulo.setSpacing(9)
+        self._lbl_icono_app = QLabel()
+        pix_icono = QPixmap(os.path.join(
+            _config.carpeta_activos(), "icono_app.png"))
+        if not pix_icono.isNull():
+            self._lbl_icono_app.setPixmap(pix_icono.scaled(
+                38, 38, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
+        fila_titulo.addWidget(self._lbl_icono_app)
+        self._lbl_titulo = QLabel(t("Antivirus Hogar"))
         self._lbl_titulo.setStyleSheet("font-size: 16px; font-weight: 700;")
-        lay_barra.addWidget(self._lbl_titulo)
+        fila_titulo.addWidget(self._lbl_titulo)
+        fila_titulo.addStretch(1)
+        lay_barra.addLayout(fila_titulo)
         self._lbl_subtitulo = QLabel(t("Compañero de Defender"))
         self._lbl_subtitulo.setObjectName("detalle")
         lay_barra.addWidget(self._lbl_subtitulo)
+        lay_barra.addSpacing(4)
+
+        # Selector de IDIOMA (v1.0.14; v1.0.18, nota 6: sube a la
+        # parte alta del panel, justo debajo del encabezado y
+        # encima de «Inicio»). Cambia TODA la interfaz al momento
+        # (la carcasa se retraduce y la página visible se recrea
+        # en el idioma nuevo; el túnel VPN no se toca) y la
+        # elección queda guardada en los ajustes.
+        self._lbl_idioma = QLabel(t("Idioma"))
+        self._lbl_idioma.setObjectName("detalle")
+        lay_barra.addWidget(self._lbl_idioma)
+        self._combo_idioma = QComboBox()
+        self._combo_idioma.addItem("Español", "es")
+        self._combo_idioma.addItem("English", "en")
+        indice_idioma = self._combo_idioma.findData(
+            i18n.idioma_actual())
+        self._combo_idioma.setCurrentIndex(
+            indice_idioma if indice_idioma >= 0 else 0)
+        self._combo_idioma.currentIndexChanged.connect(
+            lambda _i: self._cambiar_idioma(
+                self._combo_idioma.currentData()))
+        lay_barra.addWidget(self._combo_idioma)
         lay_barra.addSpacing(10)
 
         # Iconos 3D animados: uno por pestaña, en colores, más
@@ -141,26 +188,6 @@ class VentanaPrincipal(QMainWindow):
             desfase=6.05)
 
         lay_barra.addStretch(1)
-        # Selector de IDIOMA (v1.0.14, agregado del usuario):
-        # visible en el panel izquierdo, sobre «Ajustes». Cambia
-        # TODA la interfaz al momento (la carcasa se retraduce y
-        # la página visible se recrea en el idioma nuevo; el
-        # túnel VPN no se toca) y la elección queda guardada en
-        # los ajustes para los próximos arranques.
-        self._lbl_idioma = QLabel(t("Idioma"))
-        self._lbl_idioma.setObjectName("detalle")
-        lay_barra.addWidget(self._lbl_idioma)
-        self._combo_idioma = QComboBox()
-        self._combo_idioma.addItem("Español", "es")
-        self._combo_idioma.addItem("English", "en")
-        indice_idioma = self._combo_idioma.findData(
-            i18n.idioma_actual())
-        self._combo_idioma.setCurrentIndex(
-            indice_idioma if indice_idioma >= 0 else 0)
-        self._combo_idioma.currentIndexChanged.connect(
-            lambda _i: self._cambiar_idioma(
-                self._combo_idioma.currentData()))
-        lay_barra.addWidget(self._combo_idioma)
         boton_ajustes = QPushButton(t("Ajustes"))
         boton_ajustes.setObjectName("menu")
         boton_ajustes.setIcon(icono_nav("ajustes"))
@@ -171,6 +198,21 @@ class VentanaPrincipal(QMainWindow):
         self._animadores_nav["ajustes"] = AnimadorIconoNav(
             boton_ajustes, "ajustes", animado=_animado, parent=self,
             desfase=6.6)
+
+        # «Historial de la aplicación» (v1.0.18, nota 5): el
+        # ÚLTIMO ítem del panel — el historial completo de
+        # versiones sale de la página «Versión de la app» y vive
+        # aquí, en su propia pantalla.
+        boton_historial = QPushButton(t("Historial de la aplicación"))
+        boton_historial.setObjectName("menu")
+        boton_historial.setIcon(icono_nav("informes"))
+        boton_historial.setIconSize(QSize(LADO, LADO))
+        boton_historial.clicked.connect(lambda: self.ir_a("historial"))
+        lay_barra.addWidget(boton_historial)
+        self._botones["historial"] = boton_historial
+        self._animadores_nav["historial"] = AnimadorIconoNav(
+            boton_historial, "informes", animado=_animado, parent=self,
+            desfase=7.15)
 
         # --- Área de páginas -------------------------------------------------
         self.pila = QStackedWidget()
@@ -210,6 +252,8 @@ class VentanaPrincipal(QMainWindow):
                 pagina = crear_pagina_ajustes(self.ctx)
             elif id_modulo == "version":
                 pagina = crear_pagina_version(self.ctx)
+            elif id_modulo == "historial":
+                pagina = crear_pagina_historial(self.ctx)
             elif id_modulo == "programar":
                 pagina = crear_pagina_programar(self.ctx)
             else:
@@ -276,7 +320,7 @@ class VentanaPrincipal(QMainWindow):
             self.al_cambiar_idioma()
 
     def _retraducir_carcasa(self) -> None:
-        self._lbl_titulo.setText("🛡  " + t("Antivirus Hogar"))
+        self._lbl_titulo.setText(t("Antivirus Hogar"))
         self._lbl_subtitulo.setText(t("Compañero de Defender"))
         self._lbl_idioma.setText(t("Idioma"))
         for rid, boton in self._botones.items():
@@ -285,6 +329,8 @@ class VentanaPrincipal(QMainWindow):
         self._botones["version"].setText(t("Versión de la app"))
         self._botones["programar"].setText(t("Programador de tareas"))
         self._botones["ajustes"].setText(t("Ajustes"))
+        self._botones["historial"].setText(
+            t("Historial de la aplicación"))
 
     # -- pausa de animaciones con la ventana oculta (v1.0.14) ----------------------
     def hideEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
@@ -307,7 +353,8 @@ class VentanaPrincipal(QMainWindow):
         super().changeEvent(evento)
 
     def ir_a(self, id_modulo: str) -> None:
-        if id_modulo not in ("ajustes", "version", "programar") \
+        if id_modulo not in ("ajustes", "version", "programar",
+                             "historial") \
                 and id_modulo not in self._registros:
             return
         self._id_actual = id_modulo

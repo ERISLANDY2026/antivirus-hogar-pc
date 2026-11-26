@@ -185,7 +185,8 @@ def test_barrido_cuenta_y_progreso(monkeypatch):
     veredictos = {"a.jp": "verificado", "b.jp": "auth_failed",
                   "c.jp": None}
     monkeypatch.setattr(
-        srv, "_sondear_uno", lambda s: veredictos[s.hostname])
+        srv, "_sondear_uno",
+        lambda s, solo_servicio=False: veredictos[s.hostname])
     eventos = []
     res = srv.verificar_todos_los_servidores(
         al_progreso=lambda *v: eventos.append(v),
@@ -217,7 +218,7 @@ def test_barrido_respeta_veredicto_vigente_y_cancela(monkeypatch):
     sondeados = []
     cancelar = threading.Event()
 
-    def _sonda(s):
+    def _sonda(s, solo_servicio=False):
         sondeados.append(s.hostname)
         cancelar.set()  # el usuario detiene tras la primera sonda
         return "verificado"

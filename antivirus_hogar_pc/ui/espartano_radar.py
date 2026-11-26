@@ -5,7 +5,20 @@ la página de elección («Esa es hermano, intégrala a la app»,
 2026-11-26): cuerpo entero, escudo tipo shield con «GUERRA» fijo
 en todos los cuadros, electricidad LENTA y ciclo natural de
 guardia (alerta → vigilancia → en guardia → respiración), en un
-WebP animado con transparencia de 120 cuadros en bucle.
+WebP animado con transparencia en bucle.
+
+v1.0.18 (nota 8): el activo se re-derivó de su video fuente
+(768×1152, 24 fps) porque a 440×660 y 12 fps se veía «un poco
+difuso, un poco ruidoso» en la Toughbook — la app lo escalaba
+hacia arriba en la banda. Ahora: 640×960, 24 fps completos,
+calidad 85 y llave de magenta afinada (chromakey 0.25/0.18 sin
+despill: borde más limpio, sin comerse la cresta roja). Coste
+medido de decodificación (libwebp, esta máquina): 16,3 ms por
+cuadro frente a un presupuesto de 41,7 ms a 24 fps — fluido
+junto al radar. Y la caché de QMovie pasa a CacheNone: con
+CacheAll, 240 cuadros de 640×960 ocuparían ~590 MB de RAM; sin
+caché se decodifica al vuelo, que es lo que el coste medido
+permite.
 
 COLOCACIÓN (palabras del usuario): su fondo es «la parte
 izquierda del área de barrido del radar» — va DENTRO de la banda
@@ -34,10 +47,10 @@ from PySide6.QtCore import QEvent, QSize, QTimer, Qt
 from PySide6.QtGui import QImageReader, QMovie, QPixmap
 from PySide6.QtWidgets import QLabel
 
-# Aspecto (ancho/alto) del activo entregado: 440×660. Si el
-# archivo real dice otra cosa, manda el archivo (se lee con
-# QImageReader al construir el widget).
-ASPECTO_DEFECTO = 440 / 660
+# Aspecto (ancho/alto) del activo entregado: 640×960 (v1.0.18).
+# Si el archivo real dice otra cosa, manda el archivo (se lee
+# con QImageReader al construir el widget).
+ASPECTO_DEFECTO = 640 / 960
 
 MARGEN_IZQUIERDO = 14    # px desde el borde izquierdo de la banda
 MARGEN_INFERIOR = 4      # px de aire bajo sus pies
@@ -117,7 +130,12 @@ class EspartanoRadar(QLabel):
                 self._aspecto = tam.width() / tam.height()
             pelicula = QMovie(ruta)
             if pelicula.isValid():
-                pelicula.setCacheMode(QMovie.CacheMode.CacheAll)
+                # v1.0.18: CacheNone — decodificación al vuelo.
+                # Con CacheAll, los 240 cuadros de 640×960
+                # ocuparían ~590 MB de RAM en caché; el coste
+                # medido por cuadro (16,3 ms) deja margen de
+                # sobra a 24 fps sin caché.
+                pelicula.setCacheMode(QMovie.CacheMode.CacheNone)
                 self._pelicula = pelicula
         self._temporizador = QTimer(self)
         self._temporizador.setInterval(SONDEO_MS)

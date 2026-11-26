@@ -419,4 +419,10 @@ _EN: dict[str, str] = {
     'La conexión VPN se cayó. Reconectando automáticamente…': 'The VPN connection dropped. Reconnecting automatically…',
     'La VPN volvió a conectar sola a {host}.': 'The VPN reconnected on its own to {host}.',
     'No se pudo reconectar la VPN tras varios intentos. Abre Red y VPN para conectar a mano.': 'The VPN could not be reconnected after several attempts. Open Network & VPN to connect by hand.',
+    # v1.0.18 (notas 4, 5 y 6)
+    'Historial de la aplicación': 'App history',
+    'Todas las versiones desde el desarrollo, con lo trabajado en cada una.': 'Every version since development, with what was worked on in each one.',
+    'La versión instalada y lo que trae de nuevo.': 'The installed version and what is new in it.',
+    'Qué trae de nuevo:': "What's new:",
+    'Verificación del arranque pausada: se comprobaron {h} de {t} ({ok} verificados, {mal} fallidos); el resto queda «Sin verificar» y se seguirá comprobando.': 'Startup verification paused: {h} of {t} checked ({ok} verified, {mal} failed); the rest stays "Not verified" and will keep being checked.',
 }

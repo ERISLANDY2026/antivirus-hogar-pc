@@ -360,13 +360,18 @@ def _registrar_intento_vpn(detalle: str) -> None:
 _MAX_INTENTOS_FAILOVER = 4
 
 
-def _intentar_openvpn(servidor: ServidorVPN) -> dict:
+def _intentar_openvpn(servidor: ServidorVPN,
+                      solo_servicio: bool = False) -> dict:
     """UN intento con el motor OpenVPN y las credenciales de la
-    FUENTE del servidor. Devuelve el dict crudo del motor."""
+    FUENTE del servidor. Devuelve el dict crudo del motor.
+
+    v1.0.18: ``solo_servicio=True`` prohíbe la reserva elevada
+    (trabajo en segundo plano: jamás un UAC espontáneo)."""
     usuario, clave = fuentes.credenciales_de(servidor, _CLAVE_VPNBOOK)
     res = seguro(vpn_win.conectar_openvpn,
                  servidor.generar_ovpn(), servidor.hostname,
-                 usuario=usuario, clave=clave)
+                 usuario=usuario, clave=clave,
+                 solo_servicio=solo_servicio)
     if res.ok and isinstance(res.datos, dict):
         return res.datos
     return {"ok": False,
@@ -375,7 +380,8 @@ def _intentar_openvpn(servidor: ServidorVPN) -> dict:
 
 
 def conectar_vpn(servidor: ServidorVPN,
-                 candidatos: list[ServidorVPN] | None = None) -> ResultadoModulo:
+                 candidatos: list[ServidorVPN] | None = None,
+                 solo_servicio: bool = False) -> ResultadoModulo:
     """Conecta con el servidor elegido, con FAILOVER (v1.0.14).
 
     v1.0.10 (cambio de motor): si OpenVPN está en el equipo (el
@@ -413,7 +419,8 @@ def conectar_vpn(servidor: ServidorVPN,
         intentos: list[dict] = []
         ultimo: tuple[ServidorVPN, dict] | None = None
         for candidato in cola[:_MAX_INTENTOS_FAILOVER]:
-            datos_ov = _intentar_openvpn(candidato)
+            datos_ov = _intentar_openvpn(
+                candidato, solo_servicio=solo_servicio)
             if datos_ov.get("ok"):
                 _anotar_veredicto(candidato, "verificado")
                 _guardar_estado_vpn(candidato, via="openvpn")
@@ -580,7 +587,8 @@ def _ocupado_vpn() -> bool:
         return False
 
 
-def _sondear_uno(servidor: ServidorVPN) -> str | None:
+def _sondear_uno(servidor: ServidorVPN,
+                 solo_servicio: bool = False) -> str | None:
     """La sonda de UN servidor (etapas del autoanálisis): primero
     alcanzabilidad TCP (solo perfiles TCP; filtra muertos
     evidentes) y después la sonda REAL — OpenVPN hasta la
@@ -588,7 +596,11 @@ def _sondear_uno(servidor: ServidorVPN) -> str | None:
     credenciales de su fuente y perfil route-nopull. Anota el
     veredicto en el registro compartido y lo devuelve
     («verificado»/«auth_failed»/«inaccesible») o None si el
-    desenlace no es clasificable del lado servidor."""
+    desenlace no es clasificable del lado servidor.
+
+    v1.0.18: con ``solo_servicio=True`` la sonda va SOLO por el
+    Interactive Service; si no está disponible devuelve None
+    (sin veredicto: queda «sin verificar») y JAMÁS eleva."""
     remoto = None
     try:
         remoto = extraer_remoto(servidor.generar_ovpn())
@@ -601,7 +613,8 @@ def _sondear_uno(servidor: ServidorVPN) -> str | None:
     usuario, clave = fuentes.credenciales_de(servidor, _CLAVE_VPNBOOK)
     res = seguro(vpn_win.conectar_openvpn,
                  servidor.generar_ovpn(), servidor.hostname,
-                 espera=20, usuario=usuario, clave=clave, sonda=True)
+                 espera=20, usuario=usuario, clave=clave, sonda=True,
+                 solo_servicio=solo_servicio)
     datos_ov = res.datos if res.ok and isinstance(res.datos, dict) else {}
     if datos_ov.get("ok"):
         _anotar_veredicto(servidor, "verificado")
@@ -632,7 +645,8 @@ def _sondear_plan(plan: list[ServidorVPN],
             break
         if _ocupado_vpn():
             break
-        _sondear_uno(servidor)
+        # v1.0.18: el plan corre en segundo plano: solo servicio.
+        _sondear_uno(servidor, solo_servicio=True)
         hechas += 1
     return hechas
 
@@ -644,8 +658,40 @@ def veredictos_actuales() -> dict:
     return dict(_VEREDICTOS)
 
 
+# --- Oyentes del progreso de verificación (v1.0.18) ---------------------------
+# El barrido de verificación (manual o del arranque) avisa a quien
+# esté mirando la tabla de Red y VPN para que los sellos se llenen
+# EN VIVO. Oyentes = callables (hechos, total, verificados,
+# fallidos, hostname, fase); la página se registra al mostrarse y
+# se retira al ocultarse. Sin Qt aquí: cada oyente se protege.
+_OYENTES_VERIFICACION: list = []
+
+
+def registrar_oyente_verificacion(fn) -> None:
+    if fn is not None and fn not in _OYENTES_VERIFICACION:
+        _OYENTES_VERIFICACION.append(fn)
+
+
+def desregistrar_oyente_verificacion(fn) -> None:
+    try:
+        _OYENTES_VERIFICACION.remove(fn)
+    except ValueError:
+        pass
+
+
+def _avisar_oyentes_verificacion(hechos, total, verificados,
+                                 fallidos, hostname, fase) -> None:
+    for fn in list(_OYENTES_VERIFICACION):
+        try:
+            fn(hechos, total, verificados, fallidos, hostname, fase)
+        except Exception:
+            pass  # un oyente roto no detiene el barrido
+
+
 def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
-                                   pausa_max_s: float = 600.0
+                                   pausa_max_s: float = 600.0,
+                                   solo_servicio: bool = False,
+                                   presupuesto_s: float | None = None
                                    ) -> ResultadoModulo:
     """Barrido manual COMPLETO de la lista (v1.0.15, idea del
     usuario en llamada del 2026-11-25): el botón «Verificar
@@ -666,6 +712,16 @@ def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
     fase) con fase «hecho»/«pausa» alimenta la barra, el conteo
     y el porcentaje de la UI. Los veredictos alimentan el mismo
     orden de la lista y el failover, como los del autoanálisis.
+
+    v1.0.18 (notas 1 y 4): el barrido también corre AL ARRANCAR
+    (arranque_vpn_fondo) con ``solo_servicio=True`` — la
+    verificación está autorizada en silencio, pero solo por el
+    Interactive Service: sin servicio disponible no eleva y lo
+    no comprobado queda «Sin verificar». ``presupuesto_s`` acota
+    el barrido del arranque (el manual no lo usa): agotado el
+    presupuesto, el resto queda sin verificar. Todo progreso se
+    avisa también a los oyentes registrados (la tabla abierta
+    se llena en vivo).
     """
     _cargar_estado_fuentes()
     lista = fuentes.ordenar_candidatos(list(_ULTIMA_LISTA),
@@ -673,8 +729,11 @@ def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
     total = len(lista)
     hechos = verificados = fallidos = sin_clasificar = 0
     cancelado = diferido = False
+    inicio = time.monotonic()
 
     def _emitir(hostname: str, fase: str) -> None:
+        _avisar_oyentes_verificacion(
+            hechos, total, verificados, fallidos, hostname, fase)
         if al_progreso is not None:
             try:
                 al_progreso(hechos, total, verificados, fallidos,
@@ -685,6 +744,10 @@ def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
     for servidor in lista:
         if cancelar is not None and cancelar.is_set():
             cancelado = True
+            break
+        if presupuesto_s is not None and \
+                time.monotonic() - inicio > presupuesto_s:
+            diferido = True
             break
         espera = 0.0
         while _ocupado_vpn():
@@ -707,7 +770,8 @@ def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
             fallidos += 1
             hechos += 1
         else:
-            veredicto = _sondear_uno(servidor)
+            veredicto = _sondear_uno(
+                servidor, solo_servicio=solo_servicio)
             hechos += 1
             if veredicto == "verificado":
                 verificados += 1
@@ -731,6 +795,13 @@ def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
         mensaje = t("Verificación detenida: {h} de {t} comprobados "
                     "({ok} verificados, {mal} fallidos). Los "
                     "veredictos ya obtenidos quedan guardados.",
+                    h=hechos, t=total, ok=verificados, mal=fallidos)
+    elif diferido and presupuesto_s is not None and \
+            time.monotonic() - inicio > presupuesto_s:
+        mensaje = t("Verificación del arranque pausada: se "
+                    "comprobaron {h} de {t} ({ok} verificados, "
+                    "{mal} fallidos); el resto queda «Sin "
+                    "verificar» y se seguirá comprobando.",
                     h=hechos, t=total, ok=verificados, mal=fallidos)
     elif diferido:
         mensaje = t("Verificación diferida: hay una conexión VPN "
@@ -793,6 +864,58 @@ def refresco_y_sondas_en_fondo(registrar=None) -> dict:
     except Exception as exc:
         _anotar(f"Fuentes VPN: el refresco de fondo falló ({exc}); "
                 "se conserva la lista anterior.")
+    return salida
+
+
+def arranque_vpn_fondo(registrar=None,
+                       presupuesto_s: float = 600.0) -> dict:
+    """El gancho de arranque de la v1.0.18 (notas 1 y 4).
+
+    Sustituye al refresco+plan de sondas de la 1.0.14:
+
+    1. Refresco de la lista unificada SOLO si toca por cadencia
+       (~30 min): es red pura, sin motor OpenVPN.
+    2. Barrido de VERIFICACIÓN de TODOS los servidores (el motor
+       del botón «Verificar servidores»): sondas cortas con
+       route-nopull que NO rutean el tráfico ni cambian la IP —
+       el usuario lo autorizó expresamente al arrancar — y SOLO
+       por el Interactive Service: si el servicio no está
+       disponible, nadie se eleva y lo no comprobado queda «Sin
+       verificar». Presupuesto acotado; el progreso se avisa a
+       los oyentes (la tabla abierta se llena en vivo).
+
+    NUNCA abre un túnel: la primera conexión la decide siempre
+    el usuario pulsando «Conectar» (regla de producto de la
+    1.0.18). Devuelve {"refresco": bool, "verificacion": datos}.
+    """
+    def _anotar(texto: str) -> None:
+        if registrar is not None:
+            try:
+                registrar("red", texto)
+            except Exception:
+                pass
+
+    salida: dict = {"refresco": False, "verificacion": {}}
+    try:
+        _cargar_estado_fuentes()
+        ruta_estado = config.ruta_estado_fuentes_vpn()
+        estado = fuentes.leer_estado_refresco(ruta_estado)
+        if fuentes.toca_refrescar(time.time(), estado):
+            res = descargar_servidores_completos()
+            estado["ultimo_refresco"] = time.time()
+            fuentes.guardar_estado_refresco(ruta_estado, estado)
+            salida["refresco"] = True
+            _anotar(f"Fuentes VPN: refresco al arrancar — {res.mensaje}")
+        if not _ULTIMA_LISTA:
+            servidores_cache_o_semilla()
+        if _ULTIMA_LISTA:
+            res_v = verificar_todos_los_servidores(
+                solo_servicio=True, presupuesto_s=presupuesto_s)
+            salida["verificacion"] = dict(res_v.datos or {})
+            _anotar(f"Verificación al arrancar: {res_v.mensaje}")
+    except Exception as exc:
+        _anotar(f"Arranque VPN: el trabajo de fondo falló ({exc}); "
+                "se conserva la lista anterior y nada se elevó.")
     return salida
 
 
@@ -1169,7 +1292,9 @@ def _reconectar_vigilante(objetivo: dict, ronda: int) -> bool:
     if servidor is None:
         return False
     if ronda == 0:
-        datos = _intentar_openvpn(servidor)
+        # v1.0.18: la reconexión es trabajo en segundo plano:
+        # solo por el Interactive Service, jamás elevada.
+        datos = _intentar_openvpn(servidor, solo_servicio=True)
         if datos.get("ok"):
             _anotar_veredicto(servidor, "verificado")
             _guardar_estado_vpn(servidor, via="openvpn")
@@ -1182,7 +1307,7 @@ def _reconectar_vigilante(objetivo: dict, ronda: int) -> bool:
         if veredicto:
             _anotar_veredicto(servidor, veredicto)
         return False
-    res = conectar_vpn(servidor, candidatos=lista)
+    res = conectar_vpn(servidor, candidatos=lista, solo_servicio=True)
     return bool(res.ok and res.datos and res.datos.get("conectado"))
 
 
@@ -1423,6 +1548,14 @@ def instalar_actualizacion_app(info) -> ResultadoModulo:
     Sin huella en el version.json no se instala nada: es la garantía de que
     el archivo es el publicado en el canal. En Windows, SmartScreen avisará
     porque el instalador no lleva firma comercial: es lo esperado.
+
+    v1.0.18 (nota 2): la descarga lleva identidad propia por
+    versión (core.updater.descargar_actualizacion): un parcial
+    cortado ya no envenena el clic siguiente ni se mezcla con
+    otra versión, y si la huella falla, la re-descarga limpia
+    ocurre DENTRO del mismo clic. Un clic termina en instalación
+    verificada o en un error real de red, nunca en «pulsa otra
+    vez».
     """
     if not info.sha256:
         return ResultadoModulo(
@@ -1433,21 +1566,21 @@ def instalar_actualizacion_app(info) -> ResultadoModulo:
     # v1.0.7: la carpeta se crea aquí también (en la PC real faltaba y
     # el botón fallaba por eso); el descargador además la garantiza.
     os.makedirs(carpeta, exist_ok=True)
-    destino = os.path.join(carpeta, updater.nombre_instalador(info.url))
-    res = seguro(updater.descargar_archivo, info.url, destino)
-    if not res.ok:
-        return ResultadoModulo(
-            ok=False, mensaje="No se pudo descargar la actualización.",
-            detalle_tecnico=res.mensaje)
-    if not updater.verificar_sha256(destino, info.sha256):
-        try:
-            os.remove(destino)
-        except OSError:
-            pass
+    try:
+        destino = updater.descargar_actualizacion(
+            info.url, info.sha256,
+            str(getattr(info, "version", "") or ""), carpeta,
+            nombre_final=updater.nombre_instalador(info.url))
+    except updater.ErrorHuellaActualizacion:
         return ResultadoModulo(
             ok=False,
             mensaje="El archivo descargado no coincide con la huella de seguridad "
-                    "del canal. Se ha borrado y NO se ha instalado nada.")
+                    "del canal ni tras descargarlo de nuevo completo. No se ha "
+                    "instalado nada: el canal debe volver a publicarse.")
+    except Exception as exc:
+        return ResultadoModulo(
+            ok=False, mensaje="No se pudo descargar la actualización.",
+            detalle_tecnico=str(exc))
     if not es_windows():
         return ResultadoModulo(
             ok=False, mensaje="El instalador solo se abre en Windows.",

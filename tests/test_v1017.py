@@ -1,17 +1,18 @@
 """v1.0.17 — El espartano animado de Inicio (orden del usuario).
 
 Lo que se prueba aquí:
-- El activo animado va en el paquete, decodifica con sus 120
-  cuadros, con transparencia real, y la foto fija de respaldo
-  también.
+- El activo animado va en el paquete, decodifica con sus 240
+  cuadros (v1.0.18, nota 8: 640×960 a 24 fps, re-derivado del
+  video fuente; en la 1.0.17 eran 120 cuadros de 440×660),
+  con transparencia real, y la foto fija de respaldo también.
 - La geometría pura: de pie en la zona izquierda de la banda,
   anclado abajo, y JAMÁS sobre el disco del radar (el anillo va
   encima del disco: si no toca el disco, no toca el anillo).
 - La puerta de animación (tabla de verdad pura).
-- La versión es la 1.0.17 en config, notas y el .iss.
+- La versión es la 1.0.18 en config, notas y el .iss.
 - El radar sigue INTOCABLE: su huella es la de la v1.0.6.
 - Qt (con importorskip, como el resto de la suite): QMovie abre
-  el WebP con sus 120 cuadros (el plugin qwebp va en el paquete),
+  el WebP con sus 240 cuadros (el plugin qwebp va en el paquete),
   el widget obedece las puertas (interruptor / pausa de ventana /
   batería → foto fija) y la página de Inicio lo lleva colocado
   sin tapar el anillo.
@@ -41,12 +42,12 @@ def test_activo_animado_en_el_paquete_y_decodifica(app_qt):
     assert os.path.isfile(RUTA_ANIMADO)
     assert os.path.getsize(RUTA_ANIMADO) > 100_000
     lector = QImageReader(RUTA_ANIMADO)
-    assert lector.size() == QSize(440, 660)
-    assert lector.imageCount() == 120
+    assert lector.size() == QSize(640, 960)
+    assert lector.imageCount() == 240
     cuadro = lector.read()
     assert not cuadro.isNull() and cuadro.hasAlphaChannel()
     assert cuadro.pixelColor(2, 2).alpha() == 0      # transparencia real
-    centro = cuadro.pixelColor(220, 330)
+    centro = cuadro.pixelColor(320, 480)
     assert centro.alpha() > 0                        # y cuerpo presente
 
 
@@ -103,8 +104,8 @@ def test_geometria_de_pie_a_la_izquierda_y_sin_tapar_el_disco(
     radio = min(ancho_banda, alto_banda) * 0.46
     borde_disco = ancho_banda / 2 - radio
     assert x + ancho <= borde_disco - m_anillo + 1
-    # La proporción del activo se conserva (440×660).
-    assert abs(ancho / alto - 440 / 660) < 0.02
+    # La proporción del activo se conserva (640×960).
+    assert abs(ancho / alto - 640 / 960) < 0.02
 
 
 def test_geometria_tamanos_degenerados():
@@ -130,11 +131,11 @@ def test_version_1017_en_config_notas_e_instalador():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
 
-    assert config.VERSION == "1.0.17"
-    assert NOTAS_VERSION[0]["version"] == "1.0.17"
+    assert config.VERSION == "1.0.18"
+    assert NOTAS_VERSION[0]["version"] == "1.0.18"
     with open(os.path.join(RAIZ, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
-        assert '#define AppVersion "1.0.17"' in f.read()
+        assert '#define AppVersion "1.0.18"' in f.read()
 
 
 def test_radar_intocable_desde_la_v106():
@@ -206,12 +207,22 @@ def _destruir(widget, app):
     gc.collect()
 
 
-def test_qmovie_abre_el_webp_con_sus_120_cuadros(app_qt):
+def test_qmovie_abre_el_webp_con_sus_240_cuadros(app_qt):
     from PySide6.QtGui import QMovie
 
     pelicula = QMovie(RUTA_ANIMADO)
     assert pelicula.isValid()          # el plugin qwebp responde
-    assert pelicula.frameCount() == 120
+    assert pelicula.frameCount() == 240
+    # v1.0.18: el widget decodifica al vuelo (CacheNone), no
+    # precarga ~590 MB de cuadros en RAM.
+    from antivirus_hogar_pc.ui.espartano_radar import EspartanoRadar
+    from PySide6.QtWidgets import QWidget
+
+    banda = QWidget()
+    banda.resize(1030, 280)
+    espartano = EspartanoRadar(banda)
+    assert espartano._pelicula is not None
+    assert espartano._pelicula.cacheMode() == QMovie.CacheMode.CacheNone
 
 
 def test_espartano_obedece_las_puertas(app_qt):

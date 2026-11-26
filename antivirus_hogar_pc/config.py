@@ -7,7 +7,7 @@ import os
 import sys
 
 APP_ID = "AntivirusHogarPC"
-VERSION = "1.0.17"
+VERSION = "1.0.18"
 
 # ---------------------------------------------------------------------------
 # Canal de actualización propio (mismo esquema que en Android: un

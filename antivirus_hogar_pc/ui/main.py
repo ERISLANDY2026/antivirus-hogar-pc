@@ -376,21 +376,23 @@ def main(argv: list[str] | None = None) -> int:
         threading.Thread(target=_trabajo, daemon=True).start()
 
     QTimer.singleShot(6000, _chequeo_openvpn)
-    # Refresco de fuentes VPN + autoanálisis (v1.0.14): gemelo
-    # del chequeo de OpenVPN — al abrir la app (el autoarranque
-    # en bandeja al iniciar Windows es el mismo camino), en un
-    # hilo de fondo que nunca bloquea el arranque: si toca por
-    # cadencia (~30 min) refresca la lista unificada (VPN Gate +
-    # VPNBook) y guarda la caché buena; después sondea de verdad
-    # unos pocos candidatos con su presupuesto. Las sondas se
-    # difieren solas si hay un túnel o un intento en curso.
+    # Fuentes VPN al arrancar (v1.0.18, notas 1 y 4): gemelo del
+    # chequeo de OpenVPN — al abrir la app (el autoarranque en
+    # bandeja al iniciar Windows es el mismo camino), en un hilo
+    # de fondo que nunca bloquea el arranque: refresca la lista
+    # unificada si toca por cadencia (~30 min) y corre el barrido
+    # de VERIFICACIÓN de todos los servidores — sondas cortas
+    # sin túnel (route-nopull: no rutean tráfico ni cambian la
+    # IP) y SOLO por el Interactive Service: ningún trabajo de
+    # fondo se eleva jamás (cero UAC espontáneos) y la app NUNCA
+    # abre un túnel por su cuenta: conectar lo decide el usuario.
     def _refresco_fuentes_vpn():
         import threading
 
         def _trabajo():
             from ..modules.net import servicios_red
 
-            servicios_red.refresco_y_sondas_en_fondo(
+            servicios_red.arranque_vpn_fondo(
                 servicios.registrar_actividad)
 
         threading.Thread(target=_trabajo, daemon=True).start()

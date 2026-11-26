@@ -577,9 +577,22 @@ class GloboEsquina(QWidget):
 
 
 class _PaginaRed(QWidget):
+    # v1.0.18: el barrido de verificación del arranque avisa por
+    # los oyentes de servicios_red desde un hilo de fondo; esta
+    # señal lo trae al hilo de la UI para pintar los sellos en
+    # vivo en la tabla.
+    _senal_verificacion_fondo = Signal(int, int, int, int, str, str)
+
     def __init__(self, ctx: ContextoModulo):
         super().__init__()
         self._ctx = ctx
+        self._oyente_fondo = (
+            lambda *v: self._senal_verificacion_fondo.emit(*v))
+        self._senal_verificacion_fondo.connect(
+            self._progreso_verificacion_fondo)
+        self.destroyed.connect(
+            lambda _=None: srv.desregistrar_oyente_verificacion(
+                self._oyente_fondo))
         self._trabajos: list[_Trabajo] = []
         self.destroyed.connect(lambda _=None: _soltar_trabajos(self))
         # v1.0.12: al cerrarse la página/app con un intento de
@@ -1003,6 +1016,28 @@ class _PaginaRed(QWidget):
             self._barra_vpn.fijar(hechos, total)
         self._lbl_vpn.setText(resultado.mensaje)
         self._lbl_verificacion.setText(resultado.mensaje)
+
+    # --- Verificación del arranque en vivo (v1.0.18, nota 4) -----
+    def showEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        super().showEvent(evento)
+        srv.registrar_oyente_verificacion(self._oyente_fondo)
+
+    def hideEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
+        srv.desregistrar_oyente_verificacion(self._oyente_fondo)
+        super().hideEvent(evento)
+
+    def _progreso_verificacion_fondo(self, hechos, total, verificados,
+                                     fallidos, hostname, fase) -> None:
+        """El barrido del arranque llega en vivo: los sellos de
+        la tabla se llenan servidor a servidor sin que el
+        usuario pulse nada. Si el barrido MANUAL está en curso,
+        su propio canal manda y este aviso se ignora."""
+        if self._verificando or not self._servidores:
+            return
+        self._barra_vpn.setVisible(True)
+        self._lbl_verificacion.setVisible(True)
+        self._progreso_verificacion(hechos, total, verificados,
+                                     fallidos, hostname, fase)
 
     def _cargar_servidores(self) -> None:
         self._tarjeta_vpn.fijar_activa(True)

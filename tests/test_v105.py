@@ -866,8 +866,19 @@ def test_pagina_version_muestra_la_actual_y_sus_notas():
     notas = notas_de(config.VERSION)
     assert notas and notas["novedades"]
     assert any(notas["novedades"][0][:30] in t for t in textos)
-    assert any("1.0.4" in t for t in textos)  # historial reciente
+    # v1.0.18 (nota 5): la página de versión ya NO mezcla el
+    # historial — vive en su propia página «Historial de la
+    # aplicación», que sí lo trae completo.
+    assert not any("1.0.4" in t for t in textos)
     pagina.deleteLater()
+    from antivirus_hogar_pc.ui.historial_page import (
+        crear_pagina_historial)
+
+    pagina_h = crear_pagina_historial(ContextoModulo(servicios=None))
+    textos_h = [l.text() for l in pagina_h.findChildren(QLabel)]
+    assert any("1.0.4" in t for t in textos_h)
+    assert any(config.VERSION in t for t in textos_h)
+    pagina_h.deleteLater()
     app.processEvents()
 
 
