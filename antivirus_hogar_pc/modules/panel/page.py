@@ -34,9 +34,6 @@ from .datos import animaciones_windows_permitidas, leer_datos_panel, recoger_inf
 class _TrabajadorInforme(QThread):
     """Lee el InformeSalud fuera del hilo de la interfaz."""
     listo = Signal(object)  # ResultadoModulo con datos=InformeSalud
-    # v1.0.16 (frente 3): los pendientes viajan en su propia
-    # señal, calculados con el informe recién leído.
-    pendientes_listos = Signal(object)  # list[core.pendientes.Pendiente]
 
     def __init__(self, servicios, parent=None):
         super().__init__(parent)
@@ -48,15 +45,6 @@ class _TrabajadorInforme(QThread):
         except Exception as exc:  # nunca dejar la página colgada
             resultado = ResultadoModulo(False, f"No se pudo leer el estado: {exc}")
         self.listo.emit(resultado)
-        try:
-            from .datos import recoger_pendientes
-
-            informe = resultado.datos \
-                if isinstance(resultado.datos, InformeSalud) else None
-            self.pendientes_listos.emit(
-                recoger_pendientes(self._servicios, informe))
-        except Exception:
-            self.pendientes_listos.emit([])
 
 
 class _TrabajadorPuestaAPunto(QThread):
@@ -638,6 +626,19 @@ def crear_pagina(ctx: ContextoModulo):
                 "revisados, {hallazgos} hallazgo(s).", fecha=fecha,
                 revisados=ultimo.get('revisados', 0),
                 hallazgos=ultimo.get('hallazgos', 0)))
+        # v1.0.16 (frente 3): los pendientes se calculan AQUÍ,
+        # en el hilo de la interfaz, con el informe recién
+        # aplicado — son solo lecturas locales rápidas (registro
+        # de actividad, caché de VPN, estado de mantenimiento) —
+        # y así el trabajador conserva exactamente la vida que
+        # tenía en la 1.0.15 (su cola alargada en un hilo
+        # compartido dejaba ventanas zombis en la suite).
+        try:
+            from .datos import recoger_pendientes
+
+            repintar_pendientes(recoger_pendientes(servicios, informe))
+        except Exception:
+            repintar_pendientes([])
         refrescar_sistema()
 
     def lanzar_lectura() -> None:
@@ -652,7 +653,6 @@ def crear_pagina(ctx: ContextoModulo):
         lbl_estado.setText(t("Leyendo el estado del equipo…"))
         trabajador = _TrabajadorInforme(servicios, parent=pagina)
         trabajador.listo.connect(aplicar)
-        trabajador.pendientes_listos.connect(repintar_pendientes)
         trabajador.finished.connect(trabajador.deleteLater)
         estado["trabajador"] = trabajador
         trabajador.start()
