@@ -423,16 +423,6 @@ def crear_pagina(ctx: ContextoModulo):
     boton_puesta.clicked.connect(_lanzar_puesta)
     boton_cancelar_puesta.clicked.connect(_cancelar_puesta)
 
-    def _soltar_puesta(_=None) -> None:
-        estado_puesta["cancelar"].set()
-        trabajador = estado_puesta.get("trabajador")
-        if trabajador is not None:
-            try:
-                trabajador.setParent(None)
-            except RuntimeError:
-                pass
-
-    pagina.destroyed.connect(_soltar_puesta)
 
     # --- Rutina automática al arrancar (v1.0.5) --------------------------------
     tarjeta_rutina, lay_rutina = tarjeta(t("Rutina automática al arrancar"))
