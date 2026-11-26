@@ -1,9 +1,10 @@
-"""DIAGNÓSTICO TEMPORAL v1.0.16 (2) — NO forma parte de la suite.
+"""DIAGNÓSTICO TEMPORAL v1.0.16 (3) — NO forma parte de la suite.
 
-Sigue UNA tarjeta concreta de cada flujo con weakref:
-A) página del Programador creada y destruida sola;
-B) ventana completa → ir_a("programar") → deleteLater.
-Reporta isValid (C++ vivo?) y los referrers de ESA tarjeta.
+A) Página del Programador sola: weakref a una tarjeta vía el
+   ancla real (pagina._tarjetas_programacion); deleteLater y
+   ver si el wrapper y el C++ mueren.
+B) Ventana completa → ir_a("programar"): weakrefs a la ventana,
+   a la página y a una tarjeta; isValid tras processEvents.
 Se borra al cerrar el diagnóstico.
 """
 import gc
@@ -13,23 +14,6 @@ import weakref
 import pytest
 
 pytest.importorskip("PySide6")
-
-
-def _referrers(obj, limite=14):
-    lineas = []
-    for ref in gc.get_referrers(obj):
-        if isinstance(ref, dict):
-            claves = [k for k in ref.keys() if isinstance(k, str)][:10]
-            selfref = ref.get("__self__")
-            extra = f" __self__={type(selfref).__name__}" if selfref else ""
-            lineas.append(f"dict claves={claves}{extra}")
-        elif isinstance(ref, list):
-            lineas.append(f"list len={len(ref)}")
-        else:
-            lineas.append(f"{type(ref).__name__}: {repr(ref)[:120]}")
-        if len(lineas) >= limite:
-            break
-    return lineas
 
 
 def test_diag_fuga_tarjetas():
@@ -44,24 +28,22 @@ def test_diag_fuga_tarjetas():
 
     informe = []
 
-    # --- Flujo A: la página sola -------------------------------------------
+    # --- A: página sola ------------------------------------------------------
     pagina = programar_page.crear_pagina_programar(
         ContextoModulo(servicios=None))
-    tarjetas = pagina.findChildren(programar_page._TarjetaProgramacion)
-    informe.append(f"A: tarjetas en la página = {len(tarjetas)}")
-    ref_a = weakref.ref(tarjetas[0])
+    tarjeta_a = pagina._tarjetas_programacion[0]
+    ref_ta = weakref.ref(tarjeta_a)
+    ref_pa = weakref.ref(pagina)
+    del tarjeta_a
     pagina.deleteLater()
     app.processEvents()
-    del pagina, tarjetas
+    del pagina
     gc.collect()
-    obj_a = ref_a()
     informe.append(
-        f"A: tras destruir, wrapper vivo = {obj_a is not None}, "
-        f"C++ válido = {shiboken6.isValid(obj_a) if obj_a is not None else '—'}")
-    if obj_a is not None:
-        informe.append("A: referrers:\n  " + "\n  ".join(_referrers(obj_a)))
+        f"A: página wrapper viva={ref_pa() is not None} "
+        f"tarjeta viva={ref_ta() is not None}")
 
-    # --- Flujo B: la ventana ------------------------------------------------
+    # --- B: ventana ------------------------------------------------------------
     from antivirus_hogar_pc.ui.main_window import VentanaPrincipal
     from antivirus_hogar_pc.ui.services import ServiciosApp
 
@@ -69,18 +51,36 @@ def test_diag_fuga_tarjetas():
     ventana.ir_a("programar")
     app.processEvents()
     pagina_b = ventana._paginas["programar"]
-    tarjetas_b = pagina_b.findChildren(programar_page._TarjetaProgramacion)
-    informe.append(f"B: tarjetas en la ventana = {len(tarjetas_b)}")
-    ref_b = weakref.ref(tarjetas_b[0])
+    tarjeta_b = pagina_b._tarjetas_programacion[0]
+    ref_v = weakref.ref(ventana)
+    ref_pb = weakref.ref(pagina_b)
+    ref_tb = weakref.ref(tarjeta_b)
+    del tarjeta_b, pagina_b
     ventana.deleteLater()
     app.processEvents()
-    del ventana, pagina_b, tarjetas_b
-    gc.collect()
-    obj_b = ref_b()
+    vivo_v = ref_v()
     informe.append(
-        f"B: tras destruir, wrapper vivo = {obj_b is not None}, "
-        f"C++ válido = {shiboken6.isValid(obj_b) if obj_b is not None else '—'}")
-    if obj_b is not None:
-        informe.append("B: referrers:\n  " + "\n  ".join(_referrers(obj_b)))
+        f"B: tras deleteLater+processEvents: ventana wrapper viva="
+        f"{vivo_v is not None}, C++ válido="
+        f"{shiboken6.isValid(vivo_v) if vivo_v is not None else '—'}")
+    del ventana
+    gc.collect()
+    informe.append(
+        f"B: tras del+gc: ventana={ref_v() is not None} "
+        f"página={ref_pb() is not None} tarjeta={ref_tb() is not None}")
+    obj = ref_tb()
+    if obj is not None:
+        for ref in gc.get_referrers(obj):
+            if isinstance(ref, dict):
+                claves = [k for k in ref.keys() if isinstance(k, str)][:10]
+                s = ref.get("__self__")
+                informe.append(
+                    f"B: referrer dict claves={claves} "
+                    f"__self__={type(s).__name__}")
+            elif isinstance(ref, list):
+                informe.append(f"B: referrer list len={len(ref)}")
+            else:
+                informe.append(
+                    f"B: referrer {type(ref).__name__}: {repr(ref)[:120]}")
 
     raise AssertionError("\n".join(informe))
