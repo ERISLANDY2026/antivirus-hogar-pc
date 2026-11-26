@@ -3,7 +3,10 @@ import gc
 import time
 
 
-def test_diag_cadena_retencion(capsys):
+def test_diag_cadena_retencion():
+    L = []
+    def print(*a, **k):
+        L.append(' '.join(str(x) for x in a))
     from PySide6.QtCore import QCoreApplication, QEvent, QThread
     from PySide6.QtWidgets import QApplication
     from shiboken6 import isValid
@@ -59,4 +62,4 @@ def test_diag_cadena_retencion(capsys):
                       "duenos:", [type(o).__name__ for o in duenos][:4])
             else:
                 print("DIAG12 ref:", tn, repr(r)[:140])
-    assert True
+    assert False, '\n'.join(L)
