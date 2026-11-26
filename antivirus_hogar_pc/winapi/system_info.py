@@ -3,7 +3,57 @@ programas instalados, arranque, tareas programadas y servicios."""
 import re
 
 from ..core.watch_logic import ProgramaInstalado, es_tarea_sospechosa
+from . import WindowsNoDisponible, es_windows
 from .powershell import como_lista, ejecutar_comando, ejecutar_powershell_json
+
+
+def interpretar_estado_energia(ac_line_status, battery_flag,
+                               battery_pct_raw) -> dict:
+    """Interpreta los códigos de GetSystemPowerStatus (puro,
+    probado sin Windows): ACLineStatus 1 = con cargador,
+    0 = con batería, 255 = desconocido; BatteryFlag 128 =
+    no hay batería (un sobremesa), 255 = desconocido."""
+    if battery_flag == 128:
+        sin_bateria = True
+    else:
+        sin_bateria = False
+    if ac_line_status == 1:
+        con_cargador: bool | None = True
+    elif ac_line_status == 0:
+        con_cargador = False
+    else:
+        con_cargador = None
+    pct = battery_pct_raw if isinstance(battery_pct_raw, int) \
+        and 0 <= battery_pct_raw <= 100 else None
+    return {"con_cargador": con_cargador, "bateria_pct": pct,
+            "sin_bateria": sin_bateria}
+
+
+def estado_bateria() -> dict:
+    """Estado de energía del equipo (v1.0.16, frente 6):
+    {con_cargador, bateria_pct, sin_bateria} vía
+    GetSystemPowerStatus (ctypes, sin PowerShell: es un sondeo
+    ligero cada ~30 s). Fuera de Windows lanza
+    WindowsNoDisponible, como el resto de la capa."""
+    if not es_windows():
+        raise WindowsNoDisponible("GetSystemPowerStatus es de Windows")
+    import ctypes
+
+    class _SYSTEM_POWER_STATUS(ctypes.Structure):
+        _fields_ = [("ACLineStatus", ctypes.c_byte),
+                    ("BatteryFlag", ctypes.c_byte),
+                    ("BatteryLifePercent", ctypes.c_byte),
+                    ("SystemStatusFlag", ctypes.c_byte),
+                    ("BatteryLifeTime", ctypes.c_ulong),
+                    ("BatteryFullLifeTime", ctypes.c_ulong)]
+
+    estado = _SYSTEM_POWER_STATUS()
+    if not ctypes.windll.kernel32.GetSystemPowerStatus(
+            ctypes.byref(estado)):
+        raise WindowsNoDisponible("GetSystemPowerStatus no respondió")
+    return interpretar_estado_energia(
+        int(estado.ACLineStatus), int(estado.BatteryFlag),
+        int(estado.BatteryLifePercent))
 
 
 def version_windows() -> dict:

@@ -3,7 +3,7 @@
 No es un módulo de carril: vive en la carcasa porque toca el contexto
 compartido. La lógica de actualización es core.updater.
 """
-from PySide6.QtWidgets import QCheckBox, QLineEdit
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit
 
 from .. import config
 from ..contracts import ContextoModulo
@@ -59,6 +59,27 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
         "decidas tú."), suave=True))
     layout.addWidget(tarjeta_arranque)
 
+    # --- Reconexión automática de la VPN (v1.0.16, frente 2) ------------------
+    tarjeta_vpn, lay_vpn = tarjeta(t("Red y VPN"))
+    check_reconectar = QCheckBox(t(
+        "Reconectar la VPN automáticamente si la conexión se cae"))
+    if ajustes is not None:
+        check_reconectar.setChecked(
+            bool(getattr(ajustes, "vpn_reconectar_auto", True)))
+
+        def _reconectar(marcado: bool) -> None:
+            ajustes.vpn_reconectar_auto = bool(marcado)
+            ajustes.guardar()
+
+        check_reconectar.toggled.connect(_reconectar)
+    lay_vpn.addWidget(check_reconectar)
+    lay_vpn.addWidget(etiqueta(t(
+        "Si un túnel establecido se cae solo, la app reconecta: "
+        "primero al mismo servidor y luego al siguiente "
+        "recomendado, con avisos en la bandeja. Si desconectas "
+        "a mano, no reconecta nunca."), suave=True))
+    layout.addWidget(tarjeta_vpn)
+
     tarjeta_canal, lay_c = tarjeta(t("Canal de actualización (Google Drive)"))
     campo_url = QLineEdit(ajustes.url_actualizacion if ajustes else "")
     campo_url.setPlaceholderText(t("URL del version-pc.json del canal"))
@@ -112,6 +133,46 @@ def crear_pagina_ajustes(ctx: ContextoModulo):
         "gasta muy poco. Si Windows tiene activado «reducir "
         "animaciones», la app lo respeta aunque esto esté marcado. "
         "Apagarlo deja toda la interfaz quieta al momento."), suave=True))
+    # Ahorro por batería (v1.0.16, frente 6): indicador del
+    # estado EN ESTE MOMENTO y la explicación de la regla.
+    from .animacion import ahorro_bateria_activo
+
+    if ahorro_bateria_activo():
+        lay_v.addWidget(etiqueta(t(
+            "Ahorro por batería: ACTIVO ahora — las animaciones "
+            "están en pausa hasta enchufar el cargador.")))
+    lay_v.addWidget(etiqueta(t(
+        "Ahorro por batería: si el equipo va sin cargador, las "
+        "animaciones se pausan solas y vuelven al enchufarlo. "
+        "Tu interruptor de animaciones manda sobre esto."),
+        suave=True))
+    # Escala de la interfaz (v1.0.16, frente 7).
+    lay_v.addWidget(etiqueta(t("Tamaño de la interfaz")))
+    combo_escala = QComboBox()
+    combo_escala.addItem(t("Normal"), "normal")
+    combo_escala.addItem(t("Grande"), "grande")
+    if ajustes is not None:
+        indice = combo_escala.findData(
+            getattr(ajustes, "escala_interfaz", "normal"))
+        combo_escala.setCurrentIndex(indice if indice >= 0 else 0)
+
+        def _escala(_i: int) -> None:
+            ajustes.escala_interfaz = combo_escala.currentData()
+            ajustes.guardar()
+            from PySide6.QtWidgets import QApplication
+
+            from .escala import aplicar_escala
+
+            app = QApplication.instance()
+            if app is not None:
+                aplicar_escala(app, ajustes)
+
+        combo_escala.currentIndexChanged.connect(_escala)
+    lay_v.addWidget(combo_escala)
+    lay_v.addWidget(etiqueta(t(
+        "La letra se aplica al momento; el resto de tamaños (la "
+        "barra lateral y las páginas ya abiertas) termina de "
+        "ajustarse al reabrir la ventana."), suave=True))
     layout.addWidget(tarjeta_vista)
     layout.addStretch(1)
     return pagina

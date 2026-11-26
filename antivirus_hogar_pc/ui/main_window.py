@@ -56,7 +56,12 @@ class VentanaPrincipal(QMainWindow):
 
         # --- Barra lateral -------------------------------------------------
         barra = QWidget()
-        barra.setFixedWidth(ANCHO_BARRA)
+        # v1.0.16 (frente 7): el ancho crece con la escala de la
+        # interfaz para que las etiquetas grandes no se corten.
+        from .escala import factor_de
+
+        barra.setFixedWidth(
+            int(ANCHO_BARRA * factor_de(self.servicios.ajustes)))
         # Cristal oscuro con borde luminoso (tema v1.0.5).
         barra.setStyleSheet(
             "background: rgba(9, 14, 26, 208); "

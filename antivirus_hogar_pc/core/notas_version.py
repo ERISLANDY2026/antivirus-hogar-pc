@@ -29,6 +29,19 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.16",
+        "fecha": "25/11/2026",
+        "novedades": [
+            "«PUESTA A PUNTO» DE UN CLIC EN INICIO: el mantenimiento completo en orden —escaneo rápido, limpieza segura, optimizar volúmenes y revisión de drivers— con una sola barra de progreso que nombra la etapa en curso, botón de cancelar que deja lo hecho hecho (y lo dice) y un veredicto final único con el detalle de cada etapa. La revisión de drivers solo revisa y cuenta: instalar sigue siendo paso a paso con tu confirmación en su pantalla, como siempre.",
+            "LA VPN SE RECONECTA SOLA SI SE CAE: si un túnel establecido se corta sin que toques nada, la app lo detecta y reconecta —primero al mismo servidor y luego, si hace falta, al siguiente recomendado con el salto automático de siempre—, avisando por la bandeja de la caída y del resultado, con esperas crecientes y un tope de intentos. Si desconectas A MANO, no reconecta nunca. El interruptor «Reconectar la VPN automáticamente» vive en Ajustes y viene activado.",
+            "TARJETA «PENDIENTES» EN INICIO: debajo del anillo de salud, la lista de lo que necesita atención con su botón para ir directo a su pantalla —drivers desactualizados según la última revisión, volúmenes sin optimizar desde hace un mes, el último escaneo si ya pasó una semana (o si nunca se hizo), actualizaciones de Windows pendientes y servidores VPN sin verificar—. Solo sale lo que sale de datos reales de tu equipo; si no hay nada, dice «Todo al día».",
+            "LA SALUD DEL DISCO YA TIENE MEMORIA: cada lectura SMART queda guardada en un historial y el Panel enseña su TENDENCIA —«estable» o «BAJANDO» respecto a hace unos 30 días, que es el aviso que importa en un SSD—. Sin lecturas de varios días lo dice tal cual: «historial en construcción», sin inventar tendencias. Si la salud baja, el aviso aparece también en la tarjeta de Pendientes.",
+            "LOS ICONOS 3D TAMBIÉN DENTRO DE LAS PÁGINAS: las filas de estado (Defender, firewall, actualizaciones de Windows, disco…) ya usan el mismo acabado gráfico de tu foto —con la llama del firewall, la carpeta de la protección contra ransomware, la alerta y el wifi generados con el mismo procedimiento— animados con el mismo reloj y las mismas puertas de siempre. El dibujo anterior queda solo de respaldo.",
+            "AHORRO POR BATERÍA: si el equipo va sin cargador, las animaciones se pausan solas para no gastar batería y vuelven al enchufarlo. Tu interruptor de animaciones de Ajustes manda sobre esto: si las apagaste, no vuelven solas. En Ajustes verás si el ahorro está activo en este momento.",
+            "TAMAÑO DE LA INTERFAZ: en Ajustes → Vista, «Tamaño de la interfaz» — Normal o Grande (letra y barra lateral más grandes, pensado para pantallas como la de la Toughbook)—. La letra se aplica al momento y el resto de tamaños termina de ajustarse al reabrir la ventana; tu elección queda guardada.",
+        ],
+    },
+    {
         "version": "1.0.15",
         "fecha": "25/11/2026",
         "novedades": [

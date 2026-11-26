@@ -72,7 +72,15 @@ def fila_estado(icono: str, modo: str, titulo: str, frase: str,
     fila = QWidget()
     layout = QHBoxLayout(fila)
     layout.setContentsMargins(0, 2, 0, 2)
-    layout.addWidget(IconoAnimado(icono, color, 30, modo))
+    # v1.0.16 (frente 5): si el icono tiene recurso gráfico 3D
+    # (el acabado de la foto del usuario), la fila lo usa; si
+    # no, el dibujo SVG de siempre queda de respaldo.
+    from .iconos_pagina import IconoEstado3D, recurso_para
+
+    if recurso_para(icono) is not None:
+        layout.addWidget(IconoEstado3D(icono, modo, 30))
+    else:
+        layout.addWidget(IconoAnimado(icono, color, 30, modo))
     textos = QVBoxLayout()
     lbl_t = QLabel(titulo)
     lbl_t.setStyleSheet("font-size: 14px; font-weight: 600;")

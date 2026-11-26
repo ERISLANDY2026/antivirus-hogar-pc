@@ -56,6 +56,10 @@ class InformeSalud:
     cfa: dict = field(default_factory=dict)        # winapi.defender.estado_cfa()
     panel: DatosPanel = field(default_factory=DatosPanel)
     ultimo_escaneo: dict = field(default_factory=dict)
+    # Tendencia de salud del disco (v1.0.16, frente 4):
+    # dict de core.historial_discos.tendencia_principal
+    # ({estado, bajando, disco, dias, delta}) o {} sin historial.
+    tendencia_disco: dict = field(default_factory=dict)
 
 
 # --- SMART (Carril C; fuente: pySMART/smartctl o Get-PhysicalDisk) -------------

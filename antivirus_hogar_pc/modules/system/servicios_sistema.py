@@ -225,6 +225,17 @@ def escanear_drivers_paso3_comparar(instalados, ofrecidas,
             for d in instalados
         ]
     nuevos = sum(1 for e in estados if e.estado == "hay_uno_mas_nuevo")
+    # v1.0.16 (frente 3): la revisión queda guardada para la
+    # tarjeta «Pendientes» de Inicio (cuántos desactualizados y
+    # cuándo); si la consulta a Windows Update falló, se anota
+    # como NO confirmada y la tarjeta no la usa como dato.
+    try:
+        from antivirus_hogar_pc.core import estado_mantenimiento
+
+        estado_mantenimiento.guardar_revision_drivers(
+            nuevos, len(instalados), confirmado=bool(wu_consultado))
+    except Exception:
+        pass  # anotar nunca rompe la revisión
     if not wu_consultado:
         mensaje = (f"Se leyeron {len(instalados)} drivers, pero la consulta "
                    "a Windows Update falló: ningún estado está confirmado.")
@@ -435,6 +446,21 @@ def salud_discos() -> ResultadoModulo:
     except Exception:
         pass
     discos = fusionar_smart(de_pysmart, de_windows) if de_windows else de_pysmart
+    # v1.0.16 (frente 4): cada lectura con datos alimenta el
+    # historial de salud (la tendencia del Panel nace de aquí).
+    try:
+        from antivirus_hogar_pc.core import historial_discos
+
+        _salud_win = {"bien": "Healthy", "regular": "Warning",
+                      "mal": "Unhealthy"}
+        historial_discos.registrar_lecturas(
+            [{"nombre": d.disco, "desgaste_pct": d.desgaste_pct,
+              "salud": _salud_win.get(d.salud, ""),
+              "sano": d.salud == "bien", "sin_datos": d.sin_datos}
+             for d in discos],
+            historial_discos.ruta_historial())
+    except Exception:
+        pass  # el historial nunca rompe la lectura de salud
     con_datos = sum(1 for d in discos if not d.sin_datos)
     mensaje = (f"{len(discos)} disco(s) revisados: {con_datos} con salud "
                f"legible y {len(discos) - con_datos} sin datos (no se pueden leer).")
@@ -459,6 +485,15 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None) -> ResultadoMo
                                            al_progreso=al_progreso)
     except Exception as exc:
         return _fallo(exc, "la optimización del volumen")
+    # v1.0.16 (frente 3): la fecha de la última optimización
+    # queda guardada para la tarjeta «Pendientes» de Inicio.
+    try:
+        from antivirus_hogar_pc.core import estado_mantenimiento
+
+        estado_mantenimiento.guardar_optimizacion(
+            letra, bool(res.get("ok")))
+    except Exception:
+        pass  # anotar nunca rompe la optimización
     return ResultadoModulo(ok=bool(res.get("ok")),
                            mensaje=str(res.get("mensaje") or ""),
                            detalle_tecnico=str(res.get("detalle") or ""))

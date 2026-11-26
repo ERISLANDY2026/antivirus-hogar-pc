@@ -29,12 +29,39 @@ def fijar_animaciones_activas(valor: bool) -> None:
     _activas = bool(valor)
     if not _activas:
         RELOJ.detener()
-    elif not _pausado:
+    elif not _pausado and not _ahorro_bateria:
         RELOJ.reanudar()
 
 
 def animaciones_activas() -> bool:
-    return _activas
+    # v1.0.16 (frente 6): el ahorro por batería también cierra
+    # la puerta — los widgets consultan ESTA función y el reloj
+    # compartido se para, así todo queda quieto sin tocar el
+    # interruptor del usuario.
+    return _activas and not _ahorro_bateria
+
+
+# --- Ahorro por batería (v1.0.16, frente 6) --------------------------------
+# La Toughbook vive mucho sin cargador: si el equipo va con
+# batería, las animaciones se PAUSAN solas (iconos, radar,
+# globo, bordes) y vuelven al enchufar. El interruptor manual
+# de Ajustes MANDA sobre esto: si el usuario las apagó, el
+# ahorro no las enciende jamás; si las dejó encendidas, el
+# ahorro solo las pausa mientras dure la batería.
+_ahorro_bateria = False
+
+
+def fijar_ahorro_bateria(activo: bool) -> None:
+    global _ahorro_bateria
+    _ahorro_bateria = bool(activo)
+    if _ahorro_bateria:
+        RELOJ.detener()
+    elif _activas and not _pausado:
+        RELOJ.reanudar()
+
+
+def ahorro_bateria_activo() -> bool:
+    return _ahorro_bateria
 
 
 _pausado = False

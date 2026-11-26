@@ -954,6 +954,11 @@ def desconectar_vpn() -> ResultadoModulo:
     OpenVPN (Connect/GUI) no ofrecen un comando de desconexión para
     terceros: terminar su proceso openvpn cierra la conexión al
     momento (winapi.vpn_win.terminar_procesos_openvpn)."""
+    # v1.0.16 (frente 2): desconectar A MANO marca la conexión
+    # para el vigilante ANTES de borrar el estado — esa conexión
+    # no se reconecta automáticamente jamás.
+    if _VIGILANTE is not None:
+        _VIGILANTE.marcar_desconexion_manual()
     # v1.0.10: primero el motor OpenVPN, si su túnel es el que está arriba.
     res_estado_ov = seguro(vpn_win.estado_openvpn)
     estado_ov = (res_estado_ov.datos
@@ -1002,6 +1007,230 @@ def desconectar_vpn() -> ResultadoModulo:
         mensaje=("No hay ninguna conexión VPN activa que esta app pueda "
                  "cerrar. Si conectaste con otro cliente VPN (OpenVPN "
                  "GUI o Connect), desconecta desde su ventana."))
+
+
+# --- Vigilante de reconexión automática de la VPN (v1.0.16, frente 2) ---------
+class VigilanteVPN:
+    """Máquina de estados de la reconexión automática.
+
+    Si un túnel ESTABLECIDO se cae solo (la gestión deja de
+    reportar CONNECTED,SUCCESS sin que el usuario haya pulsado
+    «Desconectar»), el vigilante reconecta: primero al mismo
+    servidor (ronda 0) y después con el failover de la 1.0.14
+    (rondas siguientes), con esperas crecientes y un tope de
+    rondas — jamás un bucle infinito. Si el usuario desconecta
+    A MANO, no reconecta nunca esa conexión (la marca se levanta
+    solo cuando aparece una conexión NUEVA, con otra hora de
+    inicio en el estado guardado).
+
+    Pura y sin hilos: un ciclo() por sondeo decide; el hilo de
+    fondo solo la alimenta. Las dependencias se inyectan para
+    probarla sin Windows ni red:
+    - leer_conectada() -> bool (el túnel confirmado por gestión)
+    - leer_objetivo() -> dict del estado guardado ({} si no hay)
+    - reconectar(objetivo, ronda) -> bool
+    - avisar(evento, objetivo): «caida» | «reconectada» | «agotado»
+    """
+
+    def __init__(self, leer_conectada, leer_objetivo, reconectar,
+                 avisar=None, registrar=None, max_rondas: int = 3,
+                 esperas=(20.0, 60.0, 180.0), reloj=time.monotonic):
+        self._leer_conectada = leer_conectada
+        self._leer_objetivo = leer_objetivo
+        self._reconectar = reconectar
+        self._avisar = avisar
+        self._registrar = registrar
+        self._max_rondas = max(1, int(max_rondas))
+        self._esperas = tuple(esperas) or (20.0,)
+        self._reloj = reloj
+        self._visto_conectado = False
+        self._rondas = 0
+        self._proxima = 0.0
+        self._manual_desde: float | None = None
+        self._agotado_avisado = False
+
+    # -- marcas externas ---------------------------------------------------
+    def marcar_desconexion_manual(self) -> None:
+        """El usuario pulsó «Desconectar»: esta conexión no se
+        reconecta jamás. La marca recuerda la hora de inicio de
+        la conexión bajada a mano; una conexión nueva (otra
+        hora) la levanta sola."""
+        try:
+            objetivo = self._leer_objetivo() or {}
+            self._manual_desde = float(objetivo.get("desde") or 0) or None
+        except Exception:
+            self._manual_desde = None
+        if self._manual_desde is None:
+            # Sin hora que recordar: marca simple; la levanta el
+            # próximo «conectado» visto (una conexión nueva
+            # siempre pasa por ahí antes de poder caerse).
+            self._manual_desde = -1.0
+        self._visto_conectado = False
+        self._rondas = 0
+        self._proxima = 0.0
+
+    # -- el ciclo ------------------------------------------------------------
+    def ciclo(self, activado: bool = True) -> str:
+        if not activado:
+            return "desactivado"
+        objetivo = {}
+        try:
+            objetivo = self._leer_objetivo() or {}
+        except Exception:
+            objetivo = {}
+        if not objetivo:
+            self._visto_conectado = False
+            self._rondas = 0
+            self._proxima = 0.0
+            return "sin_objetivo"
+        try:
+            conectada = bool(self._leer_conectada())
+        except Exception:
+            conectada = False
+        if self._manual_desde is not None:
+            if self._manual_desde == -1.0:
+                # Marca sin hora recordada: se levanta en cuanto
+                # se ve una conexión VIVA (la nueva); mientras el
+                # objetivo siga caído, manda la orden del usuario.
+                if not conectada:
+                    return "manual"
+                self._manual_desde = None
+            elif float(objetivo.get("desde") or 0) == self._manual_desde:
+                return "manual"
+            else:
+                self._manual_desde = None  # conexión nueva: marca levantada
+        ahora = float(self._reloj())
+        if conectada:
+            self._visto_conectado = True
+            self._rondas = 0
+            self._proxima = 0.0
+            self._agotado_avisado = False
+            return "conectado"
+        if not self._visto_conectado:
+            # Nunca se vio arriba en esta sesión: puede ser un
+            # intento del usuario en curso o un estado viejo —
+            # no se reconecta lo que no se vio establecido.
+            return "esperando"
+        if self._rondas >= self._max_rondas:
+            if not self._agotado_avisado:
+                self._agotado_avisado = True
+                self._notificar("agotado", objetivo)
+            return "agotado"
+        if ahora < self._proxima:
+            return "esperando_reintento"
+        if self._rondas == 0:
+            self._notificar("caida", objetivo)
+        try:
+            ok = bool(self._reconectar(objetivo, self._rondas))
+        except Exception:
+            ok = False
+        self._rondas += 1
+        if ok:
+            self._notificar("reconectada", objetivo)
+            self._rondas = 0
+            # Gracia: el túnel tarda unos segundos en confirmar;
+            # no se reintenta hasta pasado ese margen.
+            self._proxima = ahora + 30.0
+            return "reconectado"
+        espera = self._esperas[min(self._rondas - 1,
+                                   len(self._esperas) - 1)]
+        self._proxima = ahora + espera
+        return "reintento_fallido"
+
+    def _notificar(self, evento: str, objetivo: dict) -> None:
+        if self._registrar is not None:
+            try:
+                self._registrar(
+                    "red", f"Vigilante VPN: {evento} — "
+                    f"{objetivo.get('hostname', '')}")
+            except Exception:
+                pass
+        if self._avisar is not None:
+            try:
+                self._avisar(evento, objetivo)
+            except Exception:
+                pass  # avisar nunca rompe al vigilante
+
+
+def _reconectar_vigilante(objetivo: dict, ronda: int) -> bool:
+    """El intento de reconexión del vigilante: ronda 0 = UN
+    intento al mismo servidor; rondas siguientes = conectar_vpn
+    completo (el failover de la 1.0.14 salta al siguiente
+    recomendado/verificado)."""
+    _cargar_estado_fuentes()
+    lista = list(_ULTIMA_LISTA)
+    if not lista:
+        res_lista = servidores_cache_o_semilla()
+        lista = list(res_lista.datos) if res_lista.ok and res_lista.datos \
+            else []
+    servidor = next(
+        (s for s in lista
+         if s.hostname == str(objetivo.get("hostname") or "")), None)
+    if servidor is None:
+        return False
+    if ronda == 0:
+        datos = _intentar_openvpn(servidor)
+        if datos.get("ok"):
+            _anotar_veredicto(servidor, "verificado")
+            _guardar_estado_vpn(servidor, via="openvpn")
+            _registrar_intento_vpn(
+                f"VPN: reconexión automática a {servidor.hostname} "
+                f"({servidor.pais}) tras una caída.")
+            return True
+        familia = str((datos.get("datos") or {}).get("familia") or "")
+        veredicto = fuentes.VEREDICTO_POR_FAMILIA.get(familia)
+        if veredicto:
+            _anotar_veredicto(servidor, veredicto)
+        return False
+    res = conectar_vpn(servidor, candidatos=lista)
+    return bool(res.ok and res.datos and res.datos.get("conectado"))
+
+
+_VIGILANTE: VigilanteVPN | None = None
+
+
+def vigilante_vpn() -> VigilanteVPN | None:
+    return _VIGILANTE
+
+
+def iniciar_vigilante_vpn(obtener_ajustes=None, avisar=None) -> VigilanteVPN:
+    """Arranca el hilo del vigilante (una sola vez por proceso).
+
+    obtener_ajustes() -> Ajustes: el interruptor
+    «vpn_reconectar_auto» se lee en CADA ciclo, así apagarlo en
+    Ajustes detiene la reconexión sin reiniciar la app.
+    avisar(evento, objetivo) es el gancho de la bandeja."""
+    global _VIGILANTE
+    if _VIGILANTE is not None:
+        return _VIGILANTE
+
+    def leer_conectada() -> bool:
+        res = seguro(vpn_win.estado_openvpn)
+        return bool(res.ok and isinstance(res.datos, dict)
+                    and res.datos.get("conectado"))
+
+    vigilante = VigilanteVPN(
+        leer_conectada, _leer_estado_vpn, _reconectar_vigilante,
+        avisar=avisar, registrar=_registrar_intento_vpn)
+    _VIGILANTE = vigilante
+
+    def _bucle() -> None:
+        while True:
+            try:
+                activado = True
+                if obtener_ajustes is not None:
+                    activado = bool(getattr(
+                        obtener_ajustes(), "vpn_reconectar_auto", True))
+                vigilante.ciclo(activado=activado)
+            except Exception:
+                pass  # el vigilante nunca tumba la app
+            time.sleep(10)
+
+    import threading
+
+    threading.Thread(target=_bucle, name="vigilante-vpn",
+                     daemon=True).start()
+    return vigilante
 
 
 # --- Wi-Fi -----------------------------------------------------------------------

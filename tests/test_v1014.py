@@ -73,12 +73,12 @@ def _servidor(hostname="vpn123.opengw.net", fuente="vpngate",
 # === 1. Versión y campo fuente ===============================================
 
 def test_version_1014_en_su_sitio():
-    assert config.VERSION == "1.0.15"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.15"
+    assert config.VERSION == "1.0.16"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.16"
     notas = notas_version.notas_de("1.0.14")
     assert notas is not None and len(notas["novedades"]) >= 3
     iss = _leer(os.path.join("packaging", "instalador.iss"))
-    assert '#define AppVersion "1.0.15"' in iss
+    assert '#define AppVersion "1.0.16"' in iss
 
 
 def test_fuente_por_defecto_vpngate_y_constructores_viejos():

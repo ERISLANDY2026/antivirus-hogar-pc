@@ -51,6 +51,15 @@ class Ajustes:
     # selector del panel lateral y persiste entre arranques;
     # las instalaciones anteriores no lo traen y quedan en «es».
     idioma: str = "es"
+    # Reconexión automática de la VPN (v1.0.16, frente 2):
+    # si un túnel establecido se cae solo, el vigilante
+    # reconecta sin que el usuario toque nada. Activado por
+    # defecto; la desconexión MANUAL nunca se reconecta.
+    vpn_reconectar_auto: bool = True
+    # Escala de la interfaz (v1.0.16, frente 7): «normal» o
+    # «grande» (letra y barra lateral ×1.22). Convive con el
+    # letra_grande de siempre (×1.125 si escala es «normal»).
+    escala_interfaz: str = "normal"
     # Programaciones (v1.0.5): lista de dicts de core.programaciones.
     programaciones: list = field(default_factory=list)
 

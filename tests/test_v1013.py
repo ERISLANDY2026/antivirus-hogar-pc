@@ -672,8 +672,8 @@ def test_version_1013_en_su_sitio():
     with open(os.path.join(raiz, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
         iss = f.read()
-    assert '#define AppVersion "1.0.15"' in iss
+    assert '#define AppVersion "1.0.16"' in iss
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core import notas_version
-    assert config.VERSION == "1.0.15"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.15"
+    assert config.VERSION == "1.0.16"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.16"

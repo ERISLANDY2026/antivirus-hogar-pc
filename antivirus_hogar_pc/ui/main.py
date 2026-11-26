@@ -202,10 +202,12 @@ def main(argv: list[str] | None = None) -> int:
     from ..core import i18n as _i18n
 
     _i18n.fijar_idioma(getattr(servicios.ajustes, "idioma", "es"))
-    if servicios.ajustes.letra_grande:
-        fuente = app.font()
-        fuente.setPointSizeF(fuente.pointSizeF() * 1.125)
-        app.setFont(fuente)
+    # Escala de la interfaz (v1.0.16, frente 7): «Grande»
+    # (×1.22) o el «letra grande» de siempre (×1.125); el
+    # factor efectivo lo decide ui.escala (el mayor, no la suma).
+    from .escala import aplicar_escala
+
+    aplicar_escala(app, servicios.ajustes)
     # Arranque con Windows (v1.0.5): si el interruptor está activado,
     # la entrada del registro se asegura en cada apertura (se
     # autorrepara si algo la borró); si está apagado no se toca.
@@ -290,6 +292,65 @@ def main(argv: list[str] | None = None) -> int:
         servicios.al_registrar_escaneo = _aviso_escaneo
     except Exception:
         bandeja = None  # sin bandeja la app funciona igual que antes
+    # Vigilante de reconexión de la VPN (v1.0.16, frente 2): si
+    # un túnel establecido se cae solo, reconecta (mismo
+    # servidor, luego el failover) y avisa por la bandeja; la
+    # desconexión manual no se reconecta jamás. El interruptor
+    # vive en Ajustes y se lee en cada ciclo.
+    try:
+        from ..modules.net import servicios_red as _servicios_red
+
+        def _avisar_vigilante(evento, objetivo):
+            if bandeja is None:
+                return
+            from ..core.i18n import t
+
+            host = str((objetivo or {}).get("hostname") or "")
+            if evento == "caida":
+                bandeja.avisar(
+                    "Antivirus Hogar PC",
+                    t("La conexión VPN se cayó. "
+                      "Reconectando automáticamente…"))
+            elif evento == "reconectada":
+                bandeja.avisar(
+                    "Antivirus Hogar PC",
+                    t("La VPN volvió a conectar sola a {host}.",
+                      host=host))
+            elif evento == "agotado":
+                bandeja.avisar(
+                    "Antivirus Hogar PC",
+                    t("No se pudo reconectar la VPN tras varios "
+                      "intentos. Abre Red y VPN para conectar "
+                      "a mano."))
+
+        _servicios_red.iniciar_vigilante_vpn(
+            obtener_ajustes=lambda: servicios.ajustes,
+            avisar=_avisar_vigilante)
+    except Exception:
+        pass  # sin vigilante la app funciona igual que antes
+    # Ahorro por batería (v1.0.16, frente 6): sondeo ligero
+    # cada 30 s de GetSystemPowerStatus; sin cargador, las
+    # animaciones se pausan solas (ui.animacion) y vuelven al
+    # enchufar. En un sobremesa (sin batería) no se toca nada.
+    def _vigilar_bateria():
+        try:
+            from ..winapi import system_info as _sistema_info
+            from .animacion import fijar_ahorro_bateria
+
+            energia = _sistema_info.estado_bateria()
+            if energia.get("sin_bateria"):
+                fijar_ahorro_bateria(False)
+            elif energia.get("con_cargador") is False:
+                fijar_ahorro_bateria(True)
+            elif energia.get("con_cargador") is True:
+                fijar_ahorro_bateria(False)
+        except Exception:
+            pass  # sin lectura de energía, las animaciones siguen
+
+    temporizador_bateria = QTimer(ventana)
+    temporizador_bateria.timeout.connect(_vigilar_bateria)
+    temporizador_bateria.start(30000)
+    _vigilar_bateria()
     if _aviso_defender:
         def _mostrar_aviso_defender():
             from PySide6.QtWidgets import QMessageBox
