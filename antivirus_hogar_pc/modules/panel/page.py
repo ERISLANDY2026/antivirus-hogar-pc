@@ -347,11 +347,6 @@ def crear_pagina(ctx: ContextoModulo):
         "rápido, limpieza segura, optimizar volúmenes y revisión "
         "de drivers (solo revisar: instalar sigue siendo paso a "
         "paso en su pantalla)."), suave=True))
-    barra_puesta = QProgressBar()
-    barra_puesta.setRange(0, 1000)
-    barra_puesta.setValue(0)
-    barra_puesta.setFormat("%p %")
-    lay_puesta.addWidget(barra_puesta)
     lbl_etapa_puesta = etiqueta("", suave=True)
     lay_puesta.addWidget(lbl_etapa_puesta)
     lbl_veredicto_puesta = etiqueta("")
