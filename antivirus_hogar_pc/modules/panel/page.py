@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
@@ -31,34 +31,6 @@ from antivirus_hogar_pc.winapi import es_windows
 
 from .datos import animaciones_windows_permitidas, leer_datos_panel, recoger_informe
 
-
-class _NavegadorPendiente(QObject):
-    """Botón «Revisar» de un pendiente → su pantalla (v1.0.16).
-
-    Vive como hijo del botón y su destino se ajusta en cada
-    repintado: los botones de la tarjeta «Pendientes» se crean
-    UNA vez, al construir la página, y repintar solo rellena
-    textos y destinos. Crear el botón dentro de repintar (que
-    corre al llegar el informe, a veces con la ventana ya en
-    borrado diferido) dejaba la ventana retenida en la suite:
-    la ventana de un test anterior sobrevivía y el conteo de
-    tarjetas del Programador salía doble. Al construir la
-    página, en cambio, es un botón como los de siempre (el
-    «Ir al escáner» de la 1.0.15 lleva el mismo patrón).
-    """
-
-    def __init__(self, ctx, parent=None) -> None:
-        super().__init__(parent)
-        self._ctx = ctx
-        self._destino = ""
-
-    def fijar_destino(self, destino: str) -> None:
-        self._destino = destino
-
-    def ir(self, _marcado: bool = False) -> None:
-        if self._ctx is not None and self._ctx.al_navegar is not None \
-                and self._destino:
-            self._ctx.al_navegar(self._destino)
 
 
 class _TrabajadorInforme(QThread):
@@ -294,9 +266,18 @@ def crear_pagina(ctx: ContextoModulo):
     # atención, solo con datos reales (core.pendientes). Cada
     # fila lleva a su pantalla; sin pendientes, «Todo al día».
     # Las filas (con su botón «Revisar») se crean AQUÍ, al
-    # construir la página; repintar solo rellena (ver la nota
-    # de _NavegadorPendiente). Máximo de pendientes posibles:
-    # 6 (disco, escaneo, drivers, optimizar, Windows, VPN).
+    # construir la página, con la lambda de siempre (la del
+    # «Ir al escáner» de la 1.0.15) y el destino guardado en
+    # una propiedad del botón; repintar solo rellena textos,
+    # destinos y visibilidad. Crear estos botones al repintar
+    # (cuando llega el informe, a veces con la ventana ya en
+    # borrado diferido) o colgarlos de un QObject ayudante por
+    # botón dejaba la ventana retenida en la suite de CI: la
+    # ventana de un test anterior sobrevivía y el conteo de
+    # tarjetas del Programador salía doble (verificado por
+    # bisección, INFORME-V1016). Máximo de pendientes
+    # posibles: 6 (disco, escaneo, drivers, optimizar,
+    # Windows, VPN); el pool trae 8 por margen.
     tarjeta_pendientes, lay_tarjeta_pendientes = tarjeta(t("Pendientes"))
     lay_pendientes = QVBoxLayout()
     lay_tarjeta_pendientes.addLayout(lay_pendientes)
@@ -321,7 +302,8 @@ def crear_pagina(ctx: ContextoModulo):
             boton_fila = QPushButton(t("Revisar"))
             boton_fila.clicked.connect(
                 lambda _=False, b=boton_fila:
-                ctx.al_navegar(b.property("destino") or "panel"))
+                ctx.al_navegar(b.property("destino"))
+                if b.property("destino") else None)
             fila.addWidget(boton_fila)
         contenedor.setVisible(False)
         lay_pendientes.addWidget(contenedor)
