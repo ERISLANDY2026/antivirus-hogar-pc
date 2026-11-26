@@ -29,6 +29,16 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.20",
+        "fecha": "26/11/2026",
+        "novedades": [
+            "EL DIAGNÓSTICO YA TAMBIÉN REPARA LO SEGURO: el botón «Diagnosticar integridad de la aplicación» ya no solo encuentra las fallas — repara en el acto las que se pueden arreglar sin riesgo. Unos ajustes dañados vuelven a los valores de fábrica, guardando primero una copia del archivo dañado. El bloque del archivo hosts se restaura desde la copia que la propia app guarda. El servicio de OpenVPN, si está parado, se arranca y queda en inicio automático por la vía del servicio, sin pedirte permisos. Y los restos de descargas de actualización viejos o sin identidad —los que causaban el fallo de huella de antes— se limpian solos.",
+            "CADA REPARACIÓN SE COMPRUEBA DE NUEVO: nada se dice «reparado» por decirlo — tras arreglar, la app vuelve a correr esa comprobación y solo si pasa la da por reparada, con lo que hizo escrito en el informe. Si no se pudo, lo dice con su motivo real.",
+            "EL INFORME, EN TRES BLOQUES CLAROS: «Correcto», «Reparado» y «Pendiente de tu orden». Lo que la app jamás arregla por su cuenta —conectar una VPN, borrar tus datos, tocar la seguridad de Windows o el registro— queda en el tercer bloque, esperando tu decisión.",
+            "LOS ARCHIVOS DE LA INTERFAZ SE VIGILAN POR HUELLA: el espartano y los iconos ya no se comprueban solo por tamaño — su huella exacta se compara en cada diagnóstico, así que un archivo dañado o sustituido se detecta aunque «parezca» sano.",
+        ],
+    },
+    {
         "version": "1.0.19",
         "fecha": "26/11/2026",
         "novedades": [

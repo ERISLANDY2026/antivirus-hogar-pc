@@ -131,11 +131,11 @@ def test_version_1017_en_config_notas_e_instalador():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
 
-    assert config.VERSION == "1.0.19"
-    assert NOTAS_VERSION[0]["version"] == "1.0.19"
+    assert config.VERSION == "1.0.20"
+    assert NOTAS_VERSION[0]["version"] == "1.0.20"
     with open(os.path.join(RAIZ, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
-        assert '#define AppVersion "1.0.19"' in f.read()
+        assert '#define AppVersion "1.0.20"' in f.read()
 
 
 def test_radar_intocable_desde_la_v106():

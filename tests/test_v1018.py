@@ -385,7 +385,7 @@ def test_historial_completo_en_los_datos():
     from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
 
     versiones = [e["version"] for e in NOTAS_VERSION]
-    assert versiones[0] == "1.0.19"
+    assert versiones[0] == "1.0.20"
     for esperada in ("1.0.2", "1.0.7", "1.0.10", "1.0.14",
                      "1.0.17", "1.0.18"):
         assert esperada in versiones
@@ -450,7 +450,7 @@ def test_version_1018_en_json_del_canal_no_tocado():
     # lleva la versión de la app.
     from antivirus_hogar_pc import config
 
-    assert config.VERSION == "1.0.19"
+    assert config.VERSION == "1.0.20"
     json.dumps({"version": config.VERSION})  # serializable
 
 

@@ -1,12 +1,15 @@
-"""Página «Diagnosticar integridad de la aplicación» (v1.0.19, nota 7).
+"""Página «Diagnosticar integridad de la aplicación» (v1.0.19, nota 7;
+auto-reparación segura en la v1.0.20).
 
 El autodiagnóstico de TODAS las funciones que pidió el
 usuario: un botón corre las comprobaciones de
 core/diagnostico.py en un hilo (algunas leen el registro de
 eventos o el disco) y el informe queda en pantalla, listo
 para COPIAR al portapapeles o EXPORTAR a un archivo de
-texto. Diagnosticar no repara: dice qué está bien, qué
-merece atención y qué está roto, con su detalle.
+texto. Desde la v1.0.20 el botón corre
+diagnosticar_y_reparar(): el informe separa «Correcto»,
+«Reparado» y «Pendiente de tu orden», y solo se repara lo
+seguro — lo demás espera la orden del usuario.
 """
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QGuiApplication
@@ -27,7 +30,7 @@ class _TrabajadorDiagnostico(QThread):
     listo = Signal(str)
 
     def run(self) -> None:  # noqa: D102 (hilo de Qt)
-        resultados = diagnostico.diagnosticar()
+        resultados = diagnostico.diagnosticar_y_reparar()
         self.listo.emit(diagnostico.construir_informe(resultados))
 
 
@@ -40,8 +43,14 @@ def crear_pagina_diagnostico(ctx=None) -> QWidget:
 
     tarjeta_d, lay_d = tarjeta(t("Autodiagnóstico"))
     lay_d.addWidget(etiqueta(
-        t("El diagnóstico no cambia nada en tu equipo: solo "
-          "comprueba y cuenta lo que encuentra."),
+        t("Comprueba todas las funciones y repara en el acto "
+          "solo lo seguro: unos ajustes dañados, el bloque del "
+          "archivo hosts desde su copia guardada, el servicio "
+          "de OpenVPN parado y los restos de descargas viejas. "
+          "Lo que no se puede reparar así queda en el informe "
+          "como «Pendiente de tu orden»: la app nunca conecta "
+          "una VPN, borra tus datos ni toca la seguridad de "
+          "Windows por su cuenta."),
         suave=True))
     fila = QHBoxLayout()
     boton_correr = boton_principal(
@@ -77,7 +86,9 @@ def crear_pagina_diagnostico(ctx=None) -> QWidget:
         boton_correr.setEnabled(False)
         boton_copiar.setEnabled(False)
         boton_exportar.setEnabled(False)
-        area.setPlainText(t("Ejecutando el diagnóstico…"))
+        area.setPlainText(
+            t("Ejecutando el diagnóstico y las reparaciones "
+              "seguras…"))
         trabajador = _TrabajadorDiagnostico(parent=pagina)
         trabajador.listo.connect(_al_listo)
         trabajador.finished.connect(trabajador.deleteLater)

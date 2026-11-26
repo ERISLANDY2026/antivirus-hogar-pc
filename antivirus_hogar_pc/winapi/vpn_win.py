@@ -2375,6 +2375,59 @@ def _usuario_en_grupo_directorio() -> bool:
         return False
 
 
+def arrancar_servicio_interactivo() -> dict:
+    """Arranca el OpenVPNServiceInteractive y lo deja en inicio
+    automático SIN elevar (v1.0.20, para la auto-reparación del
+    diagnóstico): los comandos sc.exe salen del propio proceso,
+    por la vía del servicio — la app nunca lanza un UAC por su
+    cuenta (política de la v1.0.18). Si el token del usuario no
+    tiene permiso sobre el gestor de servicios, Windows niega
+    el cambio y se devuelve ok=False con ese motivo real en el
+    detalle: no se maquilla ni se reintenta elevando.
+
+    Devuelve {"ok": bool, "detalle": str}: ok solo si al final
+    el servicio está CORRIENDO (el inicio automático se pide,
+    y si Windows lo niega queda escrito en el detalle)."""
+    from .powershell import ejecutar_comando
+
+    if not es_windows():
+        return {"ok": False, "detalle": "no es Windows"}
+    nombre = SERVICIO_INTERACTIVO_OPENVPN
+    estado = estado_servicio(nombre)
+    if not estado.get("registrado"):
+        return {"ok": False,
+                "detalle": "el servicio no está registrado"}
+    notas: list[str] = []
+    if estado.get("inicio") != "auto":
+        try:
+            rc, out, err = ejecutar_comando(
+                ["sc", "config", nombre, "start=", "auto"],
+                timeout=30)
+            if rc != 0:
+                notas.append(
+                    "el inicio automático no se pudo fijar: "
+                    + (out + err).strip()[:160])
+        except Exception as exc:
+            notas.append(f"sc config falló: {exc!r}")
+    if not estado.get("corriendo"):
+        try:
+            rc, out, err = ejecutar_comando(
+                ["sc", "start", nombre], timeout=30)
+            # 1056 = el servicio ya estaba corriendo entre tanto.
+            if rc != 0 and "1056" not in (out + err):
+                notas.append(
+                    "el arranque fue negado o falló: "
+                    + (out + err).strip()[:160])
+        except Exception as exc:
+            notas.append(f"sc start falló: {exc!r}")
+    estado = estado_servicio(nombre)
+    if estado.get("corriendo"):
+        return {"ok": True, "detalle": "; ".join(notas)}
+    return {"ok": False,
+            "detalle": "; ".join(notas)
+            or "el servicio sigue sin correr"}
+
+
 def _servicio_interactivo_activo() -> bool:
     """¿El OpenVPNServiceInteractive está corriendo?"""
     try:
