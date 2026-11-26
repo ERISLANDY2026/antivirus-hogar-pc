@@ -2,9 +2,9 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.18.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.19.exe
 ;
-; v1.0.18: el espartano elegido por el usuario aparece DE PIE
+; v1.0.19: el espartano elegido por el usuario aparece DE PIE
 ; junto a la barra de la página de instalación (imagen FIJA,
 ; sin animación: packaging\espartano_instalador.bmp, 509x746,
 ; el espartano completo a cuerpo entero compuesto sobre el
@@ -28,7 +28,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.18"
+#define AppVersion "1.0.19"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 

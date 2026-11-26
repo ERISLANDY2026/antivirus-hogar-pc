@@ -131,11 +131,11 @@ def test_version_1017_en_config_notas_e_instalador():
     from antivirus_hogar_pc import config
     from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
 
-    assert config.VERSION == "1.0.18"
-    assert NOTAS_VERSION[0]["version"] == "1.0.18"
+    assert config.VERSION == "1.0.19"
+    assert NOTAS_VERSION[0]["version"] == "1.0.19"
     with open(os.path.join(RAIZ, "packaging", "instalador.iss"),
               encoding="utf-8") as f:
-        assert '#define AppVersion "1.0.18"' in f.read()
+        assert '#define AppVersion "1.0.19"' in f.read()
 
 
 def test_radar_intocable_desde_la_v106():
@@ -314,16 +314,20 @@ def test_pagina_inicio_lleva_el_espartano_sin_tapar_el_anillo(
         banda = pagina.findChild(FondoRadar)
         assert banda is not None
         assert espartano.parent() is banda
-        anillos = [w for w in banda.findChildren(QWidget)
+        # v1.0.19 (nota 3): el anillo de salud YA NO vive en la
+        # banda del radar — el usuario ordenó quitarlo de ahí —;
+        # vive en la tarjeta «Estado de la protección» de la
+        # misma página. El espartano sigue de pie a la izquierda
+        # del barrido, apoyado en el borde inferior de la banda.
+        anillos_banda = [w for w in banda.findChildren(QWidget)
+                         if w.__class__.__name__ == "AnilloSalud"]
+        assert anillos_banda == []
+        anillos = [w for w in pagina.findChildren(QWidget)
                    if w.__class__.__name__ == "AnilloSalud"]
         assert len(anillos) == 1
-        anillo = anillos[0]
-        # En coordenadas de la banda: el espartano entero queda a
-        # la izquierda del anillo, sin solapar ni un píxel.
         geo_esp = espartano.geometry()
-        geo_anillo = anillo.geometry()
         assert geo_esp.width() > 0
-        assert geo_esp.right() < geo_anillo.left()
+        assert geo_esp.x() < banda.width() // 2
         assert geo_esp.y() + geo_esp.height() == banda.height() - 4
         # Regresión (bug latente desde la v1, destapado por esta
         # suite): aplicar() debe COMPLETAR con un informe real

@@ -768,6 +768,25 @@ class _PaginaRed(QWidget):
         self._lbl_verificacion = etiqueta("", suave=True)
         self._lbl_verificacion.setVisible(False)
         lay_v.addWidget(self._lbl_verificacion)
+        # v1.0.19 (nota 6): barrita DEDICADA a la verificación
+        # de servidores — la de arriba se comparte con la
+        # actualización de la lista y se pisaban. Ésta enseña el
+        # avance del chequeo (manual o del arranque), el servidor
+        # en curso como señal de vida y, con el vigilante de
+        # abajo, avisa si el chequeo se traba (sin avance en
+        # UMBRAL_TRABADA_S segundos).
+        self._barra_verificacion = BarraProgreso()
+        self._barra_verificacion.setVisible(False)
+        lay_v.addWidget(self._barra_verificacion)
+        self._verificacion_activa = False
+        self._ultimo_avance_verificacion = 0.0
+        self._hechos_verificacion = 0
+        self._total_verificacion = 0
+        self._vigia_verificacion = QTimer(self)
+        self._vigia_verificacion.setInterval(2000)
+        self._vigia_verificacion.timeout.connect(
+            self._vigilar_verificacion)
+        self._vigia_verificacion.start()
         # v1.0.14: 8 columnas — la lista UNIFICADA enseña la
         # FUENTE de cada servidor y su sello de VERIFICACIÓN con
         # la hora del autoanálisis: [País, Servidor, Fuente,
@@ -959,8 +978,12 @@ class _PaginaRed(QWidget):
         self._verificando = True
         self._cancelar_verificacion = threading.Event()
         self._btn_verificar.setText(t("Detener verificación"))
-        self._barra_vpn.setVisible(True)
-        self._barra_vpn.fijar(0, len(self._servidores))
+        self._barra_verificacion.setVisible(True)
+        self._barra_verificacion.fijar(0, len(self._servidores))
+        self._verificacion_activa = True
+        self._ultimo_avance_verificacion = time.monotonic()
+        self._hechos_verificacion = 0
+        self._total_verificacion = len(self._servidores)
         self._lbl_verificacion.setVisible(True)
         self._lbl_verificacion.setText(t(
             "Verificando servidores: {pct} % — comprobados {h} de "
@@ -978,7 +1001,19 @@ class _PaginaRed(QWidget):
     def _progreso_verificacion(self, hechos, total, verificados,
                                fallidos, hostname, fase) -> None:
         pct = int(hechos * 100 / total) if total else 100
-        self._barra_vpn.fijar(hechos, total)
+        # v1.0.19 (nota 6): la barrita dedicada + la señal de
+        # vida: cada aviso del barrido refresca el «último
+        # avance» del vigilante y el texto enseña el servidor
+        # EN CURSO — el usuario ve que el chequeo está activo
+        # y cuánto falta, no una barra muda.
+        self._barra_verificacion.setVisible(True)
+        self._barra_verificacion.fijar(hechos, total)
+        self._verificacion_activa = True
+        self._ultimo_avance_verificacion = time.monotonic()
+        self._hechos_verificacion = hechos
+        self._total_verificacion = total
+        if total and hechos >= total:
+            self._verificacion_activa = False
         if fase == "pausa":
             self._lbl_verificacion.setText(t(
                 "Verificación en pausa (hay una conexión VPN en "
@@ -986,6 +1021,12 @@ class _PaginaRed(QWidget):
                 "✓ {ok} · ✗ {mal}",
                 pct=pct, h=hechos, t=total, ok=verificados,
                 mal=fallidos))
+        elif hostname:
+            self._lbl_verificacion.setText(t(
+                "Verificando servidores: {pct} % — comprobados "
+                "{h} de {t} · ✓ {ok} · ✗ {mal} · ahora: {host}",
+                pct=pct, h=hechos, t=total, ok=verificados,
+                mal=fallidos, host=hostname))
         else:
             self._lbl_verificacion.setText(t(
                 "Verificando servidores: {pct} % — comprobados "
@@ -1005,6 +1046,7 @@ class _PaginaRed(QWidget):
 
     def _fin_verificacion(self, resultado) -> None:
         self._verificando = False
+        self._verificacion_activa = False
         self._btn_verificar.setText(t("Verificar servidores"))
         datos = resultado.datos or {}
         if datos.get("veredictos"):
@@ -1013,9 +1055,31 @@ class _PaginaRed(QWidget):
         total = int(datos.get("total") or 0)
         hechos = int(datos.get("comprobados") or 0)
         if total:
-            self._barra_vpn.fijar(hechos, total)
+            self._barra_verificacion.fijar(hechos, total)
         self._lbl_vpn.setText(resultado.mensaje)
         self._lbl_verificacion.setText(resultado.mensaje)
+
+    def _vigilar_verificacion(self) -> None:
+        """v1.0.19 (nota 6): si el barrido activo deja de
+        avanzar más de UMBRAL_TRABADA_S, la etiqueta lo dice —
+        «parece trabada» con los segundos de silencio y el
+        conteo alcanzado — en vez de dejar al usuario mirando
+        una barra quieta sin saber si sigue o se colgó."""
+        ahora = time.monotonic()
+        if not srv.verificacion_trabada(
+                self._verificacion_activa,
+                self._ultimo_avance_verificacion, ahora,
+                self._hechos_verificacion,
+                self._total_verificacion):
+            return
+        silencio = int(ahora - self._ultimo_avance_verificacion)
+        self._lbl_verificacion.setVisible(True)
+        self._lbl_verificacion.setText(t(
+            "La verificación parece trabada: sin avance desde "
+            "hace {s} s — comprobados {h} de {t}. Si sigue así, "
+            "deténla y vuelve a intentarlo.",
+            s=silencio, h=self._hechos_verificacion,
+            t=self._total_verificacion))
 
     # --- Verificación del arranque en vivo (v1.0.18, nota 4) -----
     def showEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
@@ -1034,7 +1098,7 @@ class _PaginaRed(QWidget):
         su propio canal manda y este aviso se ignora."""
         if self._verificando or not self._servidores:
             return
-        self._barra_vpn.setVisible(True)
+        self._barra_verificacion.setVisible(True)
         self._lbl_verificacion.setVisible(True)
         self._progreso_verificacion(hechos, total, verificados,
                                      fallidos, hostname, fase)

@@ -688,6 +688,28 @@ def _avisar_oyentes_verificacion(hechos, total, verificados,
             pass  # un oyente roto no detiene el barrido
 
 
+# --- ¿La verificación está trabada? (v1.0.19, nota 6) -------------------------
+# El usuario pidió ver cuánto falta de la verificación «o si se
+# trabó». Una sonda real tarda como mucho ~23 s (3 s de TCP +
+# ~20 s de OpenVPN) y en pausa el barrido avisa cada 2 s, así
+# que 45 s de silencio total con el barrido activo y la lista
+# sin completar solo puede ser un atasco: la UI lo dice con
+# todas las letras en vez de dejar una barra quieta sin
+# explicación. Decisión pura, probada sin Qt.
+UMBRAL_TRABADA_S = 45.0
+
+
+def verificacion_trabada(activa: bool, ultimo_avance: float,
+                         ahora: float, hechos: int,
+                         total: int) -> bool:
+    """True si un barrido activo lleva demasiado sin avanzar."""
+    if not activa or total <= 0 or hechos >= total:
+        return False
+    if ultimo_avance <= 0:
+        return False
+    return (ahora - ultimo_avance) >= UMBRAL_TRABADA_S
+
+
 def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
                                    pausa_max_s: float = 600.0,
                                    solo_servicio: bool = False,

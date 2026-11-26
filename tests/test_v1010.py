@@ -69,7 +69,7 @@ def test_sin_softether_en_el_paquete_ni_en_el_motor():
 
 def test_openvpn_presente_y_verificado_en_el_paquete():
     iss = _leer(os.path.join("packaging", "instalador.iss"))
-    assert '#define AppVersion "1.0.18"' in iss  # v1.0.12: vigente
+    assert '#define AppVersion "1.0.19"' in iss  # v1.0.12: vigente
     assert "openvpn\\OpenVPN-2.7.9-I002-amd64.msi" in iss
     assert "msiexec" in iss and "/quiet" in iss  # instalación silenciosa
     # La retirada limpia de los restos de SoftEther SÍ está.

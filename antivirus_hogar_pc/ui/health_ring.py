@@ -2,11 +2,13 @@
 
 Muestra la puntuación 0–100 como ARCO con el color semántico que
 corresponda y un punto orbital girando mientras hay un escaneo en
-curso. La CIFRA ya no se dibuja en el centro (v1.0.9, pedido del
-usuario: quedaba encima del radar de Inicio): la página la enseña
-en la esquina inferior izquierda de la banda del radar, fuera del
-círculo, leyéndola de texto_puntuacion() al ritmo de la señal
-valor_cambiado (la cuenta animada se sigue viendo, en su esquina).
+curso. La CIFRA no se dibuja en el centro: la página la enseña
+junto al anillo, leyéndola de texto_puntuacion() al ritmo de la
+señal valor_cambiado (la cuenta animada se sigue viendo).
+
+v1.0.19 (nota 3): el anillo ya NO va sobremontado del radar de
+Inicio (orden del usuario: «Quítalo de ahí. El anillo amarillo»):
+vive en la tarjeta «Estado de la protección», fuera del radar.
 """
 import math
 
@@ -20,7 +22,7 @@ from . import theme
 class AnilloSalud(QWidget):
     # Se emite cada vez que cambia lo que la cifra debe enseñar
     # (cada paso de la animación y cada fijado directo), para que
-    # la página sincronice la etiqueta de la esquina del radar.
+    # la página sincronice la etiqueta junto al anillo.
     valor_cambiado = Signal(float)
 
     def __init__(self, parent=None):
@@ -28,7 +30,7 @@ class AnilloSalud(QWidget):
         self._valor = 0.0
         self._objetivo = 0
         self._sin_datos = False
-        self._fijada = False  # aún sin puntuación: la esquina enseña «…»
+        self._fijada = False  # aún sin puntuación: la etiqueta enseña «…»
         self._girando = False
         self._angulo_orbita = 0.0
         self.setMinimumSize(190, 190)
@@ -78,8 +80,8 @@ class AnilloSalud(QWidget):
     def texto_puntuacion(self) -> tuple[str, str, str]:
         """(cifra, color_hex, leyenda) de la puntuación AHORA mismo.
 
-        Lo usa la página de Inicio para la etiqueta de la esquina
-        inferior izquierda del radar (v1.0.9): la cifra con su color
+        Lo usa la página de Inicio para la etiqueta junto al
+        anillo en la tarjeta de estado (v1.0.19): la cifra con su color
         semántico y su leyenda, sincronizada con la animación del
         arco vía la señal valor_cambiado.
         """

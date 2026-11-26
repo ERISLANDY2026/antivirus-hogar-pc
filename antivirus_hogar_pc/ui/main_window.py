@@ -9,8 +9,8 @@ import os
 
 from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QMainWindow,
-                               QPushButton, QStackedWidget, QVBoxLayout,
-                               QWidget)
+                               QPushButton, QScrollArea, QStackedWidget,
+                               QVBoxLayout, QWidget)
 
 from ..contracts import ContextoModulo
 from ..core import i18n
@@ -18,6 +18,7 @@ from ..core.i18n import t
 from ..modules import crear_pagina, descubrir_modulos, errores_descubrimiento
 from . import theme
 from .ajustes_page import crear_pagina_ajustes
+from .diagnostico_page import crear_pagina_diagnostico
 from .historial_page import crear_pagina_historial
 from .iconos_nav import LADO, AnimadorIconoNav, icono_nav
 from .services import ServiciosApp
@@ -124,6 +125,34 @@ class VentanaPrincipal(QMainWindow):
         lay_barra.addWidget(self._combo_idioma)
         lay_barra.addSpacing(10)
 
+        # v1.0.19 (nota 1): la columna de navegación va en un
+        # área con DESPLAZAMIENTO vertical. Causa raíz del
+        # recorte que vio el usuario: la columna completa (13
+        # módulos + entradas fijas + encabezado) suma más alto
+        # que la ventana, y el layout comprimía los botones por
+        # debajo de su tamaño natural — texto e icono cortados.
+        # Con el área de desplazamiento ningún botón se comprime
+        # jamás: cada uno conserva su tamaño completo y, si la
+        # ventana es baja, la columna se desplaza. El encabezado
+        # (título e idioma) y el pie (Ajustes, Historial) quedan
+        # fijos fuera del área.
+        area_nav = QScrollArea()
+        area_nav.setWidgetResizable(True)
+        area_nav.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area_nav.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        area_nav.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollArea > QWidget > QWidget {"
+            " background: transparent; }")
+        contenedor_nav = QWidget()
+        lay_nav = QVBoxLayout(contenedor_nav)
+        lay_nav.setContentsMargins(0, 0, 0, 0)
+        lay_nav.setSpacing(6)
+        area_nav.setWidget(contenedor_nav)
+        self._area_nav = area_nav
+
         # Iconos 3D animados: uno por pestaña, en colores, más
         # grandes (36 px). v1.0.6: la puerta GLOBAL de animación se
         # fija desde el interruptor de Ajustes (gobierna iconos,
@@ -142,7 +171,7 @@ class VentanaPrincipal(QMainWindow):
             boton.setIcon(icono_nav(nombre_nav))
             boton.setIconSize(QSize(LADO, LADO))
             boton.clicked.connect(lambda _=False, rid=registro.id: self.ir_a(rid))
-            lay_barra.addWidget(boton)
+            lay_nav.addWidget(boton)
             self._botones[registro.id] = boton
             self._animadores_nav[registro.id] = AnimadorIconoNav(
                 boton, nombre_nav, animado=_animado,
@@ -159,7 +188,7 @@ class VentanaPrincipal(QMainWindow):
             )
             aviso.setWordWrap(True)
             aviso.setStyleSheet("color: #F87171; font-size: 12px;")
-            lay_barra.addWidget(aviso)
+            lay_nav.addWidget(aviso)
 
         # «Versión de la app» (v1.0.5): entrada fija bajo Informes (el
         # último módulo), con su icono 3D animado como los demás.
@@ -168,7 +197,7 @@ class VentanaPrincipal(QMainWindow):
         boton_version.setIcon(icono_nav("version"))
         boton_version.setIconSize(QSize(LADO, LADO))
         boton_version.clicked.connect(lambda: self.ir_a("version"))
-        lay_barra.addWidget(boton_version)
+        lay_nav.addWidget(boton_version)
         self._botones["version"] = boton_version
         self._animadores_nav["version"] = AnimadorIconoNav(
             boton_version, "version", animado=_animado, parent=self,
@@ -181,13 +210,32 @@ class VentanaPrincipal(QMainWindow):
         boton_programar.setIcon(icono_nav("calendario"))
         boton_programar.setIconSize(QSize(LADO, LADO))
         boton_programar.clicked.connect(lambda: self.ir_a("programar"))
-        lay_barra.addWidget(boton_programar)
+        lay_nav.addWidget(boton_programar)
         self._botones["programar"] = boton_programar
         self._animadores_nav["programar"] = AnimadorIconoNav(
             boton_programar, "calendario", animado=_animado, parent=self,
             desfase=6.05)
 
-        lay_barra.addStretch(1)
+        # «Diagnosticar integridad de la aplicación» (v1.0.19,
+        # nota 7): entrada fija tras el Programador. Su etiqueta
+        # es la más larga del panel: va en DOS líneas para que
+        # se lea entera sin recortes (nota 1) en cualquier
+        # escala.
+        boton_diagnostico = QPushButton(
+            t("Diagnosticar integridad\nde la aplicación"))
+        boton_diagnostico.setObjectName("menu")
+        boton_diagnostico.setIcon(icono_nav("informes"))
+        boton_diagnostico.setIconSize(QSize(LADO, LADO))
+        boton_diagnostico.clicked.connect(
+            lambda: self.ir_a("diagnostico"))
+        lay_nav.addWidget(boton_diagnostico)
+        self._botones["diagnostico"] = boton_diagnostico
+        self._animadores_nav["diagnostico"] = AnimadorIconoNav(
+            boton_diagnostico, "informes", animado=_animado,
+            parent=self, desfase=6.32)
+
+        lay_nav.addStretch(1)
+        lay_barra.addWidget(area_nav, 1)
         boton_ajustes = QPushButton(t("Ajustes"))
         boton_ajustes.setObjectName("menu")
         boton_ajustes.setIcon(icono_nav("ajustes"))
@@ -256,6 +304,8 @@ class VentanaPrincipal(QMainWindow):
                 pagina = crear_pagina_historial(self.ctx)
             elif id_modulo == "programar":
                 pagina = crear_pagina_programar(self.ctx)
+            elif id_modulo == "diagnostico":
+                pagina = crear_pagina_diagnostico(self.ctx)
             else:
                 pagina = crear_pagina(self._registros[id_modulo], self.ctx)
             self._paginas[id_modulo] = pagina

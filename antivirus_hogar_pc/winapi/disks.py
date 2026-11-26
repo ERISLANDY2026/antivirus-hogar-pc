@@ -186,12 +186,29 @@ def interpretar_eventos_optimizacion(eventos, letra: str) -> dict | None:
 def consultar_eventos_optimizacion(letra: str, desde_epoch: float) -> list:
     """Eventos del optimizador de Windows desde ``desde_epoch``.
 
-    Se consultan DOS sitios: el registro de Aplicación (fuente
-    «Defrag», donde el servicio anota «successfully completed…» o el
-    motivo del fallo por volumen) y el canal operativo
+    Se consultan DOS sitios: el registro de Aplicación (donde el
+    servicio anota «successfully completed…» o el motivo del fallo
+    por volumen) y el canal operativo
     Microsoft-Windows-Defrag/Operational si existe. Cualquier fallo
     (canal ausente, permisos, no-Windows) devuelve []: los eventos
     son una fuente MÁS de evidencia, nunca un requisito.
+
+    v1.0.19 (nota 5, CAUSA RAÍZ medida en la Toughbook real): el
+    proveedor que escribe esos eventos se llama
+    «Microsoft-Windows-Defrag», NO «Defrag». La consulta anterior
+    filtraba con FilterHashtable @{ProviderName='Defrag'} y
+    Get-WinEvent LANZA «The parameter is incorrect» cuando el
+    nombre no es un proveedor válido de ese registro: la excepción
+    caía en el catch silencioso y el testigo devolvía [] SIEMPRE,
+    aunque el evento 258 de éxito estuviera escrito segundos
+    antes (comprobado en campo el 2026-11-26: retrim completado
+    a las 09:43:44 y la app declaró «no se pudo confirmar» a las
+    09:43:50). Por eso ahora el registro se pide SOLO por ventana
+    de tiempo y el proveedor se filtra EN CÓDIGO (Where-Object),
+    aceptando ambos nombres; el canal operativo se pide sin
+    filtro de proveedor (es exclusivo de defrag) y solo si
+    existe en el equipo (en la Toughbook no existe: allí solo
+    está Microsoft-Windows-Defrag-Core/Debug).
     """
     if not es_windows():
         return []
@@ -201,11 +218,15 @@ def consultar_eventos_optimizacion(letra: str, desde_epoch: float) -> list:
         f"$desde = (Get-Date).AddSeconds(-{segundos})\n"
         "$lista = @()\n"
         "try { $lista += Get-WinEvent -FilterHashtable "
-        "@{LogName='Application'; ProviderName='Defrag'; "
-        "StartTime=$desde} -ErrorAction Stop } catch {}\n"
-        "try { $lista += Get-WinEvent -FilterHashtable "
+        "@{LogName='Application'; StartTime=$desde} "
+        "-ErrorAction Stop | Where-Object { $_.ProviderName -in "
+        "@('Microsoft-Windows-Defrag', 'Defrag') } } catch {}\n"
+        "try { if (Get-WinEvent -ListLog "
+        "'Microsoft-Windows-Defrag/Operational' "
+        "-ErrorAction Stop) { $lista += Get-WinEvent "
+        "-FilterHashtable "
         "@{LogName='Microsoft-Windows-Defrag/Operational'; "
-        "StartTime=$desde} -ErrorAction Stop } catch {}\n"
+        "StartTime=$desde} -ErrorAction Stop } } catch {}\n"
         "$lista | Sort-Object TimeCreated -Descending | "
         "Select-Object -First 12 @{n='Id';e={$_.Id}}, "
         "@{n='Mensaje';e={$_.Message}} | ConvertTo-Json"
@@ -597,8 +618,23 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
         limite = time.time() + timeout
         ultimo_texto = ""
         muerto_desde: float | None = None
+        # v1.0.19 (nota 5): el TESTIGO (registro de eventos) se
+        # sondea TAMBIÉN durante la espera, no solo tras el
+        # fracaso: en la Toughbook real defrag terminó bien
+        # (evento 258, 09:43:44) y el canal de archivos llegó
+        # vacío, así que la app declaró «no se pudo confirmar»
+        # a las 09:43:50 teniendo la prueba escrita en el
+        # registro. Un éxito del testigo cierra el veredicto en
+        # cuanto aparece; el fracaso por eventos solo se acepta
+        # con el proceso ya terminado (vía muerta/recaptura),
+        # para no condenar una corrida aún en curso.
+        ultimo_testigo = 0.0
         while time.time() < limite:
-            if os.path.isfile(ruta_resultado):
+            # El resultado solo vale CON CONTENIDO: la escritura
+            # es atómica (v1.0.18), así que un archivo vacío no
+            # es un veredicto, es un canal aún sin entregar.
+            if os.path.isfile(ruta_resultado) and \
+                    _leer_texto_tolerante(ruta_resultado).strip():
                 break
             texto = _leer_texto_tolerante(ruta_salida)
             if texto != ultimo_texto:
@@ -609,6 +645,26 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
                         al_progreso(fase, pct)
                     except Exception:
                         pass  # el progreso jamás tumba el proceso
+            if time.time() - ultimo_testigo >= 8:
+                ultimo_testigo = time.time()
+                eventos_espera = consultar_eventos_optimizacion(
+                    letra, inicio)
+                por_testigo = interpretar_eventos_optimizacion(
+                    eventos_espera, letra)
+                if por_testigo is not None and por_testigo["ok"]:
+                    return {"ok": True,
+                            "mensaje": (f"Optimización finalizada. "
+                                        f"El registro de eventos "
+                                        f"de Windows confirma que "
+                                        f"la unidad {letra}: quedó "
+                                        f"optimizada ({nombre_op})."),
+                            "detalle": "Confirmado por el registro "
+                                       "de eventos de Windows "
+                                       "(optimizador de "
+                                       "almacenamiento) durante la "
+                                       "espera; el archivo de "
+                                       "resultado del ayudante no "
+                                       "llegó con contenido."}
             if not _proceso_vivo(pid):
                 if muerto_desde is None:
                     muerto_desde = time.time()

@@ -6,12 +6,12 @@
 - Fuera de Windows la página degrada con honestidad: lo que no se puede
   leer sale como «no disponible en este equipo de pruebas», sin inventar.
 """
+import threading
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -213,10 +213,19 @@ def crear_pagina(ctx: ContextoModulo):
             theme.AMBAR))
         layout.addWidget(tarjeta_aviso)
 
-    # --- Fila superior: anillo + estado de la protección ----------------------
-    # Fondo futurista (v1.0.2): banda de radar con el anillo ENCIMA.
-    # Se anima solo si el usuario no lo apagó en Ajustes Y Windows no
-    # pide reducir animaciones; si no, queda como fondo fijo.
+    # --- Fila superior: banda de radar (v1.0.19: SIN el anillo encima) --------
+    # Fondo futurista (v1.0.2): banda de radar. Se anima solo si
+    # el usuario no lo apagó en Ajustes Y Windows no pide reducir
+    # animaciones; si no, queda como fondo fijo.
+    # v1.0.19 (nota 3, orden directa del usuario): el anillo
+    # amarillo/gris de salud SALE del centro del barrido — «En el
+    # medio del barrido de radar hay un anillo… quítalo de ahí.
+    # El anillo amarillo» — y el disco queda limpio: solo el
+    # barrido y el espartano de la izquierda. El anillo vive
+    # ahora en la tarjeta «Estado de la protección» (debajo),
+    # FUERA del radar, con su cifra al lado: la salud se sigue
+    # viendo en Inicio, pero ya no sobremontada del radar. Esto
+    # sustituye la colocación vigente desde la v1.0.17.
     _quiere_animacion = True
     if servicios is not None:
         _quiere_animacion = bool(getattr(servicios.ajustes, "fondo_animado", True))
@@ -224,21 +233,10 @@ def crear_pagina(ctx: ContextoModulo):
         animado=_quiere_animacion and animaciones_windows_permitidas())
     anillo = AnilloSalud()
     anillo.fijar_girando(True)
-    # v1.0.9 (pedido del usuario): la calificación numérica SALE del
-    # centro del radar y va al BORDE INFERIOR IZQUIERDO de la banda,
-    # fuera del círculo. Rejilla de UNA celda: el anillo sigue
-    # centrado en la banda (alineado con el radar, que no cambia) y
-    # la etiqueta se ancla abajo a la izquierda de la misma celda.
-    lay_banda = QGridLayout(banda_radar)
-    lay_banda.setContentsMargins(12, 6, 12, 10)
-    lay_banda.addWidget(anillo, 0, 0, Qt.AlignmentFlag.AlignCenter)
     lbl_puntuacion = QLabel()
     lbl_puntuacion.setTextFormat(Qt.TextFormat.RichText)
-    lay_banda.addWidget(
-        lbl_puntuacion, 0, 0,
-        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
 
-    def _sincronizar_puntuacion_esquina() -> None:
+    def _sincronizar_puntuacion() -> None:
         cifra, color, leyenda = anillo.texto_puntuacion()
         lbl_puntuacion.setText(
             f'<span style="font-size: 30px; font-weight: 700; '
@@ -247,8 +245,8 @@ def crear_pagina(ctx: ContextoModulo):
             f'color: {theme.TEXTO_SUAVE};">  {leyenda}</span>')
 
     anillo.valor_cambiado.connect(
-        lambda _v: _sincronizar_puntuacion_esquina())
-    _sincronizar_puntuacion_esquina()
+        lambda _v: _sincronizar_puntuacion())
+    _sincronizar_puntuacion()
     layout.addWidget(banda_radar)
 
     # --- Espartano animado (v1.0.17) ------------------------------------------
@@ -256,20 +254,32 @@ def crear_pagina(ctx: ContextoModulo):
     # radar y en su zona izquierda, de pie sobre ese fondo: su
     # fondo ES la parte izquierda del área de barrido (palabras
     # del usuario). El radar no se toca (intocable desde la
-    # v1.0.6) y el espartano jamás tapa el anillo: su geometría
-    # se calcula con el borde del disco como límite. Se crea
-    # AQUÍ, al construir la página, como todo lo demás; se anima
-    # con QMovie y las puertas de siempre, y en pausa enseña su
-    # foto fija. La cifra de la esquina se sube por encima de su
-    # capa para que se siga leyendo entera.
+    # v1.0.6) y su geometría se calcula con el borde del disco
+    # como límite. Se crea AQUÍ, al construir la página, como
+    # todo lo demás; se anima con QMovie y las puertas de
+    # siempre, y en pausa enseña su foto fija. (v1.0.19: la
+    # banda ya no lleva rejilla encima — el anillo de salud
+    # vive en la tarjeta de estado, nota 3.)
     espartano = EspartanoRadar(banda_radar)
-    lbl_puntuacion.raise_()
     pagina.espartano_radar = espartano  # ancla de vida y de test
 
     fila_superior = QHBoxLayout()
     tarjeta_estado, lay_tarjeta_estado = tarjeta(t("Estado de la protección"))
+    # v1.0.19 (nota 3): el anillo de salud, en la PROPIA tarjeta
+    # y fuera del radar: columna izquierda con el anillo y su
+    # cifra debajo; a la derecha, las filas de estado de siempre.
+    fila_tarjeta_estado = QHBoxLayout()
+    columna_anillo = QVBoxLayout()
+    anillo.setFixedSize(190, 190)
+    columna_anillo.addWidget(
+        anillo, 0, Qt.AlignmentFlag.AlignHCenter)
+    columna_anillo.addWidget(
+        lbl_puntuacion, 0, Qt.AlignmentFlag.AlignHCenter)
+    columna_anillo.addStretch(1)
+    fila_tarjeta_estado.addLayout(columna_anillo)
     lay_estado = QVBoxLayout()
-    lay_tarjeta_estado.addLayout(lay_estado)
+    fila_tarjeta_estado.addLayout(lay_estado, 1)
+    lay_tarjeta_estado.addLayout(fila_tarjeta_estado)
     lay_estado.addWidget(fila_estado(
         "lupa", "estatico", t("Comprobando…"),
         t("Estamos leyendo Defender, el firewall y las actualizaciones."),
@@ -394,6 +404,59 @@ def crear_pagina(ctx: ContextoModulo):
     fila_puesta.addStretch(1)
     lay_puesta.addLayout(fila_puesta)
     layout.addWidget(tarjeta_puesta)
+
+    # v1.0.19 (nota 4, CAUSA RAÍZ): hasta la 1.0.18 el botón
+    # «Puesta a punto» NO ESTABA CONECTADO A NADA — el trabajador
+    # _TrabajadorPuestaAPunto existía pero nadie lo instanciaba
+    # ni enlazaba la señal clicked: el usuario lo tocaba y no
+    # ejecutaba nada, tal como él reportó. Aquí queda cableado
+    # de verdad, con el mismo patrón de vida que la lectura del
+    # informe (hijo de la página, deleteLater al terminar) y
+    # anclas en la página para que la suite pruebe el clic real.
+    estado_puesta: dict = {"trabajador": None,
+                           "cancelar": threading.Event()}
+
+    def _puesta_lista(resultado: dict) -> None:
+        boton_puesta.setEnabled(True)
+        boton_cancelar_puesta.setEnabled(False)
+        lbl_etapa_puesta.setText("")
+        barra_puesta.setValue(1000)
+        lbl_veredicto_puesta.setText(
+            str(resultado.get("veredicto", "")))
+        repintar_actividad()
+
+    def _arrancar_puesta() -> None:
+        trabajador = estado_puesta.get("trabajador")
+        try:
+            if trabajador is not None and trabajador.isRunning():
+                return
+        except RuntimeError:
+            estado_puesta["trabajador"] = None
+        estado_puesta["cancelar"] = threading.Event()
+        boton_puesta.setEnabled(False)
+        boton_cancelar_puesta.setEnabled(True)
+        barra_puesta.setValue(0)
+        lbl_veredicto_puesta.setText("")
+        lbl_etapa_puesta.setText(t("Empezando la puesta a punto…"))
+        trabajador = _TrabajadorPuestaAPunto(
+            servicios, estado_puesta["cancelar"], parent=pagina)
+        trabajador.progreso.connect(
+            lambda f, _etapa, texto: (
+                barra_puesta.setValue(int(f * 1000)),
+                lbl_etapa_puesta.setText(texto)))
+        trabajador.listo.connect(_puesta_lista)
+        trabajador.finished.connect(trabajador.deleteLater)
+        estado_puesta["trabajador"] = trabajador
+        trabajador.start()
+
+    boton_puesta.clicked.connect(_arrancar_puesta)
+    boton_cancelar_puesta.clicked.connect(
+        lambda: estado_puesta["cancelar"].set())
+    pagina.boton_puesta_a_punto = boton_puesta  # ancla de test
+    pagina.boton_cancelar_puesta = boton_cancelar_puesta
+    pagina.barra_puesta_a_punto = barra_puesta
+    pagina.lbl_veredicto_puesta = lbl_veredicto_puesta
+    pagina.estado_puesta = estado_puesta
 
     # --- Rutina automática al arrancar (v1.0.5) --------------------------------
     tarjeta_rutina, lay_rutina = tarjeta(t("Rutina automática al arrancar"))

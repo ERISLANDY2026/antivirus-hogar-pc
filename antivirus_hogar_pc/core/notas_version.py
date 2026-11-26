@@ -29,6 +29,19 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.19",
+        "fecha": "26/11/2026",
+        "novedades": [
+            "PANEL IZQUIERDO SIN RECORTES: la columna de navegación ahora se desplaza cuando no cabe entera en la ventana, así que ningún botón queda cortado — ni con la letra grande activada ni con el botón nuevo de esta versión.",
+            "TU ESPARTANO, CON CALIDAD DE VERDAD: su animación se volvió a derivar desde el video original recuperando el color real de los bordes de la figura —fuera el halo magenta que la llave de color dejaba en la silueta— y con una compresión más fina: el escudo y su «GUERRA» se leen nítidos en su sitio del radar, con la misma fluidez de siempre.",
+            "EL RADAR, LIMPIO: el anillo de salud salió del centro del barrido, como pediste. La salud del equipo sigue en Inicio, dentro de su tarjeta «Estado de la protección», con el anillo y su cifra juntos y fuera del radar.",
+            "EL BOTÓN «PUESTA A PUNTO» YA TRABAJA: estaba sin conectar desde que nació la función —lo tocabas y no ejecutaba nada—. Ahora arranca el mantenimiento completo con su barra de progreso, la etapa en curso y su botón de cancelar.",
+            "OPTIMIZAR CON WINDOWS, ARREGLADO CON LA PRUEBA EN LA MANO: en tu Toughbook la optimización sí terminaba bien —el registro de eventos de Windows lo guardaba—, pero la app buscaba ese testimonio con el nombre de proveedor equivocado y sentenciaba «no se pudo confirmar». Corregido: el veredicto acepta ahora ese testimonio también mientras espera el resultado del ayudante, y una optimización que Windows confirma se dice confirmada.",
+            "LA VERIFICACIÓN DE SERVIDORES SE VE Y SE VIGILA: barrita propia con el avance del chequeo, el nombre del servidor que se está comprobando en cada momento y un aviso claro si el chequeo dejara de avanzar y pareciera trabado.",
+            "NUEVO: «DIAGNOSTICAR INTEGRIDAD DE LA APLICACIÓN»: una entrada nueva en el panel izquierdo que corre un autodiagnóstico de todas las funciones —módulos, archivos de la interfaz, carpeta de datos, ajustes, OpenVPN, bloqueador de dominios, optimización y canal de actualizaciones— y deja el informe en pantalla, listo para copiar o exportar a un archivo.",
+        ],
+    },
+    {
         "version": "1.0.18",
         "fecha": "26/11/2026",
         "novedades": [

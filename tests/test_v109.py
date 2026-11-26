@@ -74,7 +74,7 @@ def test_fila_conectada_lleva_conectado_verde_y_desconectar_rojo():
     celda1 = pagina._tabla_vpn.cellWidget(1, 7)
     botones1 = {b.text(): b for b in celda1.findChildren(QPushButton)}
     assert set(botones1) == {"Conectar"}
-    assert config.VERSION == "1.0.18"
+    assert config.VERSION == "1.0.19"
     pagina.deleteLater()
     app.processEvents()
 

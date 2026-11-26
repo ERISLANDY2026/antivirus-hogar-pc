@@ -385,7 +385,7 @@ def test_historial_completo_en_los_datos():
     from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
 
     versiones = [e["version"] for e in NOTAS_VERSION]
-    assert versiones[0] == "1.0.18"
+    assert versiones[0] == "1.0.19"
     for esperada in ("1.0.2", "1.0.7", "1.0.10", "1.0.14",
                      "1.0.17", "1.0.18"):
         assert esperada in versiones
@@ -439,9 +439,10 @@ def test_activo_animado_nuevo_peso_coherente():
         RAIZ, "antivirus_hogar_pc", "assets",
         "espartano_animado.webp")
     tamano = os.path.getsize(ruta)
-    # 640×960 a 24 fps q85: ~40 MB (la 1.0.17 pesaba ~10 MB a
-    # 440×660/12 fps). Fuera de esta banda, algo se desvió.
-    assert 30_000_000 < tamano < 50_000_000
+    # 640×960 a 24 fps: ~40 MB en la 1.0.18 (q85); la 1.0.19
+    # lo re-deriva con desmezcla y q92 y pesa ~32 MB. La banda
+    # cubre ambas derivaciones; fuera de ella, algo se desvió.
+    assert 25_000_000 < tamano < 50_000_000
 
 
 def test_version_1018_en_json_del_canal_no_tocado():
@@ -449,7 +450,7 @@ def test_version_1018_en_json_del_canal_no_tocado():
     # lleva la versión de la app.
     from antivirus_hogar_pc import config
 
-    assert config.VERSION == "1.0.18"
+    assert config.VERSION == "1.0.19"
     json.dumps({"version": config.VERSION})  # serializable
 
 
