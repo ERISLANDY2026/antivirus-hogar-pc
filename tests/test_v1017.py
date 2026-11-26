@@ -32,30 +32,33 @@ SHA_RADAR_V106 = (
     "ec21a7b8044b90f6cdb4915aa8ec2affa98d7f74059bb4e742dbfe1109629bea")
 
 
-# --- Activos (lógica pura, con PIL) -------------------------------------------
+# --- Activos (con Qt, como los de la 1.0.15: la CI no instala PIL) -------------
 
-def test_activo_animado_en_el_paquete_y_decodifica():
-    from PIL import Image
+def test_activo_animado_en_el_paquete_y_decodifica(app_qt):
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QImageReader
 
     assert os.path.isfile(RUTA_ANIMADO)
     assert os.path.getsize(RUTA_ANIMADO) > 100_000
-    with Image.open(RUTA_ANIMADO) as im:
-        assert getattr(im, "n_frames", 1) == 120
-        assert im.size == (440, 660)
-        im.seek(0)
-        alfa = im.convert("RGBA").getchannel("A")
-        extremos = alfa.getextrema()
-        assert extremos[0] == 0        # transparencia real
-        assert extremos[1] == 255      # y cuerpo opaco
+    lector = QImageReader(RUTA_ANIMADO)
+    assert lector.size() == QSize(440, 660)
+    assert lector.imageCount() == 120
+    cuadro = lector.read()
+    assert not cuadro.isNull() and cuadro.hasAlphaChannel()
+    assert cuadro.pixelColor(2, 2).alpha() == 0      # transparencia real
+    centro = cuadro.pixelColor(220, 330)
+    assert centro.alpha() > 0                        # y cuerpo presente
 
 
-def test_activo_fijo_de_respaldo_en_el_paquete():
-    from PIL import Image
+def test_activo_fijo_de_respaldo_en_el_paquete(app_qt):
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QImage
 
     assert os.path.isfile(RUTA_FIJO)
-    with Image.open(RUTA_FIJO) as im:
-        assert im.mode == "RGBA"
-        assert im.size == (1274, 1866)
+    imagen = QImage(RUTA_FIJO)
+    assert not imagen.isNull()
+    assert imagen.size() == QSize(1274, 1866)
+    assert imagen.hasAlphaChannel()
 
 
 # --- Geometría pura -------------------------------------------------------------
@@ -138,7 +141,11 @@ def test_radar_intocable_desde_la_v106():
     ruta = os.path.join(
         RAIZ, "antivirus_hogar_pc", "ui", "fondo_radar.py")
     with open(ruta, "rb") as f:
-        huella = hashlib.sha256(f.read()).hexdigest()
+        # La huella se calcula con los finales de línea en LF:
+        # el checkout de Windows los pasa a CRLF y el contenido
+        # (que es lo que la regla protege) es el mismo.
+        huella = hashlib.sha256(
+            f.read().replace(b"\r\n", b"\n")).hexdigest()
     assert huella == SHA_RADAR_V106
 
 
