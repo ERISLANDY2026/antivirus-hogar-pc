@@ -44,7 +44,9 @@ TIPOS_PROGRAMACION: dict[str, dict] = {
     "firmas": {
         "titulo": "Actualización de firmas",
         "descripcion": "Descarga las firmas de malware y phishing "
-                       "más recientes de las fuentes configuradas."},
+                       "más recientes de las fuentes configuradas. "
+                       "Además, una vez al día se actualiza sola en "
+                       "cuanto la app detecta conexión a internet."},
     "actualizacion-app": {
         "titulo": "Buscar actualizaciones de la app",
         "descripcion": "Comprueba el canal y, si hay versión nueva, "
@@ -175,3 +177,55 @@ def ejecutar_tarea_programada(id_: str, tareas: dict,
     except Exception:
         pass
     return resultado
+
+
+# --- Nota 9 (v1.0.18): firmas al detectar conexión ----------------------------
+#
+# El disparador principal de las firmas deja de ser el reloj: la
+# tarea de las 09:00 queda de RESPALDO y la actualización corre
+# UNA VEZ AL DÍA en cuanto la app detecta conexión a internet
+# (el caso del usuario: su Toughbook no siempre está encendida a
+# las 09:00 y su internet es el hotspot del iPhone). Si ese día
+# ya se actualizó — por este disparador o por la tarea —, no se
+# repite. La lógica es pura e inyectable para probarla sin red.
+
+def firmas_actualizadas_hoy(ultimo_resultado, ahora_ts: float) -> bool:
+    """True si la tarea «firmas» ya corrió CON ÉXITO hoy (hora local).
+
+    `ultimo_resultado`: el dict guardado de la última corrida
+    ({"cuando": epoch, "ok": bool, "resumen": str}) o None. Una
+    corrida FALLIDA no cuenta: ese día aún toca actualizar.
+    """
+    if not isinstance(ultimo_resultado, dict):
+        return False
+    if not ultimo_resultado.get("ok"):
+        return False
+    try:
+        cuando = float(ultimo_resultado.get("cuando") or 0)
+    except (TypeError, ValueError):
+        return False
+    if cuando <= 0:
+        return False
+    return (_dt.datetime.fromtimestamp(cuando).date()
+            == _dt.datetime.fromtimestamp(ahora_ts).date())
+
+
+def intentar_firmas_por_conexion(ahora_ts, ultimo_resultado,
+                                 hay_conexion, ejecutar) -> str:
+    """UN intento del disparador por conexión. Devuelve:
+
+    - "ya": hoy ya se actualizaron (no se repite);
+    - "sin_conexion": aún no hay internet (el vigilante de la app
+      reintenta más tarde, en silencio);
+    - "hecho": se ejecutó la actualización y salió bien;
+    - "fallo": se ejecutó y salió mal (quedan el respaldo de las
+      09:00 y el próximo arranque).
+
+    `hay_conexion()` y `ejecutar()` (True si terminó bien) se
+    inyectan: la decisión se prueba sin red ni Windows.
+    """
+    if firmas_actualizadas_hoy(ultimo_resultado, ahora_ts):
+        return "ya"
+    if not hay_conexion():
+        return "sin_conexion"
+    return "hecho" if ejecutar() else "fallo"

@@ -378,7 +378,8 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             final = svc.escanear_drivers_paso3_comparar(
                 instalados, resultado.datos.get("ofrecidas", []),
                 bool(resultado.datos.get("wu_consultado")), fabricante,
-                str(resultado.datos.get("wu_causa", "") or ""))
+                str(resultado.datos.get("wu_causa", "") or ""),
+                estados_previos=resultado.datos.get("estados"))
         except Exception as exc:  # defensa: jamás colgar el escaneo
             final = ResultadoModulo(
                 False, f"No se pudo completar la comparación: {exc}")
@@ -390,11 +391,14 @@ def crear_pagina_drivers(ctx: ContextoModulo):
             return
         estado_actual["_paso1"] = resultado.datos
         estado_actual.update(resultado.datos)
-        barra.fijar_etapas(2, 3, "Consultando fuentes oficiales "
-                                 "(Catálogo de Microsoft y Windows Update)")
-        lbl_estado.setText("Drivers leídos. Confirmando contra las fuentes "
-                           "oficiales (primero el Catálogo de Microsoft, "
-                           "por dispositivo)…")
+        barra.fijar_etapas(2, 3, "Consultando TODAS las fuentes "
+                                 "oficiales (Catálogo de Microsoft, "
+                                 "Windows Update y almacén local)")
+        lbl_estado.setText("Drivers leídos. Confirmando contra TODAS las "
+                           "fuentes oficiales (Catálogo de Microsoft, "
+                           "Windows Update y el almacén local de esta "
+                           "PC): el veredicto final de cada driver es "
+                           "la versión más reciente entre todas…")
         gestor.lanzar(svc.escanear_drivers_paso2_buscar, _al_terminar_paso2,
                       resultado.datos["instalados"])
 

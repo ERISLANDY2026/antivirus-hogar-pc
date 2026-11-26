@@ -425,4 +425,6 @@ _EN: dict[str, str] = {
     'La versión instalada y lo que trae de nuevo.': 'The installed version and what is new in it.',
     'Qué trae de nuevo:': "What's new:",
     'Verificación del arranque pausada: se comprobaron {h} de {t} ({ok} verificados, {mal} fallidos); el resto queda «Sin verificar» y se seguirá comprobando.': 'Startup verification paused: {h} of {t} checked ({ok} verified, {mal} failed); the rest stays "Not verified" and will keep being checked.',
+    # v1.0.18 (nota 9)
+    'Descarga las firmas de malware y phishing más recientes de las fuentes configuradas. Además, una vez al día se actualiza sola en cuanto la app detecta conexión a internet.': 'Downloads the latest malware and phishing signatures from the configured sources. It also updates itself once a day as soon as the app detects an internet connection.',
 }

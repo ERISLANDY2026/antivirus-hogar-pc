@@ -657,23 +657,44 @@ def test_catalogo_detecta_version_mas_nueva():
     assert veredicto.estado == "hay_uno_mas_nuevo"
 
 
-def test_cadena_confirma_por_catalogo_sin_llamar_a_wu(monkeypatch):
+def test_cadena_consulta_todas_las_fuentes_y_manda_la_mas_reciente(monkeypatch):
+    """v1.0.18 (nota 10) — SUSTITUYE a
+    test_cadena_confirma_por_catalogo_sin_llamar_a_wu (v1.0.5).
+
+    El usuario ordenó expresamente consultar TODAS las fuentes
+    para CADA driver y quedarse con la versión más reciente:
+    aunque el Catálogo confirme «al día», Windows Update se
+    consulta igual, y si ofrece una versión más nueva, ESE es el
+    veredicto final, con su fuente indicada."""
     from antivirus_hogar_pc.core.drivers_logic import EstadoDriver
     from antivirus_hogar_pc.modules.system import servicios_sistema as svc
     from antivirus_hogar_pc.winapi import drivers_win
 
+    d = _driver()  # instalada: 10.60.615.2022
     monkeypatch.setattr(
         svc, "_confirmar_por_catalogo",
-        lambda d: EstadoDriver(driver=d, estado="al_dia",
-                               fuente="Catálogo de Microsoft",
-                               detalle="Confirmado por el Catálogo."))
-    monkeypatch.setattr(
-        drivers_win, "buscar_drivers_windows_update",
-        lambda *a, **k: (_ for _ in ()).throw(
-            AssertionError("WU no debía llamarse")))
-    res = svc.escanear_drivers_paso2_buscar([_driver()])
-    assert res.datos["estados"][0].estado == "al_dia"
+        lambda drv: EstadoDriver(driver=drv, estado="al_dia",
+                                 fuente="Catálogo de Microsoft",
+                                 detalle="Confirmado por el Catálogo."))
+    llamadas = []
+
+    def _wu(*a, **k):
+        llamadas.append(1)
+        return [{"titulo": "Realtek Driver 99.0",
+                 "id_hardware": [r"PCI\VEN_10EC&DEV_8168"],
+                 "version": "99.0", "fecha": "2024-01-01"}]
+
+    monkeypatch.setattr(drivers_win, "buscar_drivers_windows_update", _wu)
+    monkeypatch.setattr(drivers_win, "paquetes_almacen_drivers", lambda: [])
+    res = svc.escanear_drivers_paso2_buscar([d])
+    assert llamadas, "Windows Update debió consultarse aunque el " \
+                     "Catálogo ya había confirmado"
+    estado = res.datos["estados"][0]
+    assert estado.estado == "hay_uno_mas_nuevo"
+    assert estado.fuente == "Windows Update"
+    assert estado.version_candidata == "99.0"
     assert res.datos["conteos_fuentes"]["catalogo"] == 1
+    assert res.datos["conteos_fuentes"]["windows_update"] == 1
 
 
 def test_cadena_wu_agota_tiempo_y_la_cadena_sigue(monkeypatch):

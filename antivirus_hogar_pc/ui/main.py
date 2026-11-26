@@ -398,6 +398,63 @@ def main(argv: list[str] | None = None) -> int:
         threading.Thread(target=_trabajo, daemon=True).start()
 
     QTimer.singleShot(10000, _refresco_fuentes_vpn)
+    # Firmas al detectar conexión (v1.0.18, nota 9): un vigilante
+    # en segundo plano espera la PRIMERA conexión a internet del
+    # día y, si hoy las firmas aún no se han actualizado, dispara
+    # la tarea «firmas» (la misma de las 09:00, que queda como
+    # respaldo). Silencioso: sin diálogos ni avisos. Si la app
+    # arranca sin conexión (hotspot apagado), reintenta cada dos
+    # minutos hasta lograrlo; una vez al día, nunca más.
+    def _firmas_por_conexion():
+        import threading
+
+        def _trabajo():
+            import json as _json
+            import os as _os
+            import time as _time
+            import urllib.error as _uerr
+            import urllib.request as _ureq
+
+            from ..core import config as _cfg
+            from ..core.programaciones import (
+                intentar_firmas_por_conexion)
+
+            def _ultimo_resultado():
+                ruta = _os.path.join(_cfg.carpeta_datos(),
+                                     "programadas", "firmas.json")
+                try:
+                    with open(ruta, encoding="utf-8") as fh:
+                        return _json.load(fh)
+                except Exception:
+                    return None
+
+            def _hay_conexion():
+                for url in ("https://www.vpngate.net/",
+                            "https://www.cloudflare.com/"):
+                    try:
+                        _ureq.urlopen(_ureq.Request(url, method="HEAD"),
+                                      timeout=5)
+                        return True
+                    except _uerr.HTTPError:
+                        return True  # respondió: hay conexión
+                    except Exception:
+                        continue
+                return False
+
+            while True:
+                try:
+                    resultado = intentar_firmas_por_conexion(
+                        _time.time(), _ultimo_resultado(), _hay_conexion,
+                        lambda: _tarea_programada("firmas") == 0)
+                except Exception:
+                    return
+                if resultado != "sin_conexion":
+                    return
+                _time.sleep(120)
+
+        threading.Thread(target=_trabajo, daemon=True).start()
+
+    QTimer.singleShot(12000, _firmas_por_conexion)
     if "--inicio-automatico" in argv:
         # Arranque de Windows: minimizada, en segundo plano, y con la
         # rutina automática si su interruptor está activado.

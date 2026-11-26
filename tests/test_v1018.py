@@ -587,9 +587,10 @@ def test_nota10_paso2_consulta_las_tres_fuentes_para_cada_driver(monkeypatch):
                           "version": "4.0", "fecha": "2024-05-05"}])
     monkeypatch.setattr(
         drivers_win, "paquetes_almacen_drivers",
-        lambda: [{"inf": "oem9.inf", "version": "3.0",
-                  "proveedor": "Realtek", "clase": "Net",
-                  "fecha": "2023-01-01", "dispositivos": ["Adaptador"]}])
+        lambda: [{"inf": "oem1.inf", "original": "oem1.inf",
+                  "version": "3.0", "proveedor": "Realtek",
+                  "clase": "Net", "fecha": "2023-01-01",
+                  "dispositivos": ["Adaptador de red"]}])
     res = svc.escanear_drivers_paso2_buscar([d])
     estado = res.datos["estados"][0]
     # Las TRES fuentes respondieron y manda la mayor: WU 4.0.
@@ -605,11 +606,13 @@ def test_nota10_paso2_consulta_las_tres_fuentes_para_cada_driver(monkeypatch):
 def test_nota10_panasonic_en_urls_oem_con_su_url_oficial():
     from antivirus_hogar_pc.core import drivers_logic as dl
 
-    clave, nombre, url = dl.enlace_oem("Panasonic Corporation")
-    assert clave == "panasonic"
+    nombre, url = dl.enlace_oem("Panasonic Corporation")
     assert "TOUGHBOOK" in nombre
     assert url == ("https://global-pc-support.connect.panasonic.com"
                    "/driver/deployment-support-tools/driver-pack")
+    # Y está en la tabla con su clave, como una marca más.
+    claves = [c for c, _n, _u in dl.URLS_OEM]
+    assert "panasonic" in claves
 
 
 # ---------------------------------------------------------------------------
@@ -620,21 +623,25 @@ def test_nota11_el_oem_sale_de_la_marca_detectada():
     from antivirus_hogar_pc.core import drivers_logic as dl
 
     # Cada equipo recibe SU fuente oficial según su marca.
-    assert dl.enlace_oem("Dell Inc.")[0] == "dell"
-    assert dl.enlace_oem("Hewlett-Packard")[0] == "hp"
-    assert dl.enlace_oem("LENOVO")[0] == "lenovo"
-    assert dl.enlace_oem("Panasonic Corporation")[0] == "panasonic"
+    assert "Dell" in dl.enlace_oem("Dell Inc.")[0]
+    assert "HP" in dl.enlace_oem("Hewlett-Packard")[0]
+    assert "Lenovo" in dl.enlace_oem("LENOVO")[0]
+    assert "Panasonic" in dl.enlace_oem("Panasonic Corporation")[0]
     assert dl.enlace_oem("Marca Inventada XYZ") is None
     # Los enlaces por driver combinan chips + la marca del equipo
     # anfitrión que se le pase, sea la que sea.
+    from antivirus_hogar_pc.core.drivers_logic import EstadoDriver
+
+    estado = EstadoDriver(driver=_drv_pc(), estado="hay_uno_mas_nuevo")
     enlaces = dl.enlaces_para_driver(
-        _drv_pc(), fabricante_pc="Panasonic Corporation")
-    textos = " ".join(n for _u, n in enlaces)
-    assert "Panasonic" in textos and "Realtek" in textos
+        estado, fabricante_pc="Panasonic Corporation")
+    textos = " ".join(n for n, _u in enlaces)
+    assert "Panasonic" in textos
+    assert "Microsoft Update Catalog" in textos
     enlaces_dell = dl.enlaces_para_driver(
-        _drv_pc(), fabricante_pc="Dell Inc.")
-    assert "Dell" in " ".join(n for _u, n in enlaces_dell)
-    assert "Panasonic" not in " ".join(n for _u, n in enlaces_dell)
+        estado, fabricante_pc="Dell Inc.")
+    assert "Dell" in " ".join(n for n, _u in enlaces_dell)
+    assert "Panasonic" not in " ".join(n for n, _u in enlaces_dell)
 
 
 def test_nota11_las_notas_de_version_cuentan_las_tres_mejoras():

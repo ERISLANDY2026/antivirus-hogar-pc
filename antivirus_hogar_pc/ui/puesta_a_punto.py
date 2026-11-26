@@ -100,7 +100,8 @@ def pasos_reales(servicios) -> list[tuple[str, str, object]]:
             (paso2.datos or {}).get("ofrecidas", []),
             bool((paso2.datos or {}).get("wu_consultado")),
             paso1.datos.get("fabricante_pc", ""),
-            str((paso2.datos or {}).get("wu_causa", "")))
+            str((paso2.datos or {}).get("wu_causa", "")),
+            estados_previos=(paso2.datos or {}).get("estados"))
         estados = (final.datos or {}).get("estados", [])
         # La revisión queda guardada para la tarjeta
         # «Pendientes» en el propio paso 3 (servicios_sistema).

@@ -66,11 +66,13 @@ def _confirmar_por_catalogo(driver) -> "drivers_logic.EstadoDriver | None":
         driver, drivers_logic.parsear_catalogo_html(html))
 
 
-def _confirmar_por_almacen(restantes) -> dict:
-    """Fuente (c): paquetes ya preparados en el almacén de drivers."""
+def _confirmar_por_almacen(drivers) -> dict:
+    """Fuente (c): paquetes ya preparados en el almacén de drivers.
+    v1.0.18: se consulta para TODOS los drivers, no solo para los
+    que las demás fuentes no confirmaron."""
     paquetes = drivers_win.paquetes_almacen_drivers()
     veredictos = {}
-    for d in restantes:
+    for d in drivers:
         veredicto = drivers_logic.veredicto_almacen(d, paquetes)
         if veredicto is not None:
             veredictos[id(d)] = veredicto
@@ -78,31 +80,44 @@ def _confirmar_por_almacen(restantes) -> dict:
 
 
 def escanear_drivers_paso2_buscar(instalados, al_progreso=None) -> ResultadoModulo:
-    """Paso 2 (v1.0.5): la CADENA DE CONFIRMACIÓN de drivers.
+    """Paso 2 (v1.0.18, nota 10): verificación en TODAS las fuentes.
 
-    Orden fijado por el usuario tras el fallo de la Toughbook (la
-    búsqueda COM agotó 900 s y los 196 drivers quedaron «Sin
-    confirmar»): (a) Catálogo de Microsoft por ID de hardware — por
-    dispositivo y rápido, en paralelo con presupuesto de 300 s —;
-    (b) Windows Update COM con límite corto (240 s) y UN reintento,
-    solo para los que el Catálogo no confirmó; (c) el almacén de
-    drivers local (pnputil) para el resto. Un driver se confirma en
-    cuanto UNA fuente oficial responde con datos reales; «sin
-    confirmar» solo si TODAS fallan.
+    Hasta la 1.0.17 mandaba la primera fuente que confirmaba y las
+    demás no se consultaban para ese driver. Por orden expresa
+    del usuario («que revise todas las fuentes y ofrezca lo más
+    actual») ahora se consultan TODAS las fuentes con datos de
+    versión para CADA driver: (a) Catálogo de Microsoft por ID de
+    hardware — por dispositivo, en paralelo con presupuesto de
+    300 s —; (b) Windows Update COM con límite corto (240 s) y UN
+    reintento, con UNA búsqueda para todos; (c) el almacén de
+    drivers local (pnputil). El veredicto final de cada driver es
+    la actualización MÁS RECIENTE entre todas las fuentes
+    (drivers_logic.veredicto_mas_reciente), indicando su fuente;
+    «sin confirmar» solo si NINGUNA fuente confirmó nada.
 
-    datos conserva las claves de la v1.0.3 (ofrecidas, wu_consultado,
-    wu_causa — la causa CRUDA viaja solo como dato técnico) y añade:
-    estados ya resueltos, conteos_fuentes, causa_breve (lo ÚNICO que
-    la página enseña) y el detalle técnico para el registro."""
+    Todo corre en el hilo de fondo del llamante, sin diálogos ni
+    interrupciones: la tabla se pinta cuando este paso termina,
+    con los veredictos FINALES (sin veredictos progresivos).
+
+    datos conserva las claves de la v1.0.3 (ofrecidas,
+    wu_consultado, wu_causa — la causa CRUDA viaja solo como dato
+    técnico) y añade: estados ya resueltos, conteos_fuentes (las
+    CONFIRMACIONES de cada fuente: un driver puede contar en
+    varias, porque todas se consultaron), causa_breve (lo ÚNICO
+    que la página enseña) y el detalle técnico para el registro.
+    """
     import time as _time
     from concurrent.futures import ThreadPoolExecutor
 
     instalados = list(instalados)
-    estados: dict[int, drivers_logic.EstadoDriver] = {}
     causas: list[tuple[str, str]] = []
     conteos = {"catalogo": 0, "windows_update": 0, "almacen": 0}
+    por_catalogo: dict[int, drivers_logic.EstadoDriver] = {}
+    por_wu: dict[int, drivers_logic.EstadoDriver] = {}
+    por_almacen: dict[int, drivers_logic.EstadoDriver] = {}
 
-    # (a) Catálogo de Microsoft por HWID, en paralelo.
+    # (a) Catálogo de Microsoft por HWID, en paralelo, para TODOS
+    # los drivers buscables (ya no solo hasta que uno confirme).
     buscables = [d for d in instalados
                  if drivers_logic.es_hwid_buscable(
                      drivers_logic.extraer_hwid(d.device_id))]
@@ -120,56 +135,61 @@ def escanear_drivers_paso2_buscar(instalados, al_progreso=None) -> ResultadoModu
                         causas.append(("Catálogo de Microsoft", str(exc)))
                         continue
                     if veredicto is not None:
-                        estados[id(d)] = veredicto
+                        por_catalogo[id(d)] = veredicto
                         conteos["catalogo"] += 1
         except Exception as exc:
             causas.append(("Catálogo de Microsoft", str(exc)))
     if al_progreso is not None:
-        al_progreso("catalogo", len(estados))
+        al_progreso("catalogo", len(por_catalogo))
 
-    # (b) Windows Update COM (240 s × 2 intentos) para el resto.
-    restantes = [d for d in instalados if id(d) not in estados]
+    # (b) Windows Update COM: una sola búsqueda para TODOS los
+    # drivers (la API devuelve las ofertas del equipo entero).
     ofrecidas: list[dict] = []
-    wu_consultado = not restantes  # si no queda nada, nada que consultar
+    wu_consultado = False
     wu_causa = ""
-    if restantes:
-        try:
-            ofrecidas = drivers_win.buscar_drivers_wu_con_reintento()
-            wu_consultado = True
-            for e in drivers_logic.contrastar_con_windows_update(
-                    restantes, ofrecidas, consulta_completada=True):
-                estados[id(e.driver)] = e
-                conteos["windows_update"] += 1
-        except Exception as exc:
-            wu_causa = str(exc)
-            causas.append(("Windows Update", wu_causa))
+    try:
+        ofrecidas = drivers_win.buscar_drivers_wu_con_reintento()
+        wu_consultado = True
+        for e in drivers_logic.contrastar_con_windows_update(
+                instalados, ofrecidas, consulta_completada=True):
+            por_wu[id(e.driver)] = e
+            conteos["windows_update"] += 1
+    except Exception as exc:
+        wu_causa = str(exc)
+        causas.append(("Windows Update", wu_causa))
     if al_progreso is not None:
-        al_progreso("windows_update", len(estados))
+        al_progreso("windows_update", len(por_wu))
 
-    # (c) Almacén de drivers local para lo que quede.
-    restantes = [d for d in instalados if id(d) not in estados]
-    if restantes:
-        try:
-            for clave, veredicto in _confirmar_por_almacen(restantes).items():
-                estados[clave] = veredicto
-                conteos["almacen"] += 1
-        except Exception as exc:
-            causas.append(("Almacén de drivers", str(exc)))
+    # (c) Almacén de drivers local, también para TODOS.
+    try:
+        for clave, veredicto in _confirmar_por_almacen(instalados).items():
+            por_almacen[clave] = veredicto
+            conteos["almacen"] += 1
+    except Exception as exc:
+        causas.append(("Almacén de drivers", str(exc)))
+    if al_progreso is not None:
+        al_progreso("almacen", len(por_almacen))
 
-    # Causa BREVE para la UI: la de Windows Update si cayó (es el caso
-    # del usuario), si no la primera que haya. La cruda, solo al registro.
+    # Causa BREVE para la UI: la de Windows Update si cayó (es el
+    # caso del usuario), si no la primera que haya. La cruda, solo
+    # al registro.
     breve = ""
     if causas:
         fuente_p, causa_p = next(
-            (par for par in causas if par[0] == "Windows Update"), causas[0])
+            (par for par in causas if par[0] == "Windows Update"),
+            causas[0])
         breve = drivers_logic.causa_breve_drivers(causa_p, fuente_p)
     detalle_sin = ("Ninguna fuente oficial pudo confirmar el estado "
                    "de este driver.")
     if breve:
         detalle_sin += f" {breve}"
+    # Veredicto FINAL por driver: la versión más reciente entre
+    # todas las fuentes consultadas (nota 10).
     lista: list[drivers_logic.EstadoDriver] = []
     for d in instalados:
-        e = estados.get(id(d))
+        e = drivers_logic.veredicto_mas_reciente(d, [
+            por_catalogo.get(id(d)), por_wu.get(id(d)),
+            por_almacen.get(id(d))])
         if e is None:
             e = drivers_logic.EstadoDriver(
                 driver=d, estado="sin_datos", detalle=detalle_sin)
@@ -178,11 +198,12 @@ def escanear_drivers_paso2_buscar(instalados, al_progreso=None) -> ResultadoModu
     n_nuevo = sum(1 for e in lista if e.estado == "hay_uno_mas_nuevo")
     n_sin = sum(1 for e in lista if e.estado == "sin_datos")
     mensaje = (
-        f"{len(instalados)} drivers revisados: {n_dia} al día, "
-        f"{n_nuevo} con una versión más nueva, {n_sin} sin confirmar. "
-        f"Confirmados por: Catálogo de Microsoft {conteos['catalogo']} · "
-        f"Windows Update {conteos['windows_update']} · "
-        f"almacén local {conteos['almacen']}.")
+        f"{len(instalados)} drivers revisados en todas las fuentes: "
+        f"{n_dia} al día, {n_nuevo} con una versión más nueva, "
+        f"{n_sin} sin confirmar. Respuestas por fuente: Catálogo "
+        f"de Microsoft {conteos['catalogo']} · Windows Update "
+        f"{conteos['windows_update']} · almacén local "
+        f"{conteos['almacen']}.")
     detalle_tecnico = " | ".join(f"{f}: {c}" for f, c in causas)
     return ResultadoModulo(
         ok=True, mensaje=mensaje,
@@ -197,7 +218,8 @@ def escanear_drivers_paso2_buscar(instalados, al_progreso=None) -> ResultadoModu
 def escanear_drivers_paso3_comparar(instalados, ofrecidas,
                                     wu_consultado: bool = True,
                                     fabricante_pc: str = "",
-                                    wu_causa: str = "") -> ResultadoModulo:
+                                    wu_causa: str = "",
+                                    estados_previos=None) -> ResultadoModulo:
     """Paso 3: comparar instalados contra lo ofrecido y armar el resultado
     completo (estados, fabricante_pc, wu_consultado, ofrecidas_wu,
     wu_causa).
@@ -205,12 +227,53 @@ def escanear_drivers_paso3_comparar(instalados, ofrecidas,
     Semántica v1.0.3: «al día» SOLO si la consulta a Windows Update
     completó (wu_consultado=True, aunque ofrezca 0); «sin confirmar»
     SOLO si la consulta falló, y entonces la causa viaja en los datos
-    y en el mensaje para que la página la enseñe."""
+    y en el mensaje para que la página la enseñe.
+
+    v1.0.18 (nota 10): con ``estados_previos`` (los veredictos
+    multifuente del paso 2) el paso 3 NO recomputa nada contra una
+    sola fuente: conserva esos veredictos — la versión más
+    reciente entre Catálogo, Windows Update y almacén — y solo
+    anota la revisión para «Pendientes» y arma el mensaje."""
     # v1.0.5: lo que la UI enseña es la causa BREVE y humana; la causa
     # cruda (comandos, HRESULT) viaja solo en datos/detalle_tecnico
     # para el registro de actividad — nunca en mensajes ni detalles.
     breve = (drivers_logic.causa_breve_drivers(wu_causa)
              if wu_causa and not wu_consultado else "")
+    if estados_previos is not None:
+        estados = list(estados_previos)
+        nuevos = sum(1 for e in estados
+                     if e.estado == "hay_uno_mas_nuevo")
+        sin_conf = sum(1 for e in estados if e.estado == "sin_datos")
+        confirmado = bool(wu_consultado) or sin_conf < len(estados)
+        try:
+            from antivirus_hogar_pc.core import estado_mantenimiento
+
+            estado_mantenimiento.guardar_revision_drivers(
+                nuevos, len(instalados), confirmado=confirmado)
+        except Exception:
+            pass  # anotar nunca rompe la revisión
+        if nuevos:
+            mensaje = (f"{len(instalados)} drivers revisados en todas "
+                       f"las fuentes oficiales: {nuevos} con una "
+                       "versión más nueva disponible (la más reciente "
+                       "entre las fuentes).")
+        elif sin_conf:
+            mensaje = (f"{len(instalados)} drivers revisados en todas "
+                       f"las fuentes oficiales: {sin_conf} sin "
+                       "confirmar; el resto está al día.")
+            if breve:
+                mensaje += f" {breve}"
+        else:
+            mensaje = (f"{len(instalados)} drivers revisados en todas "
+                       "las fuentes oficiales: todos al día.")
+        return ResultadoModulo(ok=True, mensaje=mensaje, datos={
+            "estados": estados,
+            "fabricante_pc": fabricante_pc,
+            "wu_consultado": wu_consultado,
+            "wu_causa": wu_causa if not wu_consultado else "",
+            "causa_breve": breve,
+            "ofrecidas_wu": len(ofrecidas),
+        }, detalle_tecnico=wu_causa if not wu_consultado else "")
     if wu_consultado:
         estados = drivers_logic.contrastar_con_windows_update(
             instalados, ofrecidas, consulta_completada=True)
@@ -258,14 +321,17 @@ def escanear_drivers_paso3_comparar(instalados, ofrecidas,
 
 
 def escanear_drivers_paso2(instalados, fabricante_pc: str = "") -> ResultadoModulo:
-    """Compatibilidad: paso 2 (buscar) + paso 3 (comparar) de una vez.
-    Devuelve el resultado completo de siempre."""
+    """Compatibilidad: paso 2 (buscar en TODAS las fuentes) + paso 3
+    (comparar) de una vez. Devuelve el resultado completo de
+    siempre, conservando los veredictos multifuente del paso 2
+    (v1.0.18, nota 10)."""
     buscar = escanear_drivers_paso2_buscar(instalados)
     datos = buscar.datos or {}
     return escanear_drivers_paso3_comparar(
         instalados, datos.get("ofrecidas", []),
         bool(datos.get("wu_consultado")), fabricante_pc,
-        str(datos.get("wu_causa", "")))
+        str(datos.get("wu_causa", "")),
+        estados_previos=datos.get("estados"))
 
 
 def escanear_drivers() -> ResultadoModulo:

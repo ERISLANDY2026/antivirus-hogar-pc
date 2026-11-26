@@ -30,6 +30,10 @@ class EstadoDriver:
     estado: str  # "al_dia" | "hay_uno_mas_nuevo" | "sin_datos"
     detalle: str = ""
     fuente: str = ""  # de qué fuente salió la novedad
+    # v1.0.18 (nota 10): la versión que la fuente ofrece cuando
+    # dice «hay uno más nuevo» — es lo que permite comparar las
+    # fuentes entre sí y quedarse con la MÁS RECENTE.
+    version_candidata: str = ""
 
 
 def parsear_version(texto: str) -> tuple[int, ...]:
@@ -113,6 +117,7 @@ def contrastar_con_windows_update(
                 driver=d, estado="hay_uno_mas_nuevo",
                 detalle=f"Windows Update ofrece: {act.get('titulo', '')}",
                 fuente="Windows Update",
+                version_candidata=version_candidata,
             )
             break
         else:
@@ -149,6 +154,11 @@ def _contiene_token(titulo: str, nombre_dispositivo: str) -> bool:
 # (c) el almacén de drivers de la propia PC (pnputil): si ya hay un
 #     paquete más nuevo preparado para el dispositivo, es un dato
 #     real y local. «Sin confirmar» solo si TODAS fallan.
+#
+# v1.0.18 (nota 10): el «primera que responde» quedó SUPERADO por
+# orden del usuario — las tres fuentes se consultan para cada
+# driver y manda la versión más reciente (veredicto_mas_reciente,
+# más abajo). Las piezas por fuente de esta sección se conservan.
 
 def extraer_hwid(device_id: str) -> str:
     """El ID de hardware buscable desde el DeviceID de instancia.
@@ -291,6 +301,7 @@ def veredicto_catalogo(driver: DriverInstalado,
             return EstadoDriver(
                 driver=driver, estado="hay_uno_mas_nuevo",
                 fuente="Catálogo de Microsoft",
+                version_candidata=version_rec,
                 detalle=(f"El Catálogo de Microsoft publica una versión "
                          f"más reciente para este hardware "
                          f"({reciente.get('titulo', '')}, "
@@ -403,8 +414,61 @@ def veredicto_almacen(driver: DriverInstalado,
             return EstadoDriver(
                 driver=driver, estado="hay_uno_mas_nuevo",
                 fuente="Almacén de drivers de Windows",
+                version_candidata=version_paq,
                 detalle=(f"Ya hay un paquete más nuevo ({version_paq}) "
                          "preparado en el almacén de drivers de esta PC."))
+    return None
+
+
+# --- Veredicto multifuente v1.0.18 (nota 10 del usuario) ----------------------
+#
+# Hasta la 1.0.17 la cadena confirmaba por la PRIMERA fuente que
+# respondía y las demás no se consultaban para ese driver. El
+# usuario lo cambió expresamente: «que revise todas las fuentes y
+# ofrezca lo más actual». Ahora cada fuente con datos de versión
+# (Catálogo, Windows Update y almacén local) se consulta para
+# CADA driver y el veredicto final es la actualización MÁS
+# RECIENTE entre todas, con su fuente indicada.
+
+def veredicto_mas_reciente(
+        driver: DriverInstalado,
+        candidatos: list[EstadoDriver | None]) -> EstadoDriver | None:
+    """El veredicto final de UN driver entre TODAS las fuentes.
+
+    `candidatos`: el veredicto de cada fuente consultada (o None
+    si esa fuente no confirmó nada), en el orden de prioridad
+    Catálogo → Windows Update → almacén (desempate determinista).
+
+    - Si alguna fuente ofrece una versión más nueva, manda la de
+      MAYOR versión candidata; a igualdad de versión, la primera
+      en el orden de prioridad. Si varias ofrecían novedad, el
+      detalle dice que es la más reciente entre las fuentes.
+    - Si ninguna ofrece novedad pero alguna confirmó «al día»,
+      el veredicto es «al día» de la primera que lo confirmó.
+    - Si ninguna fuente confirmó nada → None (sin confirmar).
+    """
+    validos = [c for c in candidatos if c is not None]
+    if not validos:
+        return None
+    nuevos = [c for c in validos if c.estado == "hay_uno_mas_nuevo"]
+    if nuevos:
+        ganador = nuevos[0]
+        for c in nuevos[1:]:
+            if comparar_versiones(c.version_candidata,
+                                  ganador.version_candidata) > 0:
+                ganador = c
+        if len(nuevos) > 1:
+            ganador = EstadoDriver(
+                driver=driver, estado=ganador.estado,
+                detalle=(ganador.detalle + " Es la versión más "
+                         "reciente entre todas las fuentes "
+                         "consultadas."),
+                fuente=ganador.fuente,
+                version_candidata=ganador.version_candidata)
+        return ganador
+    for c in validos:
+        if c.estado == "al_dia":
+            return c
     return None
 
 
@@ -431,6 +495,11 @@ URLS_OEM = (
     ("gigabyte", "GIGABYTE — Descargas", "https://www.gigabyte.com/es/Support"),
     ("toshiba", "Dynabook/Toshiba — Soporte", "https://es.dynabook.com/support/drivers/"),
     ("samsung", "Samsung — Soporte y descargas", "https://www.samsung.com/es/support/download/"),
+    # v1.0.18 (nota 10): la marca de la Toughbook del usuario no
+    # estaba en la tabla. URL oficial verificada en vivo el
+    # 2026-11-26: la página «Driver Pack» de TOUGHBOOK Support
+    # (Panasonic Connect), con la serie CF-54 completa.
+    ("panasonic", "Panasonic — TOUGHBOOK Support: paquetes de drivers", "https://global-pc-support.connect.panasonic.com/driver/deployment-support-tools/driver-pack"),
 )
 
 
