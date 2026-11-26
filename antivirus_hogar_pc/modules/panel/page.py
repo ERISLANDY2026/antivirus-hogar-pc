@@ -332,12 +332,6 @@ def crear_pagina(ctx: ContextoModulo):
             lbl = etiqueta(_texto_pendiente(pendiente))
             lbl.setStyleSheet(f"color: {color};")
             fila.addWidget(lbl, 1)
-            if ctx is not None and ctx.al_navegar is not None:
-                boton = QPushButton(t("Revisar"))
-                navegador = _NavegadorPendiente(
-                    ctx, pendiente.destino, parent=boton)
-                boton.clicked.connect(navegador.ir)
-                fila.addWidget(boton)
             lay_pendientes.addLayout(fila)
 
     # --- Puesta a punto de un clic (v1.0.16, frente 1) -------------------------
