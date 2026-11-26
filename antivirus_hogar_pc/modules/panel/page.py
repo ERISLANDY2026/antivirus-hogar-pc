@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QProgressBar,
     QPushButton,
     QVBoxLayout,
 )
@@ -34,9 +33,6 @@ from .datos import animaciones_windows_permitidas, leer_datos_panel, recoger_inf
 class _TrabajadorInforme(QThread):
     """Lee el InformeSalud fuera del hilo de la interfaz."""
     listo = Signal(object)  # ResultadoModulo con datos=InformeSalud
-    # v1.0.16 (frente 3): los pendientes viajan en su propia
-    # señal, calculados con el informe recién leído.
-    pendientes_listos = Signal(object)  # list[core.pendientes.Pendiente]
 
     def __init__(self, servicios, parent=None):
         super().__init__(parent)
@@ -47,44 +43,6 @@ class _TrabajadorInforme(QThread):
             resultado = recoger_informe(self._servicios)
         except Exception as exc:  # nunca dejar la página colgada
             resultado = ResultadoModulo(False, f"No se pudo leer el estado: {exc}")
-        self.listo.emit(resultado)
-        try:
-            from .datos import recoger_pendientes
-
-            informe = resultado.datos \
-                if isinstance(resultado.datos, InformeSalud) else None
-            self.pendientes_listos.emit(
-                recoger_pendientes(self._servicios, informe))
-        except Exception:
-            self.pendientes_listos.emit([])
-
-
-class _TrabajadorPuestaAPunto(QThread):
-    """La «Puesta a punto» (v1.0.16, frente 1) fuera del hilo de
-    la interfaz: emite el progreso global y el informe final."""
-    progreso = Signal(float, str, str)
-    listo = Signal(object)  # dict de core.puesta_a_punto
-
-    def __init__(self, servicios, cancelar_evento, parent=None):
-        super().__init__(parent)
-        self._servicios = servicios
-        self._cancelar = cancelar_evento
-
-    def run(self) -> None:
-        from antivirus_hogar_pc.core.puesta_a_punto import (
-            ejecutar_puesta_a_punto)
-        from antivirus_hogar_pc.ui.puesta_a_punto import pasos_reales
-
-        try:
-            resultado = ejecutar_puesta_a_punto(
-                pasos_reales(self._servicios),
-                al_progreso=lambda f, e, txt: self.progreso.emit(f, e, txt),
-                cancelado=self._cancelar.is_set,
-                registrar=self._servicios.registrar_actividad
-                if self._servicios is not None else None)
-        except Exception as exc:  # nunca dejar la tarjeta colgada
-            resultado = {"cancelada": False, "resultados": {},
-                         "veredicto": f"No se pudo completar: {exc}"}
         self.listo.emit(resultado)
 
 
@@ -162,30 +120,11 @@ def _frase_disco(informe: InformeSalud) -> tuple[str, str]:
     numeros = ""
     if p.disco_libre_gb is not None and p.disco_total_gb is not None:
         numeros = t(" {libre:.0f} GB libres de {total:.0f} GB.", libre=p.disco_libre_gb, total=p.disco_total_gb)
-    # Tendencia (v1.0.16, frente 4): estable / bajando contra
-    # ~30 días atrás, o «historial en construcción» sin datos
-    # suficientes — jamás una tendencia inventada.
-    tendencia_txt = ""
-    tendencia = getattr(informe, "tendencia_disco", None) or {}
-    if tendencia.get("estado") == "bajando":
-        tendencia_txt = t(
-            " Su salud está BAJANDO respecto a hace {dias} días: "
-            "haz copia de seguridad cuanto antes.",
-            dias=tendencia.get("dias") or 30)
-    elif tendencia.get("estado") == "estable":
-        tendencia_txt = t(
-            " Su salud se mantiene estable respecto a hace "
-            "{dias} días.", dias=tendencia.get("dias") or 30)
-    elif tendencia.get("estado") == "sin_historial":
-        tendencia_txt = t(
-            " Historial de salud en construcción: su tendencia "
-            "se verá cuando haya lecturas de varios días.")
     if any("disco principal está sano" in a for a in informe.salud.aciertos):
-        color = theme.ROJO if tendencia.get("bajando") else theme.VERDE
-        return t("Sano.") + numeros + tendencia_txt, color
+        return t("Sano.") + numeros, theme.VERDE
     if any("disco principal reporta problemas" in m for m in informe.salud.motivos):
-        return t("Reporta problemas de salud: haz copia de seguridad ya.") + numeros + tendencia_txt, theme.ROJO
-    return t("No se pudo leer la salud del disco en este equipo.") + numeros + tendencia_txt, theme.TEXTO_SUAVE
+        return t("Reporta problemas de salud: haz copia de seguridad ya.") + numeros, theme.ROJO
+    return t("No se pudo leer la salud del disco en este equipo.") + numeros, theme.TEXTO_SUAVE
 
 
 def crear_pagina(ctx: ContextoModulo):
@@ -270,157 +209,6 @@ def crear_pagina(ctx: ContextoModulo):
         theme.TEXTO_SUAVE))
     fila_superior.addWidget(tarjeta_estado, 1)
     layout.addLayout(fila_superior)
-
-    # --- Pendientes (v1.0.16, frente 3) ---------------------------------------
-    # Bajo el anillo: la lista ACCIONABLE de lo que necesita
-    # atención, solo con datos reales (core.pendientes). Cada
-    # fila lleva a su pantalla; sin pendientes, «Todo al día».
-    tarjeta_pendientes, lay_tarjeta_pendientes = tarjeta(t("Pendientes"))
-    lay_pendientes = QVBoxLayout()
-    lay_tarjeta_pendientes.addLayout(lay_pendientes)
-    lay_pendientes.addWidget(etiqueta(t("Leyendo el estado del equipo…"),
-                                      suave=True))
-    layout.addWidget(tarjeta_pendientes)
-
-    def _texto_pendiente(p) -> str:
-        if p.clave == "disco_bajando":
-            return t("La salud del disco está bajando respecto a "
-                     "hace {dias} días: haz copia de seguridad y "
-                     "revísalo.", dias=p.dias or 30)
-        if p.clave == "escaneo_nunca":
-            return t("Todavía no has hecho ningún escaneo con "
-                     "esta aplicación.")
-        if p.clave == "escaneo_viejo":
-            return t("Último escaneo: hace {dias} días.",
-                     dias=p.dias or 0)
-        if p.clave == "drivers":
-            return t("Hay {n} driver(s) desactualizado(s) según "
-                     "la última revisión.", n=p.cantidad or 0)
-        if p.clave == "optimizar":
-            return t("Sin optimizar los volúmenes desde hace "
-                     "{dias} días.", dias=p.dias or 0)
-        if p.clave == "windows":
-            return t("Hay {n} actualización(es) de Windows "
-                     "pendiente(s).", n=p.cantidad or 0)
-        if p.clave == "vpn_sin_verificar":
-            return t("Hay {n} servidor(es) VPN sin verificar.",
-                     n=p.cantidad or 0)
-        return p.clave
-
-    def repintar_pendientes(lista) -> None:
-        _vaciar(lay_pendientes)
-        if not lista:
-            lay_pendientes.addWidget(etiqueta(
-                t("Todo al día: no hay pendientes con los datos "
-                  "de este equipo."), suave=True))
-            return
-        for pendiente in lista:
-            fila = QHBoxLayout()
-            color = theme.AMBAR if pendiente.aviso else theme.TEXTO_SUAVE
-            lbl = etiqueta(_texto_pendiente(pendiente))
-            lbl.setStyleSheet(f"color: {color};")
-            fila.addWidget(lbl, 1)
-            if ctx is not None and ctx.al_navegar is not None:
-                boton = QPushButton(t("Revisar"))
-                boton.clicked.connect(
-                    lambda _=False, d=pendiente.destino:
-                    ctx.al_navegar(d))
-                fila.addWidget(boton)
-            lay_pendientes.addLayout(fila)
-
-    # --- Puesta a punto de un clic (v1.0.16, frente 1) -------------------------
-    tarjeta_puesta, lay_puesta = tarjeta(t("Puesta a punto"))
-    lay_puesta.addWidget(etiqueta(t(
-        "El mantenimiento completo en un clic, en orden: escaneo "
-        "rápido, limpieza segura, optimizar volúmenes y revisión "
-        "de drivers (solo revisar: instalar sigue siendo paso a "
-        "paso en su pantalla)."), suave=True))
-    barra_puesta = QProgressBar()
-    barra_puesta.setRange(0, 1000)
-    barra_puesta.setValue(0)
-    barra_puesta.setFormat("%p %")
-    lay_puesta.addWidget(barra_puesta)
-    lbl_etapa_puesta = etiqueta("", suave=True)
-    lay_puesta.addWidget(lbl_etapa_puesta)
-    lbl_veredicto_puesta = etiqueta("")
-    lay_puesta.addWidget(lbl_veredicto_puesta)
-    fila_puesta = QHBoxLayout()
-    boton_puesta = QPushButton(t("Puesta a punto"))
-    boton_puesta.setObjectName("primario")
-    boton_cancelar_puesta = QPushButton(t("Cancelar"))
-    boton_cancelar_puesta.setEnabled(False)
-    fila_puesta.addWidget(boton_puesta)
-    fila_puesta.addWidget(boton_cancelar_puesta)
-    fila_puesta.addStretch(1)
-    lay_puesta.addLayout(fila_puesta)
-    layout.addWidget(tarjeta_puesta)
-
-    import threading as _threading
-
-    estado_puesta: dict = {"trabajador": None,
-                           "cancelar": _threading.Event()}
-
-    def _puesta_progreso(frac: float, etapa: str, texto: str) -> None:
-        barra_puesta.setValue(int(frac * 1000))
-        lbl_etapa_puesta.setText(
-            f"{etapa} — {texto}" if etapa and texto != etapa else texto)
-
-    def _puesta_lista(resultado: dict) -> None:
-        boton_puesta.setEnabled(True)
-        boton_cancelar_puesta.setEnabled(False)
-        estado_puesta["trabajador"] = None
-        lineas = []
-        from antivirus_hogar_pc.core.puesta_a_punto import ETAPAS
-
-        for clave, titulo in ETAPAS:
-            res = (resultado.get("resultados") or {}).get(clave)
-            if res is None:
-                continue
-            marca = "✓" if res.get("ok") else "✗"
-            lineas.append(f"{marca} {titulo}: {res.get('resumen', '')}")
-        lbl_veredicto_puesta.setText(
-            resultado.get("veredicto", "")
-            + ("\n" + "\n".join(lineas) if lineas else ""))
-        lbl_etapa_puesta.setText("")
-        if servicios is not None:
-            servicios.registrar_actividad(
-                "puesta-a-punto", resultado.get("veredicto", ""))
-        lanzar_lectura()
-
-    def _lanzar_puesta() -> None:
-        if estado_puesta["trabajador"] is not None:
-            return
-        estado_puesta["cancelar"] = _threading.Event()
-        barra_puesta.setValue(0)
-        lbl_veredicto_puesta.setText("")
-        lbl_etapa_puesta.setText(t("Empezando la puesta a punto…"))
-        boton_puesta.setEnabled(False)
-        boton_cancelar_puesta.setEnabled(True)
-        trabajador = _TrabajadorPuestaAPunto(
-            servicios, estado_puesta["cancelar"], parent=pagina)
-        trabajador.progreso.connect(_puesta_progreso)
-        trabajador.listo.connect(_puesta_lista)
-        trabajador.finished.connect(trabajador.deleteLater)
-        estado_puesta["trabajador"] = trabajador
-        trabajador.start()
-
-    def _cancelar_puesta() -> None:
-        estado_puesta["cancelar"].set()
-        lbl_etapa_puesta.setText(t("Cancelando…"))
-
-    boton_puesta.clicked.connect(_lanzar_puesta)
-    boton_cancelar_puesta.clicked.connect(_cancelar_puesta)
-
-    def _soltar_puesta(_=None) -> None:
-        estado_puesta["cancelar"].set()
-        trabajador = estado_puesta.get("trabajador")
-        if trabajador is not None:
-            try:
-                trabajador.setParent(None)
-            except RuntimeError:
-                pass
-
-    pagina.destroyed.connect(_soltar_puesta)
 
     # --- Rutina automática al arrancar (v1.0.5) --------------------------------
     tarjeta_rutina, lay_rutina = tarjeta(t("Rutina automática al arrancar"))
@@ -652,7 +440,6 @@ def crear_pagina(ctx: ContextoModulo):
         lbl_estado.setText(t("Leyendo el estado del equipo…"))
         trabajador = _TrabajadorInforme(servicios, parent=pagina)
         trabajador.listo.connect(aplicar)
-        trabajador.pendientes_listos.connect(repintar_pendientes)
         trabajador.finished.connect(trabajador.deleteLater)
         estado["trabajador"] = trabajador
         trabajador.start()
@@ -660,8 +447,7 @@ def crear_pagina(ctx: ContextoModulo):
     # Tarjetas con efecto cristal translúcido sobre el fondo (v1.0.2)
     for _nombre in ("tarjeta_aviso", "tarjeta_estado", "tarjeta_soporte",
                     "tarjeta_motivos", "tarjeta_sistema", "tarjeta_escaneo",
-                    "tarjeta_actividad", "tarjeta_pendientes",
-                    "tarjeta_puesta"):
+                    "tarjeta_actividad"):
         _t = locals().get(_nombre)
         if _t is not None:
             _t.setProperty("cristal", "true")
