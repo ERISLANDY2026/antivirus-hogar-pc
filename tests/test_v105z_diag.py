@@ -2,17 +2,28 @@
 import gc
 
 
+def _seguro_repr(x):
+    try:
+        return repr(x)[:120]
+    except Exception:
+        return "<repr imposible>"
+
+
 def _desc(r, obj):
     tn = type(r).__name__
     if tn == "frame":
         return None
     if isinstance(r, dict):
         claves = [k for k, val in r.items() if val is obj]
-        duenos = [o for o in gc.get_objects()
-                  if getattr(o, "__dict__", None) is r]
-        return (f"dict {claves} "
-                f"duenos={[type(o).__name__ for o in duenos][:4]}")
-    return f"{tn} {repr(r)[:120]}"
+        duenos = []
+        for o in gc.get_objects():
+            try:
+                if getattr(o, "__dict__", None) is r:
+                    duenos.append(type(o).__name__)
+            except Exception:
+                pass
+        return f"dict {claves} duenos={duenos[:4]}"
+    return f"{tn} {_seguro_repr(r)}"
 
 
 def test_diag_tras_ventana_v105():
