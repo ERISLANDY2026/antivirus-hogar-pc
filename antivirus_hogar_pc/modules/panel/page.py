@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
@@ -29,6 +29,30 @@ from antivirus_hogar_pc.ui.widgets_v102 import Medidor
 from antivirus_hogar_pc.winapi import es_windows
 
 from .datos import animaciones_windows_permitidas, leer_datos_panel, recoger_informe
+
+
+class _NavegadorPendiente(QObject):
+    """Botón «Revisar» de un pendiente → su pantalla (v1.0.16).
+
+    La navegación va por un método ligado de un QObject hijo del
+    propio botón, NO por una lambda que capture el contexto:
+    conectar un callable libre que captura el contexto (cuyo
+    `al_navegar` es un método ligado de la ventana principal)
+    dejaba la ventana entera retenida tras su destrucción en la
+    suite (la ventana del test de la v1.0.5 sobrevivía y el
+    conteo de tarjetas del Programador salía doble). Con un
+    receptor QObject la conexión muere con el botón, como manda
+    Qt, y no queda ninguna raíz fuera de la ventana.
+    """
+
+    def __init__(self, ctx, destino: str, parent=None) -> None:
+        super().__init__(parent)
+        self._ctx = ctx
+        self._destino = destino
+
+    def ir(self, _marcado: bool = False) -> None:
+        if self._ctx is not None and self._ctx.al_navegar is not None:
+            self._ctx.al_navegar(self._destino)
 
 
 class _TrabajadorInforme(QThread):
@@ -308,7 +332,107 @@ def crear_pagina(ctx: ContextoModulo):
             lbl = etiqueta(_texto_pendiente(pendiente))
             lbl.setStyleSheet(f"color: {color};")
             fila.addWidget(lbl, 1)
+            if ctx is not None and ctx.al_navegar is not None:
+                boton = QPushButton(t("Revisar"))
+                navegador = _NavegadorPendiente(
+                    ctx, pendiente.destino, parent=boton)
+                boton.clicked.connect(navegador.ir)
+                fila.addWidget(boton)
             lay_pendientes.addLayout(fila)
+
+    # --- Puesta a punto de un clic (v1.0.16, frente 1) -------------------------
+    tarjeta_puesta, lay_puesta = tarjeta(t("Puesta a punto"))
+    lay_puesta.addWidget(etiqueta(t(
+        "El mantenimiento completo en un clic, en orden: escaneo "
+        "rápido, limpieza segura, optimizar volúmenes y revisión "
+        "de drivers (solo revisar: instalar sigue siendo paso a "
+        "paso en su pantalla)."), suave=True))
+    barra_puesta = QProgressBar()
+    barra_puesta.setRange(0, 1000)
+    barra_puesta.setValue(0)
+    barra_puesta.setFormat("%p %")
+    lay_puesta.addWidget(barra_puesta)
+    lbl_etapa_puesta = etiqueta("", suave=True)
+    lay_puesta.addWidget(lbl_etapa_puesta)
+    lbl_veredicto_puesta = etiqueta("")
+    lay_puesta.addWidget(lbl_veredicto_puesta)
+    fila_puesta = QHBoxLayout()
+    boton_puesta = QPushButton(t("Puesta a punto"))
+    boton_puesta.setObjectName("primario")
+    boton_cancelar_puesta = QPushButton(t("Cancelar"))
+    boton_cancelar_puesta.setEnabled(False)
+    fila_puesta.addWidget(boton_puesta)
+    fila_puesta.addWidget(boton_cancelar_puesta)
+    fila_puesta.addStretch(1)
+    lay_puesta.addLayout(fila_puesta)
+    layout.addWidget(tarjeta_puesta)
+
+    import threading as _threading
+
+    estado_puesta: dict = {"trabajador": None,
+                           "cancelar": _threading.Event()}
+
+    def _puesta_progreso(frac: float, etapa: str, texto: str) -> None:
+        barra_puesta.setValue(int(frac * 1000))
+        lbl_etapa_puesta.setText(
+            f"{etapa} — {texto}" if etapa and texto != etapa else texto)
+
+    def _puesta_lista(resultado: dict) -> None:
+        boton_puesta.setEnabled(True)
+        boton_cancelar_puesta.setEnabled(False)
+        estado_puesta["trabajador"] = None
+        lineas = []
+        from antivirus_hogar_pc.core.puesta_a_punto import ETAPAS
+
+        for clave, titulo in ETAPAS:
+            res = (resultado.get("resultados") or {}).get(clave)
+            if res is None:
+                continue
+            marca = "✓" if res.get("ok") else "✗"
+            lineas.append(f"{marca} {titulo}: {res.get('resumen', '')}")
+        lbl_veredicto_puesta.setText(
+            resultado.get("veredicto", "")
+            + ("\n" + "\n".join(lineas) if lineas else ""))
+        lbl_etapa_puesta.setText("")
+        if servicios is not None:
+            servicios.registrar_actividad(
+                "puesta-a-punto", resultado.get("veredicto", ""))
+        lanzar_lectura()
+
+    def _lanzar_puesta() -> None:
+        if estado_puesta["trabajador"] is not None:
+            return
+        estado_puesta["cancelar"] = _threading.Event()
+        barra_puesta.setValue(0)
+        lbl_veredicto_puesta.setText("")
+        lbl_etapa_puesta.setText(t("Empezando la puesta a punto…"))
+        boton_puesta.setEnabled(False)
+        boton_cancelar_puesta.setEnabled(True)
+        trabajador = _TrabajadorPuestaAPunto(
+            servicios, estado_puesta["cancelar"], parent=pagina)
+        trabajador.progreso.connect(_puesta_progreso)
+        trabajador.listo.connect(_puesta_lista)
+        trabajador.finished.connect(trabajador.deleteLater)
+        estado_puesta["trabajador"] = trabajador
+        trabajador.start()
+
+    def _cancelar_puesta() -> None:
+        estado_puesta["cancelar"].set()
+        lbl_etapa_puesta.setText(t("Cancelando…"))
+
+    boton_puesta.clicked.connect(_lanzar_puesta)
+    boton_cancelar_puesta.clicked.connect(_cancelar_puesta)
+
+    def _soltar_puesta(_=None) -> None:
+        estado_puesta["cancelar"].set()
+        trabajador = estado_puesta.get("trabajador")
+        if trabajador is not None:
+            try:
+                trabajador.setParent(None)
+            except RuntimeError:
+                pass
+
+    pagina.destroyed.connect(_soltar_puesta)
 
     # --- Rutina automática al arrancar (v1.0.5) --------------------------------
     tarjeta_rutina, lay_rutina = tarjeta(t("Rutina automática al arrancar"))
