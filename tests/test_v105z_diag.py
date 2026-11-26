@@ -1,46 +1,59 @@
-"""DIAG v1.0.16 (13): estado justo despues del test de la ventana v105."""
+"""DIAG v1.0.16 (14): referrers de la pagina Programador tras v105."""
 import gc
+
+
+def _desc(r, obj):
+    tn = type(r).__name__
+    if tn == "frame":
+        return None
+    if isinstance(r, dict):
+        claves = [k for k, val in r.items() if val is obj]
+        duenos = [o for o in gc.get_objects()
+                  if getattr(o, "__dict__", None) is r]
+        return (f"dict {claves} "
+                f"duenos={[type(o).__name__ for o in duenos][:4]}")
+    return f"{tn} {repr(r)[:120]}"
 
 
 def test_diag_tras_ventana_v105():
     from PySide6.QtCore import QThread
     from PySide6.QtWidgets import QApplication
-    from shiboken6 import isValid
 
     app = QApplication.instance()
     if app is not None:
         app.processEvents()
     gc.collect()
     from antivirus_hogar_pc.ui import programar_page
-    from antivirus_hogar_pc.ui.main_window import VentanaPrincipal
 
     L = []
     vivas = [o for o in gc.get_objects()
              if isinstance(o, programar_page._TarjetaProgramacion)]
     L.append(f"tarjetas={len(vivas)}")
-    ventanas = [o for o in gc.get_objects()
-                if isinstance(o, VentanaPrincipal)]
-    L.append(f"ventanas_python={len(ventanas)} "
-             f"validas={[isValid(v) for v in ventanas]}")
+    # pagina programar duena de las tarjetas
+    paginas = []
+    for o in gc.get_objects():
+        d = getattr(o, "__dict__", None)
+        if isinstance(d, dict) and "_tarjetas_programacion" in d:
+            paginas.append(o)
+    L.append(f"paginas_programar={len(paginas)}")
+    for p in paginas:
+        for r in gc.get_referrers(p):
+            s = _desc(r, p)
+            if s:
+                L.append(f"pagina <- {s}")
     hilos = [o for o in gc.get_objects() if isinstance(o, QThread)]
+    infos = []
     for h in hilos:
         try:
-            L.append(f"hilo {type(h).__name__} running={h.isRunning()} "
-                     f"finished={h.isFinished()}")
+            infos.append(f"{type(h).__name__}(run={h.isRunning()})")
         except RuntimeError:
-            L.append(f"hilo {type(h).__name__} C++ muerto")
-    if ventanas:
-        v = ventanas[0]
-        for r in gc.get_referrers(v):
-            tn = type(r).__name__
-            if tn == "frame":
-                continue
-            if isinstance(r, dict):
-                claves = [k for k, val in r.items() if val is v]
-                duenos = [o for o in gc.get_objects()
-                          if getattr(o, "__dict__", None) is r]
-                L.append(f"ventana dict {claves} "
-                         f"duenos={[type(o).__name__ for o in duenos][:4]}")
-            else:
-                L.append(f"ventana ref {tn} {repr(r)[:120]}")
+            infos.append(f"{type(h).__name__}(muerto)")
+    L.append(f"hilos={infos}")
+    for h in hilos:
+        if type(h).__name__ != "_TrabajadorInforme":
+            continue
+        for r in gc.get_referrers(h):
+            s = _desc(r, h)
+            if s:
+                L.append(f"trabajador <- {s}")
     assert False, "\n".join(L)
