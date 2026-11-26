@@ -296,25 +296,7 @@ def crear_pagina(ctx: ContextoModulo):
         return p.clave
 
     def repintar_pendientes(lista) -> None:
-        _vaciar(lay_pendientes)
-        if not lista:
-            lay_pendientes.addWidget(etiqueta(
-                t("Todo al día: no hay pendientes con los datos "
-                  "de este equipo."), suave=True))
-            return
-        for pendiente in lista:
-            fila = QHBoxLayout()
-            color = theme.AMBAR if pendiente.aviso else theme.TEXTO_SUAVE
-            lbl = etiqueta(_texto_pendiente(pendiente))
-            lbl.setStyleSheet(f"color: {color};")
-            fila.addWidget(lbl, 1)
-            if ctx is not None and ctx.al_navegar is not None:
-                boton = QPushButton(t("Revisar"))
-                boton.clicked.connect(
-                    lambda _=False, d=pendiente.destino:
-                    ctx.al_navegar(d))
-                fila.addWidget(boton)
-            lay_pendientes.addLayout(fila)
+        pass
 
     # --- Rutina automática al arrancar (v1.0.5) --------------------------------
     tarjeta_rutina, lay_rutina = tarjeta(t("Rutina automática al arrancar"))
