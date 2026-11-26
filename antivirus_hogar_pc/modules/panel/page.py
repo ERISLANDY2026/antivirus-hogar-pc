@@ -259,9 +259,62 @@ def crear_pagina(ctx: ContextoModulo):
     fila_superior.addWidget(tarjeta_estado, 1)
     layout.addLayout(fila_superior)
 
-    # --- Pendientes (DIAG bisect: tarjeta retirada) -------------------
+    # --- Pendientes (v1.0.16, frente 3) ---------------------------------------
+    # Bajo el anillo: la lista ACCIONABLE de lo que necesita
+    # atención, solo con datos reales (core.pendientes). Cada
+    # fila lleva a su pantalla; sin pendientes, «Todo al día».
+    tarjeta_pendientes, lay_tarjeta_pendientes = tarjeta(t("Pendientes"))
+    lay_pendientes = QVBoxLayout()
+    lay_tarjeta_pendientes.addLayout(lay_pendientes)
+    lay_pendientes.addWidget(etiqueta(t("Leyendo el estado del equipo…"),
+                                      suave=True))
+    layout.addWidget(tarjeta_pendientes)
+
+    def _texto_pendiente(p) -> str:
+        if p.clave == "disco_bajando":
+            return t("La salud del disco está bajando respecto a "
+                     "hace {dias} días: haz copia de seguridad y "
+                     "revísalo.", dias=p.dias or 30)
+        if p.clave == "escaneo_nunca":
+            return t("Todavía no has hecho ningún escaneo con "
+                     "esta aplicación.")
+        if p.clave == "escaneo_viejo":
+            return t("Último escaneo: hace {dias} días.",
+                     dias=p.dias or 0)
+        if p.clave == "drivers":
+            return t("Hay {n} driver(s) desactualizado(s) según "
+                     "la última revisión.", n=p.cantidad or 0)
+        if p.clave == "optimizar":
+            return t("Sin optimizar los volúmenes desde hace "
+                     "{dias} días.", dias=p.dias or 0)
+        if p.clave == "windows":
+            return t("Hay {n} actualización(es) de Windows "
+                     "pendiente(s).", n=p.cantidad or 0)
+        if p.clave == "vpn_sin_verificar":
+            return t("Hay {n} servidor(es) VPN sin verificar.",
+                     n=p.cantidad or 0)
+        return p.clave
+
     def repintar_pendientes(lista) -> None:
-        pass
+        _vaciar(lay_pendientes)
+        if not lista:
+            lay_pendientes.addWidget(etiqueta(
+                t("Todo al día: no hay pendientes con los datos "
+                  "de este equipo."), suave=True))
+            return
+        for pendiente in lista:
+            fila = QHBoxLayout()
+            color = theme.AMBAR if pendiente.aviso else theme.TEXTO_SUAVE
+            lbl = etiqueta(_texto_pendiente(pendiente))
+            lbl.setStyleSheet(f"color: {color};")
+            fila.addWidget(lbl, 1)
+            if ctx is not None and ctx.al_navegar is not None:
+                boton = QPushButton(t("Revisar"))
+                boton.clicked.connect(
+                    lambda _=False, d=pendiente.destino:
+                    ctx.al_navegar(d))
+                fila.addWidget(boton)
+            lay_pendientes.addLayout(fila)
 
     # --- Rutina automática al arrancar (v1.0.5) --------------------------------
     tarjeta_rutina, lay_rutina = tarjeta(t("Rutina automática al arrancar"))
