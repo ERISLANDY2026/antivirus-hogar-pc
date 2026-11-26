@@ -102,6 +102,57 @@ def test_nota5_el_testigo_se_sondea_durante_la_espera():
     assert "_leer_texto_tolerante(ruta_resultado).strip()" in cuerpo
 
 
+def test_nota5_el_testigo_lento_no_se_come_el_progreso(monkeypatch):
+    """La CI de Windows cazó esta carrera: consultar el registro
+    tarda SEGUNDOS (PowerShell) y, si el sondeo corriera dentro
+    del bucle de espera, el progreso intermedio de defrag se
+    pierde. El testigo va en un hilo aparte: con un testigo que
+    tarda 2 s, el % de defrag llega igual."""
+    import threading
+    import time as _time
+
+    from antivirus_hogar_pc.winapi import disks
+
+    monkeypatch.setattr(disks, "es_windows", lambda: True)
+    rutas = {}
+
+    def _script(letra, es_ssd, ruta_salida, ruta_resultado):
+        rutas["salida"] = ruta_salida
+        rutas["resultado"] = ruta_resultado
+        return "script"
+
+    def _lanzar(_script_txt):
+        def _trabajo():
+            _time.sleep(0.15)
+            with open(rutas["salida"], "w", encoding="utf-8") as f:
+                f.write("Defragmentation: 42%\n")
+            _time.sleep(0.15)
+            with open(rutas["resultado"], "w",
+                      encoding="utf-8") as f:
+                f.write("PRECHECK=OK\nEXITCODE=0\n")
+
+        threading.Thread(target=_trabajo, daemon=True).start()
+        return 999
+
+    def _testigo_lento(letra, desde):
+        _time.sleep(2.0)
+        return []
+
+    monkeypatch.setattr(disks, "_script_defrag", _script)
+    monkeypatch.setattr(disks, "lanzar_elevado_oculto", _lanzar)
+    monkeypatch.setattr(disks, "_proceso_vivo", lambda pid: True)
+    monkeypatch.setattr(
+        disks, "consultar_eventos_optimizacion", _testigo_lento)
+    eventos = []
+    res = disks.optimizar_volumen(
+        "C", False,
+        al_progreso=lambda fase, pct: eventos.append((fase, pct)),
+        timeout=30, intervalo=0.05)
+    assert res["ok"] is True
+    assert any(pct == 42 for _f, pct in eventos), eventos
+    assert eventos[-1] == ("Completado", 100)
+
+
 # ---------------------------------------------------------------------------
 # NOTA 4 — el botón «Puesta a punto» conectado de verdad
 # ---------------------------------------------------------------------------

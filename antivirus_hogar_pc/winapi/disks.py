@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 from ..modules.system.smart_logic import interpretar_progreso_optimizacion
@@ -620,15 +621,37 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
         muerto_desde: float | None = None
         # v1.0.19 (nota 5): el TESTIGO (registro de eventos) se
         # sondea TAMBIÉN durante la espera, no solo tras el
-        # fracaso: en la Toughbook real defrag terminó bien
-        # (evento 258, 09:43:44) y el canal de archivos llegó
-        # vacío, así que la app declaró «no se pudo confirmar»
-        # a las 09:43:50 teniendo la prueba escrita en el
-        # registro. Un éxito del testigo cierra el veredicto en
-        # cuanto aparece; el fracaso por eventos solo se acepta
-        # con el proceso ya terminado (vía muerta/recaptura),
-        # para no condenar una corrida aún en curso.
-        ultimo_testigo = 0.0
+        # fracaso — pero en un HILO APARTE que deposita su
+        # veredicto en una casilla: en la Toughbook real defrag
+        # terminó bien (evento 258, 09:43:44) y el canal de
+        # archivos llegó vacío, así que la app declaró «no se
+        # pudo confirmar» a las 09:43:50 teniendo la prueba
+        # escrita en el registro. El sondeo jamás corre dentro
+        # del bucle: consultar el registro tarda segundos
+        # (PowerShell) y bloquearía el progreso — la CI de
+        # Windows lo cazó perdiendo el % intermedio de defrag.
+        # Un éxito del testigo cierra el veredicto en cuanto
+        # aparece; el fracaso por eventos solo se acepta con el
+        # proceso ya terminado (vía muerta/recaptura), para no
+        # condenar una corrida aún en curso.
+        testigo: dict = {"veredicto": None}
+        testigo_parar = threading.Event()
+
+        def _sondear_testigo() -> None:
+            while not testigo_parar.wait(6):
+                try:
+                    eventos_t = consultar_eventos_optimizacion(
+                        letra, inicio)
+                except Exception:
+                    continue  # el testigo calla; el canal manda
+                veredicto_t = interpretar_eventos_optimizacion(
+                    eventos_t, letra)
+                if veredicto_t is not None:
+                    testigo["veredicto"] = veredicto_t
+                    return
+
+        threading.Thread(target=_sondear_testigo,
+                         daemon=True).start()
         while time.time() < limite:
             # El resultado solo vale CON CONTENIDO: la escritura
             # es atómica (v1.0.18), así que un archivo vacío no
@@ -645,26 +668,22 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
                         al_progreso(fase, pct)
                     except Exception:
                         pass  # el progreso jamás tumba el proceso
-            if time.time() - ultimo_testigo >= 8:
-                ultimo_testigo = time.time()
-                eventos_espera = consultar_eventos_optimizacion(
-                    letra, inicio)
-                por_testigo = interpretar_eventos_optimizacion(
-                    eventos_espera, letra)
-                if por_testigo is not None and por_testigo["ok"]:
-                    return {"ok": True,
-                            "mensaje": (f"Optimización finalizada. "
-                                        f"El registro de eventos "
-                                        f"de Windows confirma que "
-                                        f"la unidad {letra}: quedó "
-                                        f"optimizada ({nombre_op})."),
-                            "detalle": "Confirmado por el registro "
-                                       "de eventos de Windows "
-                                       "(optimizador de "
-                                       "almacenamiento) durante la "
-                                       "espera; el archivo de "
-                                       "resultado del ayudante no "
-                                       "llegó con contenido."}
+            por_testigo = testigo["veredicto"]
+            if por_testigo is not None and por_testigo["ok"]:
+                testigo_parar.set()
+                return {"ok": True,
+                        "mensaje": (f"Optimización finalizada. "
+                                    f"El registro de eventos "
+                                    f"de Windows confirma que "
+                                    f"la unidad {letra}: quedó "
+                                    f"optimizada ({nombre_op})."),
+                        "detalle": "Confirmado por el registro "
+                                   "de eventos de Windows "
+                                   "(optimizador de "
+                                   "almacenamiento) durante la "
+                                   "espera; el archivo de "
+                                   "resultado del ayudante no "
+                                   "llegó con contenido."}
             if not _proceso_vivo(pid):
                 if muerto_desde is None:
                     muerto_desde = time.time()
@@ -678,6 +697,7 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
                     por_eventos = interpretar_eventos_optimizacion(
                         eventos_muerte, letra)
                     if por_eventos is not None and por_eventos["ok"]:
+                        testigo_parar.set()
                         return {"ok": True,
                                 "mensaje": (f"Optimización "
                                             f"finalizada. El "
@@ -703,6 +723,7 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
                                 "detalle": "El proceso elevado "
                                            "terminó sin archivo "
                                            "de resultado."}
+                    testigo_parar.set()
                     return {"ok": False,
                             "mensaje": (f"La optimización de la unidad "
                                         f"{letra}: el proceso elevado de "
@@ -715,12 +736,14 @@ def optimizar_volumen(letra: str, es_ssd: bool, al_progreso=None,
                                        "eventos."}
             time.sleep(intervalo)
         else:
+            testigo_parar.set()
             return {"ok": False,
                     "mensaje": (f"La optimización de la unidad {letra}: "
                                 "tardó demasiado y se dejó de vigilar. "
                                 "Revisa el resultado en la herramienta "
                                 "de Windows."),
                     "detalle": f"Tiempo de vigilancia agotado ({timeout} s)."}
+        testigo_parar.set()
         resultado = _leer_texto_tolerante(ruta_resultado).strip()
         for _ in range(10):
             if resultado:
