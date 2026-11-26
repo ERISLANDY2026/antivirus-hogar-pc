@@ -276,7 +276,7 @@ _EN: dict[str, str] = {
     'Protección': 'Protection',
     'Protección al instalar (modo usuario)': 'Install-time protection (user mode)',
     'Protección contra ransomware': 'Ransomware protection',
-    'Protección de carpetas contra ransomware: {texto}.': 'Folder protection against ransomware: {texto}.',
+    'Protección de carpetas contra ransomware: {detalle}.': 'Folder protection against ransomware: {detalle}.',
     'Próxima ejecución: {dia} {fecha}': 'Next run: {dia} {fecha}',
     'Próxima ejecución: — (desactivada)': 'Next run: — (disabled)',
     'Puerta de enlace': 'Gateway',

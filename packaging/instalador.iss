@@ -2,7 +2,7 @@
 ;
 ; Compilar (tras PyInstaller, ver Construir-en-Windows.bat):
 ;   ISCC.exe packaging\instalador.iss
-; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.16.exe
+; Produce: dist-instalador\Instalador-AntivirusHogarPC-1.0.17.exe
 ;
 ; v1.0.10: el instalador lleva INCORPORADO el instalador oficial
 ; de OpenVPN Community (MSI en packaging\openvpn\, ver su
@@ -22,7 +22,7 @@
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
 #define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.16"
+#define AppVersion "1.0.17"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 

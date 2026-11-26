@@ -26,6 +26,7 @@ from antivirus_hogar_pc.ui import theme
 from antivirus_hogar_pc.ui.health_ring import AnilloSalud
 from antivirus_hogar_pc.ui.paginas_base import etiqueta, fila_estado, pagina_base, tarjeta
 from antivirus_hogar_pc.ui.fondo_radar import FondoRadar
+from antivirus_hogar_pc.ui.espartano_radar import EspartanoRadar
 from antivirus_hogar_pc.ui.widgets_v102 import Medidor
 from antivirus_hogar_pc.winapi import es_windows
 
@@ -144,7 +145,7 @@ def _frase_cfa(informe: InformeSalud) -> tuple[str, str]:
         return t("No disponible en este equipo de pruebas."), theme.TEXTO_SUAVE
     texto = informe.cfa.get("texto", "")
     color = theme.VERDE if informe.cfa.get("activo") else theme.AMBAR
-    return t("Protección de carpetas contra ransomware: {texto}.", texto=texto), color
+    return t("Protección de carpetas contra ransomware: {detalle}.", detalle=texto), color
 
 
 def _frase_disco(informe: InformeSalud) -> tuple[str, str]:
@@ -249,6 +250,21 @@ def crear_pagina(ctx: ContextoModulo):
         lambda _v: _sincronizar_puntuacion_esquina())
     _sincronizar_puntuacion_esquina()
     layout.addWidget(banda_radar)
+
+    # --- Espartano animado (v1.0.17) ------------------------------------------
+    # El espartano elegido por el usuario, DENTRO de la banda del
+    # radar y en su zona izquierda, de pie sobre ese fondo: su
+    # fondo ES la parte izquierda del área de barrido (palabras
+    # del usuario). El radar no se toca (intocable desde la
+    # v1.0.6) y el espartano jamás tapa el anillo: su geometría
+    # se calcula con el borde del disco como límite. Se crea
+    # AQUÍ, al construir la página, como todo lo demás; se anima
+    # con QMovie y las puertas de siempre, y en pausa enseña su
+    # foto fija. La cifra de la esquina se sube por encima de su
+    # capa para que se siga leyendo entera.
+    espartano = EspartanoRadar(banda_radar)
+    lbl_puntuacion.raise_()
+    pagina.espartano_radar = espartano  # ancla de vida y de test
 
     fila_superior = QHBoxLayout()
     tarjeta_estado, lay_tarjeta_estado = tarjeta(t("Estado de la protección"))

@@ -29,6 +29,14 @@ QUE_HACE = [
 
 NOTAS_VERSION: list[dict] = [
     {
+        "version": "1.0.17",
+        "fecha": "26/11/2026",
+        "novedades": [
+            "TU ESPARTANO YA VIVE EN INICIO: el espartano que elegiste y viste animado antes de aprobarlo está de pie en la parte izquierda del área de barrido del radar —su fondo es esa zona del radar, tal como pediste—, con su escudo «GUERRA», su electricidad lenta y su ciclo natural de guardia: alerta respirando, vigilancia escaneando, en guardia y de vuelta a la alerta, en bucle continuo. El radar conserva intacto el diseño que fijaste: no se ha tocado ni un píxel de su dibujo, y el espartano nunca tapa el anillo de salud ni la cifra de la esquina.",
+            "SE MUEVE CON LAS REGLAS DE SIEMPRE: la animación del espartano obedece las mismas puertas que el resto de la interfaz —se pausa con la ventana oculta o minimizada, con tu interruptor de animaciones de Ajustes y con el ahorro por batería— y mientras está en pausa enseña su foto fija, el mismo espartano quieto. Nada nuevo que configurar: si ya tenías las animaciones apagadas, él también está quieto.",
+        ],
+    },
+    {
         "version": "1.0.16",
         "fecha": "25/11/2026",
         "novedades": [

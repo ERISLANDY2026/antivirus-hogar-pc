@@ -60,6 +60,19 @@ jobs:
       - name: Verificar el icono dentro del ejecutable
         run: python scripts/verificar_icono.py dist/AntivirusHogarPC/AntivirusHogarPC.exe packaging/icono.ico
 
+      # El espartano animado de Inicio (v1.0.17) es un WebP animado
+      # que reproduce QMovie: sin el plugin de imagen qwebp dentro
+      # del build congelado, en la PC del usuario saldría la foto
+      # fija en vez de la animación. Se busca el plugin en TODO el
+      # dist (la ruta exacta varía entre versiones de PyInstaller)
+      # y la compilación FALLA si no está.
+      - name: Verificar el plugin WebP (qwebp) dentro del build congelado
+        shell: pwsh
+        run: |
+          $plugins = Get-ChildItem -Path "dist" -Recurse -Filter "qwebp*" -ErrorAction SilentlyContinue
+          if (-not $plugins) { throw "Falta el plugin qwebp en el build congelado: el espartano animado no se movería" }
+          $plugins | ForEach-Object { Write-Host "Plugin WebP congelado: $($_.FullName) ($($_.Length) bytes)" }
+
       - name: Instalar Inno Setup
         run: choco install innosetup -y --no-progress
 
