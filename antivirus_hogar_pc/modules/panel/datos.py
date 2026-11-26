@@ -122,6 +122,21 @@ def recoger_informe(servicios=None) -> ResultadoModulo:
     arranque = _intentar(win_sistema.elementos_arranque, errores, "Arranque")
     discos = _intentar(win_disks.discos_fisicos, errores, "Discos") or []
 
+    # Tendencia de salud del disco (v1.0.16, frente 4): la
+    # lectura de hoy alimenta el historial y la tendencia se
+    # calcula contra ~30 días atrás (sin historial suficiente,
+    # «sin_historial»: la página dirá «historial en
+    # construcción», nunca una tendencia inventada).
+    tendencia: dict = {}
+    try:
+        from antivirus_hogar_pc.core import historial_discos
+
+        _hist = historial_discos.registrar_lecturas(
+            discos, historial_discos.ruta_historial())
+        tendencia = historial_discos.tendencia_principal(discos, _hist)
+    except Exception:
+        tendencia = {}
+
     ultimo_escaneo: dict = {}
     if servicios is not None:
         ultimo_escaneo = dict(getattr(servicios, "_ultimo_escaneo", None) or {})
@@ -154,6 +169,7 @@ def recoger_informe(servicios=None) -> ResultadoModulo:
         cfa=cfa,
         panel=leer_datos_panel(),
         ultimo_escaneo=ultimo_escaneo,
+        tendencia_disco=tendencia,
     )
 
     if not es_windows():
@@ -168,4 +184,62 @@ def recoger_informe(servicios=None) -> ResultadoModulo:
         mensaje=mensaje,
         datos=informe,
         detalle_tecnico="; ".join(errores),
+    )
+
+
+def recoger_pendientes(servicios, informe: InformeSalud | None = None):
+    """Los pendientes de Inicio (v1.0.16, frente 3): junta los
+    datos REALES disponibles y delega la decisión en
+    core.pendientes. Cada fuente que falla o no existe aporta
+    None («sin dato»): su pendiente no se enseña."""
+    from antivirus_hogar_pc.core import estado_mantenimiento
+    from antivirus_hogar_pc.core.pendientes import calcular_pendientes
+
+    # Último escaneo: el de esta sesión o el último «escaneo»
+    # del registro de actividad (la memoria persistente).
+    ultimo_escaneo: float | None = None
+    if servicios is not None:
+        en_sesion = getattr(servicios, "_ultimo_escaneo", None) or {}
+        if en_sesion.get("fecha"):
+            ultimo_escaneo = float(en_sesion["fecha"])
+        actividad = getattr(servicios, "actividad", None)
+        if actividad is not None:
+            try:
+                for entrada in actividad.leer(300):
+                    if entrada.tipo == "escaneo":
+                        if ultimo_escaneo is None \
+                                or entrada.cuando > ultimo_escaneo:
+                            ultimo_escaneo = float(entrada.cuando)
+                        break
+            except Exception:
+                pass
+
+    # VPN: servidores de la lista vigente sin veredicto
+    # «verificado» vigente (solo si hay lista cargada/caché).
+    vpn: dict | None = None
+    try:
+        from antivirus_hogar_pc.core import fuentes_vpn as fuentes
+        from antivirus_hogar_pc.modules.net import servicios_red
+
+        lista_res = servicios_red.servidores_cache_o_semilla()
+        lista = lista_res.datos if lista_res.ok else []
+        if lista:
+            veredictos = servicios_red.veredictos_actuales()
+            verificados = sum(
+                1 for s in lista
+                if fuentes.veredicto_de(veredictos, s)[0] == "verificado")
+            vpn = {"total": len(lista), "verificados": verificados}
+    except Exception:
+        vpn = None
+
+    return calcular_pendientes(
+        ultimo_escaneo=ultimo_escaneo,
+        revision_drivers=estado_mantenimiento.leer_revision_drivers(),
+        ultima_optimizacion=estado_mantenimiento.leer_ultima_optimizacion(),
+        actualizaciones_windows=(
+            informe.actualizaciones_windows if informe is not None
+            else None),
+        vpn=vpn,
+        tendencia_disco=(
+            informe.tendencia_disco if informe is not None else None),
     )
