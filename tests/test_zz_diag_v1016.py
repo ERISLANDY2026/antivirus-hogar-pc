@@ -1,57 +1,53 @@
-"""DIAGNÓSTICO TEMPORAL v1.0.16 (10) — NO forma parte de la suite.
+"""DIAGNÓSTICO TEMPORAL v1.0.16 (11) — NO forma parte de la suite.
 
-Flujo v105 → zombi; volcado de referrers de la página del
-Programador y de la del Panel, con el dueño de cada dict, para
-ver la raíz ajena al árbol. Se borra al cerrar el diagnóstico.
+Secuencia v105→v106 y sondeo cada segundo: ¿cuándo termina el
+_TrabajadorInforme de la ventana y cuándo cae el conteo de
+tarjetas? Se borra al cerrar el diagnóstico.
 """
 import gc
 import os
-import weakref
+import time
 
 import pytest
 
 pytest.importorskip("PySide6")
 
 
-def _dueno(d):
-    for ref in gc.get_referrers(d):
-        if getattr(ref, "__dict__", None) is d:
-            nombre = getattr(ref, "__name__", None)
-            return f"{type(ref).__name__}({nombre or repr(ref)[:50]})"
-    return "?"
-
-
-def _dump(obj, nombre, informe):
-    informe.append(f"--- referrers de {nombre}:")
-    for ref in gc.get_referrers(obj):
-        if isinstance(ref, dict):
-            claves = [k for k in ref.keys() if isinstance(k, str)][:12]
-            informe.append(f"  dict dueño={_dueno(ref)} claves={claves}")
-        elif isinstance(ref, list):
-            informe.append(f"  list len={len(ref)}")
-        elif isinstance(ref, tuple):
-            informe.append(f"  tuple len={len(ref)}")
-        else:
-            informe.append(f"  {type(ref).__name__}: {repr(ref)[:90]}")
-
-
-def test_diag_referrers_paginas():
+def test_diag_vida_trabajador():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
+    from antivirus_hogar_pc.contracts import ContextoModulo
+    from antivirus_hogar_pc.modules.panel.page import _TrabajadorInforme
+    from antivirus_hogar_pc.ui import programar_page
     from antivirus_hogar_pc.ui.main_window import VentanaPrincipal
     from antivirus_hogar_pc.ui.services import ServiciosApp
+
+    def conteo():
+        gc.collect()
+        return len([o for o in gc.get_objects()
+                    if isinstance(o, programar_page._TarjetaProgramacion)])
+
+    def trabajadores():
+        return [o for o in gc.get_objects()
+                if isinstance(o, _TrabajadorInforme)]
 
     ventana = VentanaPrincipal(ServiciosApp())
     ventana.ir_a("version")
     ventana.ir_a("programar")
     app.processEvents()
-    pagina_prog = ventana._paginas["programar"]
-    pagina_panel = ventana._paginas["panel"]
     ventana.deleteLater()
     app.processEvents()
-    informe = []
-    _dump(pagina_prog, "PÁGINA PROGRAMAR", informe)
-    _dump(pagina_panel, "PÁGINA PANEL", informe)
-    raise AssertionError("\n".join(informe))
+    del ventana
+    pagina = programar_page.crear_pagina_programar(
+        ContextoModulo(servicios=None))
+    serie = [f"t0: tarjetas={conteo()} trabajadores="
+             f"{[(t.isRunning(), t.isFinished()) for t in trabajadores()]}"]
+    for s in range(1, 21):
+        time.sleep(1.0)
+        app.processEvents()
+        serie.append(
+            f"t{s}: tarjetas={conteo()} trabajadores="
+            f"{[(t.isRunning(), t.isFinished()) for t in trabajadores()]}")
+    raise AssertionError(" | ".join(serie))
