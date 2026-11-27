@@ -27,8 +27,8 @@
 ; El instalador NO va firmado: Windows mostrará el aviso de SmartScreen
 ; («Windows protegió su PC») la primera vez; ver LEEME.md.
 
-#define AppNombre "Antivirus Hogar PC"
-#define AppVersion "1.0.21"
+#define AppNombre "WAR — Home Guardian"
+#define AppVersion "1.0.22"
 #define AppEditor "Antivirus Hogar (proyecto familiar)"
 #define AppExe "AntivirusHogarPC.exe"
 

@@ -1036,7 +1036,16 @@ class _PaginaRed(QWidget):
         # El sello de la fila cae en cuanto llega su veredicto:
         # se relee el registro compartido y se repinta la tabla
         # (el orden «Recomendado» ya pone los verificados
-        # primero, como en el autoanálisis).
+        # primero, como en el autoanálisis). v1.0.22: con la
+        # sonda rápida caen cientos de veredictos en segundos —
+        # el repintado se acelera a un máximo de ~8 por segundo
+        # (y siempre al completar) para no ahogar la interfaz;
+        # los sellos se ven llenarse igual, en vivo.
+        ahora_rep = time.monotonic()
+        ultimo = getattr(self, "_ultimo_repintado_verif", 0.0)
+        if total and hechos < total and ahora_rep - ultimo < 0.12:
+            return
+        self._ultimo_repintado_verif = ahora_rep
         barra = self._tabla_vpn.verticalScrollBar()
         posicion = barra.value() if barra is not None else 0
         self._veredictos = srv.veredictos_actuales()
@@ -1222,16 +1231,22 @@ class _PaginaRed(QWidget):
     def _texto_verificacion(self, servidor) -> str:
         """El sello de verificación de la fila, con su hora.
 
-        Solo los veredictos VIGENTES se enseñan como tales
-        («✓ Verificado 14:32», «Lleno/sin acceso 14:32», «No
-        responde 14:32»); un veredicto caducado vuelve a «Sin
-        verificar» con la hora del último intento, y sin sonda
-        ni intento previos, «Sin verificar» a secas.
+        v1.0.22 (pedido del usuario): el que responde se enseña
+        «✓ Online» — la palabra es «Online», no «Verificado» —
+        y en VERDE (el color lo pone _repintar_servidores).
+        «Online» cubre los dos veredictos positivos vigentes:
+        la sonda rápida oyó su servicio («online») o un intento
+        real llegó al túnel («verificado»). Los demás sellos
+        («Lleno/sin acceso 14:32», «No responde 14:32») solo se
+        enseñan mientras su veredicto está vigente; uno
+        caducado vuelve a «Sin verificar» con la hora del
+        último intento, y sin sonda ni intento previos, «Sin
+        verificar» a secas.
         """
         estado, cuando = fuentes_vpn.veredicto_de(
             self._veredictos, servidor)
-        if estado == "verificado":
-            return t("✓ Verificado ") + time.strftime(
+        if estado in ("verificado", "online"):
+            return t("✓ Online ") + time.strftime(
                 "%H:%M", time.localtime(cuando))
         if estado == "auth_failed":
             return t("Lleno/sin acceso ") + time.strftime(
@@ -1249,7 +1264,14 @@ class _PaginaRed(QWidget):
             return
         pais = self._combo_pais.currentData() or ""
         criterio = self._combo_orden.currentData() or "recomendado"
-        visibles = [s for s in self._servidores if not pais or s.pais == pais]
+        # v1.0.22: tras una ronda de verificación terminada, los
+        # que NO respondieron desaparecen de la lista solos
+        # (automático, sin botón): la regla vive en
+        # core.fuentes_vpn.ocultar_tras_ronda vía el servicio.
+        visibles = [s for s in self._servidores
+                    if (not pais or s.pais == pais)
+                    and srv.servidor_visible(
+                        s, self._servidor_conectado)]
         if criterio == "recomendado":
             # v1.0.14: verificados primero; luego pocas sesiones
             # y más tiempo en línea (core.fuentes_vpn).
@@ -1287,8 +1309,16 @@ class _PaginaRed(QWidget):
             tabla.setItem(i, 4, QTableWidgetItem(
                 f"{s.ping_ms} ms" if s.ping_ms < 9000 else "—"))
             tabla.setItem(i, 5, QTableWidgetItem(str(s.sesiones)))
-            tabla.setItem(i, 6, QTableWidgetItem(
-                self._texto_verificacion(s)))
+            sello = QTableWidgetItem(self._texto_verificacion(s))
+            # v1.0.22: el «✓ Online» va EN VERDE — checkmark,
+            # palabra y hora — como pidió el usuario.
+            _estado_sello, _cuando_sello = fuentes_vpn.veredicto_de(
+                self._veredictos, s)
+            if _estado_sello in ("verificado", "online"):
+                from PySide6.QtGui import QColor
+
+                sello.setForeground(QColor(theme.VERDE))
+            tabla.setItem(i, 6, sello)
             # Celda de acción (v1.0.9, cambio pedido por el usuario):
             # un contenedor por fila. Sin conexión: solo «Conectar».
             # Con el túnel arriba en ESE servidor: su botón se pone
@@ -1431,7 +1461,7 @@ class _PaginaRed(QWidget):
     def _medir_velocidad(self) -> None:
         self._tarjeta_vel.fijar_activa(True)
         self._lbl_velocidad.setText(
-            t("Midiendo en segundo plano… primero la DESCARGA y después la SUBIDA (valores en vivo)."))
+            t("Midiendo en segundo plano… primero el PING, después la DESCARGA y la SUBIDA (valores en vivo)."))
         self._lbl_valoracion.setText("")
         self._val_ping.setText("…")
         self._val_bajada.setText("…")
@@ -1445,6 +1475,13 @@ class _PaginaRed(QWidget):
     def _progreso_velocidad(self, fase: str, mbps: float) -> None:
         # Llega DURANTE la medición (señal desde el hilo): el valor de
         # la fase en curso se actualiza en pantalla, no solo al final.
+        if fase == "ping":
+            # v1.0.22: el ping se mide primero y se pinta EN
+            # CUANTO llega (su valor viaja en ms, no en Mbps):
+            # la casilla ya no se queda en «…» durante toda la
+            # prueba pareciendo que no se mide.
+            self._val_ping.setText(f"{int(round(mbps))} ms")
+            return
         if fase == "bajada":
             self._val_bajada.setText(f"{mbps:.1f} Mbps")
             self._lbl_velocidad.setText(

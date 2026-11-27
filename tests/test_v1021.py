@@ -451,7 +451,7 @@ def test_ajustes_clave_vt_por_defecto_vacia():
 # --- Transversales -----------------------------------------------------------------
 
 def test_version_e_historial_coherentes():
-    assert config.VERSION == "1.0.21"
+    assert config.VERSION == "1.0.22"
     from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
 
     assert NOTAS_VERSION[0]["version"] == config.VERSION

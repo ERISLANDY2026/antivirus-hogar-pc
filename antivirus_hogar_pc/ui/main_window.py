@@ -62,7 +62,7 @@ class VentanaPrincipal(QMainWindow):
         # de construir nada para que toda la carcasa nazca en el
         # idioma elegido.
         i18n.fijar_idioma(getattr(self.servicios.ajustes, "idioma", "es"))
-        self.setWindowTitle("Antivirus Hogar PC")
+        self.setWindowTitle("WAR — Home Guardian")
         self.resize(1120, 700)
         self.setMinimumSize(960, 620)
 
@@ -112,14 +112,19 @@ class VentanaPrincipal(QMainWindow):
                 38, 38, Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation))
         fila_titulo.addWidget(self._lbl_icono_app)
-        self._lbl_titulo = QLabel(t("Antivirus Hogar"))
-        self._lbl_titulo.setStyleSheet("font-size: 16px; font-weight: 700;")
-        fila_titulo.addWidget(self._lbl_titulo)
+        # v1.0.22: el nombre nuevo, SOLO en inglés — «WAR — Home
+        # Guardian» — pintado por ui.marca_war con el diseño
+        # aprobado por el usuario: «WAR» en degradado cian
+        # eléctrico con borde dorado fino y arcos de energía,
+        # «Home Guardian» debajo en plateado, encendido tipo
+        # radar al abrir y resplandor que respira. La marca NO
+        # se traduce: es el nombre, en su único idioma.
+        from .marca_war import MarcaWAR
+
+        self._marca_war = MarcaWAR()
+        fila_titulo.addWidget(self._marca_war)
         fila_titulo.addStretch(1)
         lay_barra.addLayout(fila_titulo)
-        self._lbl_subtitulo = QLabel(t("Compañero de Defender"))
-        self._lbl_subtitulo.setObjectName("detalle")
-        lay_barra.addWidget(self._lbl_subtitulo)
         lay_barra.addSpacing(4)
 
         # Selector de IDIOMA (v1.0.14; v1.0.18, nota 6: sube a la
@@ -500,7 +505,7 @@ class VentanaPrincipal(QMainWindow):
             if not self._aviso_bandeja_dado:
                 self._aviso_bandeja_dado = True
                 self._bandeja.avisar(
-                    "Antivirus Hogar PC",
+                    "WAR — Home Guardian",
                     t("La app sigue trabajando en la bandeja, junto al "
                       "reloj. Doble clic en su icono para abrirla; "
                       "«Salir» en su menú la cierra de verdad."))
@@ -534,8 +539,9 @@ class VentanaPrincipal(QMainWindow):
             self.al_cambiar_idioma()
 
     def _retraducir_carcasa(self) -> None:
-        self._lbl_titulo.setText(t("Antivirus Hogar"))
-        self._lbl_subtitulo.setText(t("Compañero de Defender"))
+        # v1.0.22: la marca «WAR — Home Guardian» no se
+        # retraduce (nombre solo en inglés, decisión del
+        # usuario); el resto de la carcasa, sí.
         self._lbl_idioma.setText(t("Idioma"))
         for rid, boton in self._botones.items():
             if rid in self._registros:
@@ -545,6 +551,12 @@ class VentanaPrincipal(QMainWindow):
         self._botones["ajustes"].setText(t("Ajustes"))
         self._botones["historial"].setText(
             t("Historial de la aplicación"))
+        # v1.0.22: la etiqueta del diagnóstico también se
+        # retraduce (su botón nació fuera del registro de
+        # módulos y la retraducción no lo alcanzaba).
+        if "diagnostico" in self._botones:
+            self._botones["diagnostico"].setText(
+                t("Diagnosticar integridad\nde la aplicación"))
 
     # -- pausa de animaciones con la ventana oculta (v1.0.14) ----------------------
     def hideEvent(self, evento) -> None:  # noqa: N802 (nombre de Qt)
@@ -567,8 +579,13 @@ class VentanaPrincipal(QMainWindow):
         super().changeEvent(evento)
 
     def ir_a(self, id_modulo: str) -> None:
+        # v1.0.22: «diagnostico» entra en los ids fijos — sin
+        # esto, el botón «Diagnosticar integridad de la
+        # aplicación» moría aquí en silencio desde la 1.0.19:
+        # ni era id fijo ni módulo registrado, y el clic se
+        # descartaba sin abrir su página (que sí existía).
         if id_modulo not in ("ajustes", "version", "programar",
-                             "historial") \
+                             "historial", "diagnostico") \
                 and id_modulo not in self._registros:
             return
         self._id_actual = id_modulo

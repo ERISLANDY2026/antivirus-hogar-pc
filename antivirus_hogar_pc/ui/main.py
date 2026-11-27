@@ -48,7 +48,7 @@ def _escaneo_programado() -> int:
         from ..winapi.tasks import notificar_windows
 
         notificar_windows(
-            "Antivirus Hogar PC — escaneo semanal",
+            "WAR — Home Guardian — escaneo semanal",
             f"Se encontraron {len(resultado.hallazgos)} archivo(s) sospechoso(s). "
             "Abre la app para decidir qué hacer.",
         )
@@ -84,7 +84,7 @@ def _tareas_programadas_reales() -> dict:
             from ..winapi.tasks import notificar_windows
 
             notificar_windows(
-                "Antivirus Hogar PC — escaneo programado",
+                "WAR — Home Guardian — escaneo programado",
                 f"El escaneo completo encontró "
                 f"{len(resultado.hallazgos)} archivo(s) sospechoso(s). "
                 "Abre la app para decidir qué hacer.")
@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     from .services import ServiciosApp
 
     app = QApplication(argv)
-    app.setApplicationName("Antivirus Hogar PC")
+    app.setApplicationName("WAR — Home Guardian")
     app.setStyleSheet(theme.QSS)
     # Icono de la VENTANA y de la barra de tareas (v1.0.6, nota del
     # usuario): se fija en tiempo de ejecución desde el .ico del
@@ -283,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
                 from ..core.i18n import t as _t
 
                 bandeja.avisar(
-                    "Antivirus Hogar PC",
+                    "WAR — Home Guardian",
                     _t("Un escaneo terminó con {n} "
                        "hallazgo(s). Abre la app y decide qué hacer: "
                        "la app nunca actúa sola.",
@@ -308,17 +308,17 @@ def main(argv: list[str] | None = None) -> int:
             host = str((objetivo or {}).get("hostname") or "")
             if evento == "caida":
                 bandeja.avisar(
-                    "Antivirus Hogar PC",
+                    "WAR — Home Guardian",
                     t("La conexión VPN se cayó. "
                       "Reconectando automáticamente…"))
             elif evento == "reconectada":
                 bandeja.avisar(
-                    "Antivirus Hogar PC",
+                    "WAR — Home Guardian",
                     t("La VPN volvió a conectar sola a {host}.",
                       host=host))
             elif evento == "agotado":
                 bandeja.avisar(
-                    "Antivirus Hogar PC",
+                    "WAR — Home Guardian",
                     t("No se pudo reconectar la VPN tras varios "
                       "intentos. Abre Red y VPN para conectar "
                       "a mano."))
@@ -355,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
         def _mostrar_aviso_defender():
             from PySide6.QtWidgets import QMessageBox
 
-            QMessageBox.warning(ventana, "Antivirus Hogar PC",
+            QMessageBox.warning(ventana, "WAR — Home Guardian",
                                 _aviso_defender)
 
         QTimer.singleShot(1500, _mostrar_aviso_defender)
@@ -468,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                     from ..core.i18n import t as _t
 
                     bandeja.avisar(
-                        "Antivirus Hogar PC",
+                        "WAR — Home Guardian",
                         _t("La rutina automática de arranque terminó. "
                            "La app sigue en la bandeja."))
 

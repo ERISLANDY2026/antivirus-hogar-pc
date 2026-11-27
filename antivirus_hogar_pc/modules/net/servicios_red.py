@@ -192,6 +192,7 @@ def descargar_servidores_completos() -> ResultadoModulo:
         )
     _ULTIMA_LISTA.clear()
     _ULTIMA_LISTA.extend(fusion)
+    _olvidar_ronda()
     # La caché solo la escribe un refresco con ALGO en vivo: si
     # todo cayó a semilla, la caché anterior (más fresca) queda.
     if not es_semilla or vpnbook_en_vivo:
@@ -271,6 +272,7 @@ def servidores_cache_o_semilla() -> ResultadoModulo:
         servidores = cache["servidores"]
         _ULTIMA_LISTA.clear()
         _ULTIMA_LISTA.extend(servidores)
+        _olvidar_ronda()
         return ResultadoModulo(
             ok=True,
             mensaje=(f"Lista guardada de la última búsqueda: "
@@ -294,6 +296,7 @@ def servidores_cache_o_semilla() -> ResultadoModulo:
         )
     _ULTIMA_LISTA.clear()
     _ULTIMA_LISTA.extend(fusion)
+    _olvidar_ronda()
     return ResultadoModulo(
         ok=True,
         mensaje=(f"Lista de respaldo del {fecha or 'la versión'}: "
@@ -710,41 +713,78 @@ def verificacion_trabada(activa: bool, ultimo_avance: float,
     return (ahora - ultimo_avance) >= UMBRAL_TRABADA_S
 
 
+# --- Ronda de verificación (v1.0.22) ------------------------------------------
+# El resumen de la ÚLTIMA ronda de verificación terminada:
+# {clave_servidor: respondió (bool)} con su hora. La página lo
+# lee para ocultar AUTOMÁTICAMENTE a los que no respondieron
+# (pedido del usuario: la lista final solo enseña los que están
+# «✓ Online»). Una lista recién descargada invalida la ronda:
+# la lista nueva se enseña entera hasta su primera ronda.
+_RONDA_ACTUAL: dict = {}
+
+
+def ronda_actual() -> dict:
+    """Copia del resumen de la última ronda terminada (o {})."""
+    return {"cuando": _RONDA_ACTUAL.get("cuando", 0.0),
+            "resultados": dict(_RONDA_ACTUAL.get("resultados") or {})}
+
+
+def servidor_visible(servidor: ServidorVPN,
+                     hostname_conectado: str = "") -> bool:
+    """¿Se enseña este servidor en la lista AHORA MISMO?
+
+    Tras una ronda terminada, el que no respondió desaparece
+    de la vista (sigue en la base para el próximo refresco);
+    la regla completa vive en core.fuentes_vpn.
+    """
+    _cargar_estado_fuentes()
+    return not fuentes.ocultar_tras_ronda(
+        _VEREDICTOS, _RONDA_ACTUAL, servidor,
+        hostname_conectado=hostname_conectado)
+
+
+def _olvidar_ronda() -> None:
+    _RONDA_ACTUAL.clear()
+
+
 def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
                                    pausa_max_s: float = 600.0,
                                    solo_servicio: bool = False,
                                    presupuesto_s: float | None = None
                                    ) -> ResultadoModulo:
-    """Barrido manual COMPLETO de la lista (v1.0.15, idea del
-    usuario en llamada del 2026-11-25): el botón «Verificar
-    servidores» de Red y VPN.
+    """Barrido de verificación de la lista (v1.0.22: RÁPIDO).
 
-    Recorre TODOS los servidores de la lista vigente en el orden
-    «Recomendado» y deja en cada uno su veredicto del registro
-    compartido: ✓ SOLO si la sonda real lo acepta (el mismo
-    motor del autoanálisis: PUSH_REPLY / CONNECTED,SUCCESS con
-    las credenciales de su fuente, route-nopull, sin tocar el
-    tráfico del usuario); ✗ con su causa clasificada
-    (auth_failed/inaccesible). Los que ya tienen veredicto
-    VIGENTE no se re-sondean: cuentan como comprobados con su
-    veredicto. Las sondas son SECUENCIALES (una sola TAP) y el
-    barrido se PAUSA mientras haya un túnel o un intento del
-    usuario en curso (hasta pausa_max_s; después se difiere).
+    Hasta la 1.0.21 este barrido probaba cada servidor con una
+    conexión OpenVPN real, uno a uno (~20 s por nodo, minutos
+    para la lista entera) — y el usuario pidió que la
+    verificación fuera rápida, automática y sin la lluvia de
+    avisos de administrador. Desde la 1.0.22 el motor es la
+    SONDA RÁPIDA de core.sonda_rapida: el paquete inicial real
+    del protocolo OpenVPN (hard-reset de cliente) lanzado EN
+    PARALELO a todos los remotos, con ~3 s de plazo. El que
+    contesta con su hard-reset de servidor queda «online» (su
+    servicio VPN está vivo: verde «✓ Online» con su hora); el
+    que calla queda «inaccesible». Nada lanza openvpn.exe,
+    nada se eleva (cero UAC: los parámetros `solo_servicio` y
+    `pausa_max_s` se aceptan por compatibilidad y ya no hacen
+    falta — la sonda ni siquiera usa la tarjeta TAP, así que
+    tampoco se pausa con un túnel en curso), y nada abre un
+    túnel: conectar sigue siendo solo del usuario.
+
+    Se respeta lo ya sabido: un veredicto positivo VIGENTE
+    («verificado» de un intento real u «online» de una sonda
+    reciente) cuenta sin re-sondar, y un «auth_failed» vigente
+    cuenta como fallido sin re-sondar (el servidor contestó
+    «lleno» hace poco; la sonda rápida lo marcaría «online» y
+    borraría esa información). Al terminar la ronda COMPLETA
+    se guarda su resumen: los que no respondieron desaparecen
+    de la lista visible automáticamente (servidor_visible).
     al_progreso(hechos, total, verificados, fallidos, hostname,
-    fase) con fase «hecho»/«pausa» alimenta la barra, el conteo
-    y el porcentaje de la UI. Los veredictos alimentan el mismo
-    orden de la lista y el failover, como los del autoanálisis.
-
-    v1.0.18 (notas 1 y 4): el barrido también corre AL ARRANCAR
-    (arranque_vpn_fondo) con ``solo_servicio=True`` — la
-    verificación está autorizada en silencio, pero solo por el
-    Interactive Service: sin servicio disponible no eleva y lo
-    no comprobado queda «Sin verificar». ``presupuesto_s`` acota
-    el barrido del arranque (el manual no lo usa): agotado el
-    presupuesto, el resto queda sin verificar. Todo progreso se
-    avisa también a los oyentes registrados (la tabla abierta
-    se llena en vivo).
+    fase) y los oyentes registrados reciben cada resultado en
+    cuanto cae, para pintar las filas en vivo.
     """
+    from antivirus_hogar_pc.core import sonda_rapida
+
     _cargar_estado_fuentes()
     lista = fuentes.ordenar_candidatos(list(_ULTIMA_LISTA),
                                        _VEREDICTOS)
@@ -752,6 +792,7 @@ def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
     hechos = verificados = fallidos = sin_clasificar = 0
     cancelado = diferido = False
     inicio = time.monotonic()
+    resultados_ronda: dict = {}
 
     def _emitir(hostname: str, fase: str) -> None:
         _avisar_oyentes_verificacion(
@@ -763,50 +804,107 @@ def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
             except Exception:
                 pass
 
+    # Pasada previa: lo que ya se sabe y sigue vigente no se
+    # re-sonda (cuenta al momento, con su veredicto guardado).
+    por_sondear: list[ServidorVPN] = []
     for servidor in lista:
+        estado, _cuando = fuentes.veredicto_de(_VEREDICTOS, servidor)
+        clave = fuentes.clave_servidor(servidor)
+        if estado in ("verificado", "online"):
+            verificados += 1
+            hechos += 1
+            resultados_ronda[clave] = True
+            _emitir(servidor.hostname, "hecho")
+        elif estado == "auth_failed":
+            fallidos += 1
+            hechos += 1
+            # Contestó «lleno» hace poco: respondió (no se
+            # oculta tras la ronda), pero no está disponible.
+            resultados_ronda[clave] = True
+            _emitir(servidor.hostname, "hecho")
+        else:
+            por_sondear.append(servidor)
+
+    # La sonda en paralelo: un destino por servidor (el remote
+    # de su propio perfil). Sin remote no hay nada que sondear:
+    # queda sin clasificar y FUERA del resumen de la ronda (no
+    # se le preguntó: no se oculta por esta regla).
+    destinos: dict = {}
+    por_clave: dict = {}
+    for servidor in por_sondear:
         if cancelar is not None and cancelar.is_set():
             cancelado = True
             break
+        remoto = None
+        try:
+            remoto = extraer_remoto(servidor.generar_ovpn())
+        except Exception:
+            remoto = None
+        if not remoto or not remoto.get("host") \
+                or not remoto.get("puerto"):
+            sin_clasificar += 1
+            hechos += 1
+            _emitir(servidor.hostname, "hecho")
+            continue
+        clave = fuentes.clave_servidor(servidor)
+        destinos[clave] = (remoto["host"], int(remoto["puerto"]),
+                           remoto.get("proto") or "udp")
+        por_clave[clave] = servidor
+
+    if destinos and not cancelado:
         if presupuesto_s is not None and \
                 time.monotonic() - inicio > presupuesto_s:
             diferido = True
-            break
-        espera = 0.0
-        while _ocupado_vpn():
-            if cancelar is not None and cancelar.is_set():
-                cancelado = True
-                break
-            _emitir(servidor.hostname, "pausa")
-            time.sleep(2.0)
-            espera += 2.0
-            if espera >= pausa_max_s:
-                diferido = True
-                break
-        if cancelado or diferido:
-            break
-        estado, _cuando = fuentes.veredicto_de(_VEREDICTOS, servidor)
-        if estado == "verificado":
-            verificados += 1
-            hechos += 1
-        elif estado in ("auth_failed", "inaccesible"):
-            fallidos += 1
-            hechos += 1
         else:
-            veredicto = _sondear_uno(
-                servidor, solo_servicio=solo_servicio)
-            hechos += 1
-            if veredicto == "verificado":
-                verificados += 1
-            elif veredicto in ("auth_failed", "inaccesible"):
-                fallidos += 1
-            else:
-                sin_clasificar += 1
-        _emitir(servidor.hostname, "hecho")
+            detenido = [False]
+
+            def _al_resultado(clave: str, respondio: bool) -> None:
+                nonlocal hechos, verificados, fallidos
+                # Si el usuario detuvo la verificación, los
+                # resultados POSTERIORES no cuentan; el que
+                # estaba llegando cuando se detuvo sí (las
+                # sondas en vuelo expiran solas en su plazo).
+                if detenido[0]:
+                    return
+                servidor = por_clave[clave]
+                # En memoria durante el barrido; la persistencia
+                # a disco se hace UNA vez al final (antes era un
+                # archivo por sonda).
+                fuentes.registrar_veredicto(
+                    _VEREDICTOS, servidor,
+                    "online" if respondio else "inaccesible")
+                resultados_ronda[clave] = bool(respondio)
+                hechos += 1
+                if respondio:
+                    verificados += 1
+                else:
+                    fallidos += 1
+                _emitir(servidor.hostname, "hecho")
+                if cancelar is not None and cancelar.is_set():
+                    detenido[0] = True
+
+            sonda_rapida.sondear_muchos(
+                destinos, al_resultado=_al_resultado,
+                timeout=sonda_rapida.TIMEOUT_DEFECTO_S)
+            if cancelar is not None and cancelar.is_set() \
+                    and hechos < total:
+                cancelado = True
+            _persistir_veredictos()
+
+    # Solo una ronda COMPLETA manda sobre la lista visible: una
+    # verificación detenida a mitad no esconde a nadie que no
+    # se haya llegado a sondear.
+    global _RONDA_ACTUAL
+    if total and not cancelado and not diferido and hechos >= total:
+        _RONDA_ACTUAL = {"cuando": time.time(),
+                         "resultados": resultados_ronda}
+
     datos = {"veredictos": dict(_VEREDICTOS),
              "comprobados": hechos, "total": total,
              "verificados": verificados, "fallidos": fallidos,
              "sin_clasificar": sin_clasificar,
-             "cancelado": cancelado, "diferido": diferido}
+             "cancelado": cancelado, "diferido": diferido,
+             "ronda": ronda_actual()}
     if total == 0:
         return ResultadoModulo(
             ok=False,
@@ -815,29 +913,24 @@ def verificar_todos_los_servidores(al_progreso=None, cancelar=None,
             datos=datos)
     if cancelado:
         mensaje = t("Verificación detenida: {h} de {t} comprobados "
-                    "({ok} verificados, {mal} fallidos). Los "
+                    "({ok} en línea, {mal} sin respuesta). Los "
                     "veredictos ya obtenidos quedan guardados.",
                     h=hechos, t=total, ok=verificados, mal=fallidos)
-    elif diferido and presupuesto_s is not None and \
-            time.monotonic() - inicio > presupuesto_s:
-        mensaje = t("Verificación del arranque pausada: se "
-                    "comprobaron {h} de {t} ({ok} verificados, "
-                    "{mal} fallidos); el resto queda «Sin "
-                    "verificar» y se seguirá comprobando.",
-                    h=hechos, t=total, ok=verificados, mal=fallidos)
     elif diferido:
-        mensaje = t("Verificación diferida: hay una conexión VPN "
-                    "en curso y la comprobación se pausó demasiado. "
-                    "Llevaba {h} de {t} comprobados ({ok} "
-                    "verificados, {mal} fallidos).",
+        mensaje = t("Verificación diferida por presupuesto de "
+                    "tiempo: se comprobaron {h} de {t} ({ok} en "
+                    "línea, {mal} sin respuesta); el resto se "
+                    "seguirá comprobando.",
                     h=hechos, t=total, ok=verificados, mal=fallidos)
     else:
-        mensaje = t("Verificación terminada: {ok} verificados y "
-                    "{mal} fallidos de {t} servidores comprobados.",
+        mensaje = t("Verificación terminada: {ok} en línea "
+                    "(✓ Online) y {mal} sin respuesta, de {t} "
+                    "servidores comprobados. Los que no "
+                    "respondieron salen de la lista.",
                     ok=verificados, mal=fallidos, t=total)
         if sin_clasificar:
-            mensaje += t(" {n} no se pudieron clasificar (fallo "
-                         "local de la sonda, no del servidor).",
+            mensaje += t(" {n} no se pudieron sondear (su "
+                         "perfil no trae un destino válido).",
                          n=sin_clasificar)
     return ResultadoModulo(ok=True, mensaje=mensaje, datos=datos)
 
@@ -898,13 +991,12 @@ def arranque_vpn_fondo(registrar=None,
     1. Refresco de la lista unificada SOLO si toca por cadencia
        (~30 min): es red pura, sin motor OpenVPN.
     2. Barrido de VERIFICACIÓN de TODOS los servidores (el motor
-       del botón «Verificar servidores»): sondas cortas con
-       route-nopull que NO rutean el tráfico ni cambian la IP —
-       el usuario lo autorizó expresamente al arrancar — y SOLO
-       por el Interactive Service: si el servicio no está
-       disponible, nadie se eleva y lo no comprobado queda «Sin
-       verificar». Presupuesto acotado; el progreso se avisa a
-       los oyentes (la tabla abierta se llena en vivo).
+       del botón «Verificar servidores»). Desde la 1.0.22 es la
+       SONDA RÁPIDA (core.sonda_rapida): el paquete inicial real
+       de OpenVPN en paralelo, sin lanzar openvpn.exe, sin
+       elevar (cero UAC) y sin abrir túneles — la lista entera
+       se comprueba en segundos y los sellos «✓ Online» se
+       llenan en vivo en la tabla abierta.
 
     NUNCA abre un túnel: la primera conexión la decide siempre
     el usuario pulsando «Conectar» (regla de producto de la
@@ -967,7 +1059,10 @@ def prueba_velocidad() -> ResultadoModulo:
 
 def prueba_velocidad_viva(al_progreso=None) -> ResultadoModulo:
     """Medición EN VIVO (v1.0.5): bajada y subida reales contra
-    Cloudflare, con al_progreso(fase, mbps) DURANTE la transferencia.
+    Cloudflare, con al_progreso(fase, valor) DURANTE la medición.
+    v1.0.22: la primera emisión es la fase «ping» (valor en ms)
+    en cuanto se mide — este servicio la propaga tal cual del
+    motor a la página, que la pinta al instante.
 
     datos = {"ping_ms", "bajada_mbps", "subida_mbps"}. Si falla, el
     mensaje es claro («revisa tu conexión») y la causa técnica va en

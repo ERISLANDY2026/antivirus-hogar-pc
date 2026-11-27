@@ -172,21 +172,36 @@ def _servidor(host, sesiones=10):
         operador="op", mensaje="", ovpn_base64="eA==")
 
 
+def _servidor_con_remoto(host, sesiones=10):
+    """Un servidor cuyo perfil trae remote (v1.0.22: la sonda
+    rápida sondea el remote del perfil, no el hostname)."""
+    import base64
+
+    srv_ = _servidor(host, sesiones)
+    ovpn = f"client\nremote {host} 1194 udp\nproto udp\n"
+    srv_.ovpn_base64 = base64.b64encode(ovpn.encode()).decode()
+    return srv_
+
+
 def test_barrido_cuenta_y_progreso(monkeypatch):
     import threading
 
+    from antivirus_hogar_pc.core import sonda_rapida
     from antivirus_hogar_pc.modules.net import servicios_red as srv
 
-    lista = [_servidor("a.jp"), _servidor("b.jp"), _servidor("c.jp")]
+    lista = [_servidor_con_remoto("a.jp"),
+             _servidor_con_remoto("b.jp"),
+             _servidor("c.jp")]  # c.jp: perfil sin remote
     monkeypatch.setattr(srv, "_ULTIMA_LISTA", lista)
     monkeypatch.setattr(srv, "_VEREDICTOS", {})
+    monkeypatch.setattr(srv, "_RONDA_ACTUAL", {})
     monkeypatch.setattr(srv, "_cargar_estado_fuentes", lambda: None)
-    monkeypatch.setattr(srv, "_ocupado_vpn", lambda: False)
-    veredictos = {"a.jp": "verificado", "b.jp": "auth_failed",
-                  "c.jp": None}
+    monkeypatch.setattr(srv, "_persistir_veredictos", lambda: None)
+    # v1.0.22: el motor es la sonda rápida — a.jp responde,
+    # b.jp calla; c.jp ni siquiera tiene destino que sondear.
     monkeypatch.setattr(
-        srv, "_sondear_uno",
-        lambda s, solo_servicio=False: veredictos[s.hostname])
+        sonda_rapida, "sondear",
+        lambda host, puerto, proto="udp", timeout=3.0: host == "a.jp")
     eventos = []
     res = srv.verificar_todos_los_servidores(
         al_progreso=lambda *v: eventos.append(v),
@@ -200,34 +215,49 @@ def test_barrido_cuenta_y_progreso(monkeypatch):
     pcts = [int(e[0] * 100 / e[1]) for e in eventos if e[5] == "hecho"]
     assert pcts[-1] == 100  # el porcentaje llega al 100 %
     assert "Verificación terminada" in res.mensaje
+    # La ronda queda guardada: a respondió, b no, c no fue
+    # preguntado (no entra en el resumen ni se oculta por él).
+    ronda = datos["ronda"]["resultados"]
+    assert ronda["vpngate:a.jp"] is True
+    assert ronda["vpngate:b.jp"] is False
+    assert "vpngate:c.jp" not in ronda
 
 
 def test_barrido_respeta_veredicto_vigente_y_cancela(monkeypatch):
     import threading
 
     from antivirus_hogar_pc.core import fuentes_vpn as fuentes
+    from antivirus_hogar_pc.core import sonda_rapida
     from antivirus_hogar_pc.modules.net import servicios_red as srv
 
-    lista = [_servidor("a.jp"), _servidor("b.jp"), _servidor("c.jp")]
+    lista = [_servidor_con_remoto("a.jp"),
+             _servidor_con_remoto("b.jp"),
+             _servidor_con_remoto("c.jp")]
     monkeypatch.setattr(srv, "_ULTIMA_LISTA", lista)
     registro: dict = {}
     fuentes.registrar_veredicto(registro, lista[0], "verificado")
     monkeypatch.setattr(srv, "_VEREDICTOS", registro)
+    monkeypatch.setattr(srv, "_RONDA_ACTUAL", {})
     monkeypatch.setattr(srv, "_cargar_estado_fuentes", lambda: None)
-    monkeypatch.setattr(srv, "_ocupado_vpn", lambda: False)
+    monkeypatch.setattr(srv, "_persistir_veredictos", lambda: None)
     sondeados = []
     cancelar = threading.Event()
 
-    def _sonda(s, solo_servicio=False):
-        sondeados.append(s.hostname)
-        cancelar.set()  # el usuario detiene tras la primera sonda
-        return "verificado"
+    def _sonda(host, puerto, proto="udp", timeout=3.0):
+        sondeados.append(host)
+        if host == "b.jp":
+            cancelar.set()  # el usuario detiene tras esta sonda
+            return True
+        # c.jp tarda: su resultado llega cuando ya se canceló
+        # y NO debe contar (la ronda parcial no manda).
+        cancelar.wait(timeout=5)
+        return True
 
-    monkeypatch.setattr(srv, "_sondear_uno", _sonda)
+    monkeypatch.setattr(sonda_rapida, "sondear", _sonda)
     res = srv.verificar_todos_los_servidores(cancelar=cancelar)
-    # a.jp NO se re-sondea (veredicto vigente) y cuenta
-    # verificado; c.jp nunca se sondea (cancelación en b.jp)
-    assert sondeados == ["b.jp"]
+    # a.jp NO se sondea (veredicto vigente) y cuenta verificado;
+    # el resultado tardío de c.jp no cuenta tras la cancelación.
+    assert "a.jp" not in sondeados
     assert res.datos["verificados"] == 2
     assert res.datos["comprobados"] == 2
     assert res.datos["cancelado"] is True

@@ -7,7 +7,7 @@ resumen de qué es y qué hace la aplicación.
 """
 
 RESUMEN_APP = (
-    "Antivirus Hogar PC es el compañero de Microsoft Defender para "
+    "WAR — Home Guardian es el compañero de Microsoft Defender para "
     "Windows 10/11: Defender sigue siendo el escudo en vivo y esta "
     "app aporta lo demás — escaneo de archivos con base de firmas "
     "propia, protección e informes de privacidad, actualización de "
@@ -28,6 +28,19 @@ QUE_HACE = [
 ]
 
 NOTAS_VERSION: list[dict] = [
+    {
+        "version": "1.0.22",
+        "fecha": "27/11/2026",
+        "novedades": [
+            "NOMBRE NUEVO: la app se llama ahora WAR — Home Guardian. Lo llevas en el encabezado, con su diseño propio: «WAR» en cian eléctrico con borde dorado y arcos de energía, como el escudo de tu espartano, y «Home Guardian» debajo en plateado. Al abrir, las letras se encienden con un barrido tipo radar y después un resplandor suave respira sobre el nombre. Por dentro todo sigue igual: tus datos, tus ajustes y tus actualizaciones no se mueven de sitio.",
+            "LA VPN SE VERIFICA EN SEGUNDOS: la lista de servidores gratuitos ya no se comprueba con conexiones reales una a una (eso tardaba minutos). Ahora la app le manda a cada servidor el paquete inicial de verdad del protocolo OpenVPN, a todos a la vez, y las filas se pintan conforme responden.",
+            "SIN AVISOS DE ADMINISTRADOR Y CON «✓ Online» EN VERDE: la sonda nueva no abre OpenVPN ni pide permisos, así que verificar ya no te llena la pantalla de avisos de Windows. El servidor que contesta queda marcado «✓ Online» EN VERDE con su hora, al momento. Verde significa «su servicio VPN respondió a esa hora» — la prueba del túnel completo sigue haciéndose cuando TÚ pulsas «Conectar», como siempre.",
+            "LOS QUE NO RESPONDEN, FUERA DE LA LISTA SOLOS: al terminar cada verificación, los servidores que no contestaron desaparecen de la lista automáticamente — sin que toques nada — y te queda solo lo que está en línea. La app los sigue guardando por dentro y los volverá a probar en el próximo refresco, por si reviven.",
+            "EL ÚLTIMO RESULTADO BUENO SE RECUERDA: al abrir la app, los servidores comprobados hace poco ya salen «✓ Online» en verde desde el primer segundo, con su hora a la vista, mientras por detrás se vuelven a comprobar los que ya caducaron. Nada de quedarte mirando una columna de «Sin verificar».",
+            "EL BOTÓN «DIAGNOSTICAR INTEGRIDAD DE LA APLICACIÓN» YA ABRE: estaba sin conectar desde que nació — lo tocabas y no pasaba nada, en silencio —. Ahora abre su pantalla de autodiagnóstico como debe: comprueba las funciones de la app, repara en el acto lo que es seguro y te deja el informe en tres bloques («Correcto», «Reparado» y «Pendiente de tu orden»), listo para copiar o exportar.",
+            "EL PING DE «MEDIR VELOCIDAD» SE VE AL INSTANTE: el ping siempre se midió (es lo primero que la prueba hace), pero su casilla se quedaba en «…» hasta que terminaba toda la medición y parecía que no se medía. Ahora el ping se pinta en su casilla en cuanto se mide, en el primer segundo, y la bajada y la subida siguen saliendo en vivo como antes.",
+        ],
+    },
     {
         "version": "1.0.21",
         "fecha": "26/11/2026",

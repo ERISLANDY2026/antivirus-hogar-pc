@@ -6,4 +6,4 @@ VPN delegada y utilidades. Ante una amenaza decide siempre el usuario.
 """
 
 __version__ = "1.0.5"
-NOMBRE_APP = "Antivirus Hogar PC"
+NOMBRE_APP = "WAR — Home Guardian"  # v1.0.22: nombre visible (solo inglés); las rutas internas no cambian

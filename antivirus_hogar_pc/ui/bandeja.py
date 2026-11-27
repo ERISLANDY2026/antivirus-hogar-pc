@@ -31,7 +31,7 @@ class Bandeja:
         self._al_escaneo_rapido = al_escaneo_rapido
         self._al_salir = al_salir
         self.tray = QSystemTrayIcon(icono, padre)
-        self.tray.setToolTip("Antivirus Hogar PC")
+        self.tray.setToolTip("WAR — Home Guardian")
 
         self.menu = QMenu()
         self.accion_abrir = QAction(t("Abrir"), self.menu)

@@ -67,6 +67,12 @@ VPNBOOK_PROTOCOLO = "tcp443"
 # por horas y los nodos se llenan y se vacían).
 CADUCIDAD_VEREDICTO = {
     "verificado": 30 * 60,
+    # v1.0.22: «online» = la sonda rápida (el paquete inicial
+    # real de OpenVPN) recibió el hard-reset del servidor: su
+    # servicio VPN está vivo. No es un túnel probado — eso lo
+    # sigue diciendo solo «verificado» — pero manda en la
+    # lista igual que un veredicto fresco y caduca igual.
+    "online": 30 * 60,
     "auth_failed": 15 * 60,
     "inaccesible": 10 * 60,
 }
@@ -340,9 +346,47 @@ def rango_veredicto(veredictos: dict, servidor: ServidorVPN,
         return 1
     if ahora - cuando > caducidad:
         return 2
-    if tipo == "verificado":
+    if tipo in ("verificado", "online"):
         return 0
     return 3
+
+
+def ocultar_tras_ronda(veredictos: dict, ronda: dict | None,
+                       servidor: ServidorVPN,
+                       ahora: float | None = None,
+                       hostname_conectado: str = "") -> bool:
+    """¿Debe la fila de este servidor DESAPARECER de la lista?
+
+    Pedido del usuario (v1.0.22): al terminar una ronda de
+    verificación, los servidores que NO respondieron no
+    aparecen en la lista — automáticamente, sin tocar nada.
+    La regla, pura y completa:
+
+    - Sin ronda terminada (o ronda de otra época) no se oculta
+      nada: antes de verificar, la lista se enseña entera.
+    - Quien respondió en la ronda (la sonda lo oyó, o un
+      intento real reciente lo clasificó «auth_failed» — el
+      servidor contestó, estaba lleno) se queda.
+    - Quien tenga un veredicto POSITIVO vigente («verificado»
+      u «online») se queda aunque la ronda lo haya perdido:
+      el verde manda con su hora.
+    - El servidor CONECTADO en este momento jamás se oculta.
+    - El resto (estaba en la ronda y no respondió) se oculta
+      de la VISTA; sigue en la base interna y volverá a
+      sondearse en el próximo refresco.
+    """
+    if not ronda:
+        return False
+    resultados = ronda.get("resultados") or {}
+    clave = clave_servidor(servidor)
+    if clave not in resultados:
+        return False
+    if hostname_conectado and servidor.hostname == hostname_conectado:
+        return False
+    estado, _cuando = veredicto_de(veredictos, servidor, ahora)
+    if estado in ("verificado", "online"):
+        return False
+    return not resultados[clave]
 
 
 def ordenar_candidatos(servidores, veredictos: dict | None = None,

@@ -150,18 +150,31 @@ def test_arranque_vpn_fondo_barrido_solo_servicio(monkeypatch):
 # --- Nota 4: oyentes del barrido ----------------------------------------------
 
 def test_barrido_avisa_a_los_oyentes_y_solo_servicio(monkeypatch):
+    # v1.0.22: el barrido ya no lanza OpenVPN en ningún modo —
+    # su motor es la sonda rápida de red (core.sonda_rapida),
+    # que no eleva jamás; el kwarg solo_servicio se sigue
+    # aceptando y los oyentes reciben el progreso igual.
+    import base64
+
+    from antivirus_hogar_pc.core import fuentes_vpn as fuentes
+    from antivirus_hogar_pc.core import sonda_rapida
     from antivirus_hogar_pc.modules.net import servicios_red as srv
 
-    lista = [_servidor("a.jp"), _servidor("b.jp")]
+    def _con_remoto(host):
+        s = _servidor(host)
+        s.ovpn_base64 = base64.b64encode(
+            f"client\nremote {host} 1194 udp\n".encode()).decode()
+        return s
+
+    lista = [_con_remoto("a.jp"), _con_remoto("b.jp")]
     monkeypatch.setattr(srv, "_ULTIMA_LISTA", lista)
     monkeypatch.setattr(srv, "_VEREDICTOS", {})
+    monkeypatch.setattr(srv, "_RONDA_ACTUAL", {})
     monkeypatch.setattr(srv, "_cargar_estado_fuentes", lambda: None)
-    monkeypatch.setattr(srv, "_ocupado_vpn", lambda: False)
-    modos = []
+    monkeypatch.setattr(srv, "_persistir_veredictos", lambda: None)
     monkeypatch.setattr(
-        srv, "_sondear_uno",
-        lambda s, solo_servicio=False: modos.append(solo_servicio)
-        or "verificado")
+        sonda_rapida, "sondear",
+        lambda host, puerto, proto="udp", timeout=3.0: True)
     avisos = []
     oyente = lambda *v: avisos.append(v)  # noqa: E731
     srv.registrar_oyente_verificacion(oyente)
@@ -169,9 +182,12 @@ def test_barrido_avisa_a_los_oyentes_y_solo_servicio(monkeypatch):
         res = srv.verificar_todos_los_servidores(solo_servicio=True)
     finally:
         srv.desregistrar_oyente_verificacion(oyente)
-    assert modos == [True, True]          # las sondas, solo servicio
     assert res.datos["verificados"] == 2
     assert avisos and avisos[-1][0] == 2  # progreso hasta el final
+    # Ambos quedan con el veredicto nuevo de la sonda: «online».
+    for s in lista:
+        estado, _c = fuentes.veredicto_de(srv._VEREDICTOS, s)
+        assert estado == "online"
 
 
 # --- Nota 2: actualización en un solo clic -------------------------------------
@@ -385,7 +401,7 @@ def test_historial_completo_en_los_datos():
     from antivirus_hogar_pc.core.notas_version import NOTAS_VERSION
 
     versiones = [e["version"] for e in NOTAS_VERSION]
-    assert versiones[0] == "1.0.21"
+    assert versiones[0] == "1.0.22"
     for esperada in ("1.0.2", "1.0.7", "1.0.10", "1.0.14",
                      "1.0.17", "1.0.18"):
         assert esperada in versiones
@@ -450,7 +466,7 @@ def test_version_1018_en_json_del_canal_no_tocado():
     # lleva la versión de la app.
     from antivirus_hogar_pc import config
 
-    assert config.VERSION == "1.0.21"
+    assert config.VERSION == "1.0.22"
     json.dumps({"version": config.VERSION})  # serializable
 
 

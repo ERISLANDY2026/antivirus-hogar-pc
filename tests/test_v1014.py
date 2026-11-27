@@ -73,12 +73,12 @@ def _servidor(hostname="vpn123.opengw.net", fuente="vpngate",
 # === 1. Versión y campo fuente ===============================================
 
 def test_version_1014_en_su_sitio():
-    assert config.VERSION == "1.0.21"
-    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.21"
+    assert config.VERSION == "1.0.22"
+    assert notas_version.NOTAS_VERSION[0]["version"] == "1.0.22"
     notas = notas_version.notas_de("1.0.14")
     assert notas is not None and len(notas["novedades"]) >= 3
     iss = _leer(os.path.join("packaging", "instalador.iss"))
-    assert '#define AppVersion "1.0.21"' in iss
+    assert '#define AppVersion "1.0.22"' in iss
 
 
 def test_fuente_por_defecto_vpngate_y_constructores_viejos():
@@ -668,7 +668,15 @@ def test_pagina_ocho_columnas_fuente_y_sello():
     fila_ok = textos[servidores[0].hostname]
     fila_sin = textos[servidores[1].hostname]
     assert tabla.item(fila_ok, 2).text() == "VPN Gate"
-    assert tabla.item(fila_ok, 6).text().startswith("✓ Verificado")
+    # v1.0.22: el sello positivo dice «✓ Online» (no
+    # «Verificado») y va EN VERDE, como pidió el usuario.
+    assert tabla.item(fila_ok, 6).text().startswith("✓ Online")
+    from PySide6.QtGui import QColor
+
+    from antivirus_hogar_pc.ui import theme as _theme
+
+    assert tabla.item(fila_ok, 6).foreground().color() == QColor(
+        _theme.VERDE)
     assert tabla.item(fila_sin, 6).text() == "Sin verificar"
     # La acción vive en la columna 7.
     assert tabla.cellWidget(fila_sin, 7) is not None

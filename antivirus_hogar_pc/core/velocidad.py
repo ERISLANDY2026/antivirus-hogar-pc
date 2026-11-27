@@ -134,9 +134,15 @@ def medir_velocidad_en_vivo(al_progreso=None, bytes_bajada: int = 10_000_000,
                             reloj=time.monotonic) -> dict:
     """Mide ping, BAJADA y SUBIDA emitiendo el progreso en vivo.
 
-    al_progreso(fase, mbps_actual): fase «bajada» o «subida»; se llama
-    periódicamente durante cada transferencia con la velocidad media
-    hasta ese instante y una última vez con el valor final de la fase.
+    al_progreso(fase, valor): la PRIMERA emisión es la fase
+    «ping», en cuanto se mide (antes de cualquier transferencia),
+    con el valor en MILISEGUNDOS — no en Mbps — para que la
+    pantalla lo pinte en su casilla al instante (v1.0.22: antes
+    el ping solo se pintaba al final de toda la prueba y parecía
+    que no se medía). Después, fases «bajada» o «subida» en
+    Mbps: se llama periódicamente durante cada transferencia
+    con la velocidad media hasta ese instante y una última vez
+    con el valor final de la fase.
 
     Devuelve {ok, ping_ms, bajada_mbps, subida_mbps, bytes_bajada,
     bytes_subida, causa}. ok=False (con la causa) si algo falla: sin
@@ -168,6 +174,9 @@ def medir_velocidad_en_vivo(al_progreso=None, bytes_bajada: int = 10_000_000,
         t0 = reloj()
         trans.descargar(_URL_PING, min(timeout, 15.0), lambda _n: None)
         ping_ms = max(1, int(round((reloj() - t0) * 1000)))
+        # v1.0.22: el ping sale por el canal de progreso EN
+        # CUANTO se mide (primer segundo), no al final.
+        emitir("ping", float(ping_ms))
     except Exception as exc:
         return {"ok": False, "ping_ms": None, "bajada_mbps": 0.0,
                 "subida_mbps": 0.0, "bytes_bajada": 0, "bytes_subida": 0,
